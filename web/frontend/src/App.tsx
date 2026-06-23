@@ -7,6 +7,7 @@ import Header from './components/Header'
 import BacktestsModal from './components/BacktestsModal'
 import IndicatorsModal from './components/IndicatorsModal'
 import StatsPage from './components/StatsPage'
+import MarchPage from './components/MarchPage'
 import { AppContext, useApp } from './context/AppContext'
 import {
   createRootRoute,
@@ -106,6 +107,14 @@ function StatsRouteComponent() {
   )
 }
 
+function MarchRouteComponent() {
+  return (
+    <div className="flex flex-1 overflow-hidden">
+      <MarchPage />
+    </div>
+  )
+}
+
 // --- Router Definition ---
 
 const rootRoute = createRootRoute({
@@ -124,7 +133,13 @@ const statsRoute = createRoute({
   component: StatsRouteComponent,
 })
 
-const routeTree = rootRoute.addChildren([indexRoute, statsRoute])
+const marchRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/march',
+  component: MarchRouteComponent,
+})
+
+const routeTree = rootRoute.addChildren([indexRoute, statsRoute, marchRoute])
 
 const router = createRouter({ routeTree })
 
@@ -145,6 +160,9 @@ export default function App() {
   const [indicators, setIndicators] = useState<Indicators>({ vwap: false, openingRange: false })
   const [selectedBacktestId, setSelectedBacktestId] = useState<number | null>(null)
   const [activeTab, setActiveTab] = useState<'analysis' | 'equity' | 'monte-carlo'>('analysis')
+  const [marchSymbol, setMarchSymbol] = useState<'nq' | 'es'>('nq')
+  const [marchTf, setMarchTf] = useState<TF>(DEFAULT_TF)
+  const [marchStreamStatus, setMarchStreamStatus] = useState<'loading' | 'live' | 'idle' | 'error'>('idle')
 
   // Default until the DB responds; overwritten once by the settings query effect below.
   const [fromDate, setFromDate] = useState('2026-01-01')
@@ -240,7 +258,10 @@ export default function App() {
       bars, vwapData, allTrades, loadingIds,
       toggleId, toggleIndicator, isNq, fromTs, toTs, candleError,
       selectedBacktestId, setSelectedBacktestId,
-      activeTab, setActiveTab
+      activeTab, setActiveTab,
+      marchSymbol, setMarchSymbol,
+      marchTf, setMarchTf,
+      marchStreamStatus, setMarchStreamStatus,
     }}>
       <RouterProvider router={router} />
     </AppContext.Provider>

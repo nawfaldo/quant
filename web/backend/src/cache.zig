@@ -200,3 +200,139 @@ fn buildVwap(a: std.mem.Allocator) ![]const u8 {
     std.mem.writeInt(u32, out.items[4..8], count,      .little);
     return out.toOwnedSlice(a);
 }
+
+pub fn fetchMarchCandles(a: std.mem.Allocator, symbol: []const u8, tf: []const u8) ![]const u8 {
+    return withRetry(buildMarchCandles, .{ a, symbol, tf });
+}
+
+pub fn fetchMarchTicks(a: std.mem.Allocator, symbol: []const u8, since: ?i64) ![]const u8 {
+    return withRetry(buildMarchTicks, .{ a, symbol, since });
+}
+
+fn buildMarchCandles(a: std.mem.Allocator, symbol: []const u8, tf: []const u8) ![]const u8 {
+    const table = try std.fmt.allocPrint(a, "bm_{s}_ticks", .{symbol});
+    defer a.free(table);
+
+    const sql = try std.fmt.allocPrint(a,
+        "SELECT cast(timestamp as long) ts, first(price) open, max(price) high, min(price) low, last(price) close " ++
+        "FROM {s} SAMPLE BY {s} ALIGN TO CALENDAR",
+        .{ table, tf },
+    );
+    defer a.free(sql);
+
+    var rd = try questdb.open(a, sql);
+    defer rd.deinit();
+
+    var out: std.ArrayList(u8) = .empty;
+    errdefer out.deinit(a);
+    try out.appendNTimes(a, 0, HEADER_BYTES);
+
+    _ = rd.nextLine(); // skip the CSV column-name header row
+    var count: u32 = 0;
+
+    while (rd.nextLine()) |line| {
+        if (line.len == 0) continue;
+
+        var c1: usize = 0;
+        while (c1 < line.len and line[c1] != ',') : (c1 += 1) {}
+        var c2: usize = c1 + 1;
+        while (c2 < line.len and line[c2] != ',') : (c2 += 1) {}
+        var c3: usize = c2 + 1;
+        while (c3 < line.len and line[c3] != ',') : (c3 += 1) {}
+        var c4: usize = c3 + 1;
+        while (c4 < line.len and line[c4] != ',') : (c4 += 1) {}
+        if (c4 >= line.len) continue;
+
+        const ts_nanos = std.fmt.parseInt(i64, line[0..c1], 10) catch continue;
+        const open  = std.fmt.parseFloat(f32, line[c1 + 1 .. c2]) catch continue;
+        const high  = std.fmt.parseFloat(f32, line[c2 + 1 .. c3]) catch continue;
+        const low   = std.fmt.parseFloat(f32, line[c3 + 1 .. c4]) catch continue;
+        const close = std.fmt.parseFloat(f32, line[c4 + 1 ..])    catch continue;
+
+        const ts_secs: u32 = @intCast(@divFloor(ts_nanos, 1_000_000_000));
+        try out.ensureUnusedCapacity(a, ROW_BYTES);
+        const dst = out.items.len;
+        out.items.len += ROW_BYTES;
+        std.mem.writeInt(u32, out.items[dst..][0..4],      ts_secs,        .little);
+        std.mem.writeInt(u32, out.items[dst + 4 ..][0..4], @bitCast(open), .little);
+        std.mem.writeInt(u32, out.items[dst + 8 ..][0..4], @bitCast(high), .little);
+        std.mem.writeInt(u32, out.items[dst + 12..][0..4], @bitCast(low),  .little);
+        std.mem.writeInt(u32, out.items[dst + 16..][0..4], @bitCast(close),.little);
+        count += 1;
+    }
+
+    if (!rd.complete) return error.IncompleteResponse;
+
+    std.mem.writeInt(u32, out.items[0..4], MAGIC, .little);
+    std.mem.writeInt(u32, out.items[4..8], count, .little);
+    return out.toOwnedSlice(a);
+}
+
+fn buildMarchTicks(a: std.mem.Allocator, symbol: []const u8, since: ?i64) ![]const u8 {
+    const table = try std.fmt.allocPrint(a, "bm_{s}_ticks", .{symbol});
+    defer a.free(table);
+
+    var sql: []const u8 = undefined;
+    if (since) |s| {
+        sql = try std.fmt.allocPrint(a,
+            "SELECT cast(timestamp as long) ts, price, size, side " ++
+            "FROM {s} WHERE cast(timestamp as long) > {} ORDER BY timestamp ASC LIMIT 10000",
+            .{ table, s },
+        );
+    } else {
+        // Default to returning the last 100 ticks sorted ascending
+        sql = try std.fmt.allocPrint(a,
+            "SELECT ts, price, size, side FROM (" ++
+            "SELECT cast(timestamp as long) ts, price, size, side FROM {s} ORDER BY timestamp DESC LIMIT 100" ++
+            ") ORDER BY ts ASC",
+            .{table},
+        );
+    }
+    defer a.free(sql);
+
+    var rd = try questdb.open(a, sql);
+    defer rd.deinit();
+
+    var out: std.ArrayList(u8) = .empty;
+    errdefer out.deinit(a);
+
+    try out.appendSlice(a, "[");
+
+    _ = rd.nextLine(); // skip the CSV column-name header row
+    var first: bool = true;
+
+    while (rd.nextLine()) |line| {
+        if (line.len == 0) continue;
+
+        var c1: usize = 0;
+        while (c1 < line.len and line[c1] != ',') : (c1 += 1) {}
+        var c2: usize = c1 + 1;
+        while (c2 < line.len and line[c2] != ',') : (c2 += 1) {}
+        var c3: usize = c2 + 1;
+        while (c3 < line.len and line[c3] != ',') : (c3 += 1) {}
+        if (c3 >= line.len) continue;
+
+        const ts = std.fmt.parseInt(i64, line[0..c1], 10) catch continue;
+        const price = std.fmt.parseFloat(f64, line[c1 + 1 .. c2]) catch continue;
+        const size = std.fmt.parseFloat(f64, line[c2 + 1 .. c3]) catch continue;
+        const side_raw = line[c3 + 1 ..];
+        // QuestDB CSV quotes symbol values — strip surrounding double-quotes
+        const side = if (side_raw.len >= 2 and side_raw[0] == '"' and side_raw[side_raw.len - 1] == '"')
+            side_raw[1 .. side_raw.len - 1]
+        else
+            side_raw;
+
+        if (!first) try out.appendSlice(a, ",");
+        first = false;
+
+        // Print: {"ts":X,"price":Y,"size":Z,"side":"S"}
+        const row = try std.fmt.allocPrint(a, "{{\"ts\":{},\"price\":{},\"size\":{},\"side\":\"{s}\"}}", .{ ts, price, size, side });
+        defer a.free(row);
+        try out.appendSlice(a, row);
+    }
+
+    if (!rd.complete) return error.IncompleteResponse;
+
+    try out.appendSlice(a, "]");
+    return out.toOwnedSlice(a);
+}

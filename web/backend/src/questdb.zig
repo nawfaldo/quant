@@ -6,6 +6,7 @@ const RECV_BUF_BYTES: usize = 512 * 1024;
 extern "c" fn socket(domain: c_uint, sock_type: c_uint, protocol: c_uint) c_int;
 extern "c" fn close(fd: c_int) c_int;
 extern "c" fn usleep(usec: c_uint) c_int;
+extern "c" fn getenv(name: [*:0]const u8) ?[*:0]const u8;
 
 fn urlEncode(a: std.mem.Allocator, input: []const u8) ![]u8 {
     var out: std.ArrayList(u8) = .empty;
@@ -181,6 +182,15 @@ fn stripCr(s: []const u8) []const u8 {
     return if (s.len > 0 and s[s.len - 1] == '\r') s[0 .. s.len - 1] else s;
 }
 
+fn parseIp4(s: []const u8) ![4]u8 {
+    var it = std.mem.splitScalar(u8, s, '.');
+    const a0 = try std.fmt.parseInt(u8, it.next() orelse return error.Invalid, 10);
+    const a1 = try std.fmt.parseInt(u8, it.next() orelse return error.Invalid, 10);
+    const a2 = try std.fmt.parseInt(u8, it.next() orelse return error.Invalid, 10);
+    const a3 = try std.fmt.parseInt(u8, it.next() orelse return error.Invalid, 10);
+    return .{ a0, a1, a2, a3 };
+}
+
 // Opens a connection to QuestDB, sends the /exp query, and consumes the HTTP
 // response headers so the returned Reader is positioned at the first body byte.
 // CSV (/exp) is used over JSON (/exec) because it serializes ~2.6x faster for
@@ -189,9 +199,15 @@ pub fn open(a: std.mem.Allocator, sql: []const u8) !Reader {
     const encoded = try urlEncode(a, sql);
     defer a.free(encoded);
 
+    // QUESTDB_HOST lets WSL builds reach a QuestDB running on the Windows host.
+    // safe-build.sh sets it to the WSL gateway IP automatically.
+    const host_cstr = getenv("QUESTDB_HOST");
+    const host_str = if (host_cstr) |p| std.mem.sliceTo(p, 0) else "127.0.0.1";
+    const ip4 = parseIp4(host_str) catch [4]u8{ 127, 0, 0, 1 };
+
     const req_str = try std.fmt.allocPrint(a,
-        "GET /exp?query={s} HTTP/1.1\r\nHost: 127.0.0.1:9000\r\nConnection: close\r\n\r\n",
-        .{encoded},
+        "GET /exp?query={s} HTTP/1.1\r\nHost: {s}:9000\r\nConnection: close\r\n\r\n",
+        .{ encoded, host_str },
     );
     defer a.free(req_str);
 
@@ -214,7 +230,7 @@ pub fn open(a: std.mem.Allocator, sql: []const u8) !Reader {
 
     const addr = std.c.sockaddr.in{
         .port = std.mem.nativeToBig(u16, QUESTDB_PORT),
-        .addr = @bitCast([4]u8{ 127, 0, 0, 1 }),
+        .addr = @bitCast(ip4),
     };
     if (std.c.connect(sock, @ptrCast(&addr), @sizeOf(std.c.sockaddr.in)) != 0)
         return error.ConnectFailed;

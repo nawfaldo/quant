@@ -1,7 +1,11 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const c = @cImport(@cInclude("sqlite3.h"));
 
-const DB_PATH = "/Users/nawfaldo/Bunker/Quant/backtest/backtest.db";
+const DB_PATH = switch (builtin.os.tag) {
+    .macos => "/Users/nawfaldo/Bunker/Quant/backtest/backtest.db",
+    else   => "/mnt/c/Users/JawirGaming66/Quant/backtest/backtest.db",
+};
 
 // Trades binary wire format:
 //   header: u32 magic ("TRDE" little-endian) | u32 row_count

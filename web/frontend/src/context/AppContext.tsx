@@ -29,6 +29,12 @@ export interface AppContextType {
   setSelectedBacktestId: (id: number | null) => void
   activeTab: 'analysis' | 'equity' | 'monte-carlo'
   setActiveTab: (tab: 'analysis' | 'equity' | 'monte-carlo') => void
+  marchSymbol: 'nq' | 'es'
+  setMarchSymbol: (sym: 'nq' | 'es') => void
+  marchTf: TF
+  setMarchTf: (tf: TF) => void
+  marchStreamStatus: 'loading' | 'live' | 'idle' | 'error'
+  setMarchStreamStatus: (s: 'loading' | 'live' | 'idle' | 'error') => void
 }
 
 export const AppContext = createContext<AppContextType | null>(null)

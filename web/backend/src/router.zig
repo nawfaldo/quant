@@ -201,6 +201,66 @@ pub fn onRequest(req: zap.Request) !void {
         return;
     }
 
+    if (std.mem.eql(u8, path, "/api/march/candles/bin")) {
+        const query = req.query orelse "";
+        const q_symbol = queryParam(query, "symbol") orelse "nq";
+        const tf = queryParam(query, "tf") orelse "1m";
+
+        var valid_symbol = false;
+        if (std.mem.eql(u8, q_symbol, "nq") or std.mem.eql(u8, q_symbol, "es")) {
+            valid_symbol = true;
+        }
+
+        if (!valid_symbol) {
+            req.setStatusNumeric(400);
+            try req.sendJson("{\"error\":\"unknown symbol for march\"}");
+            return;
+        }
+
+        const body = cache.fetchMarchCandles(alloc, q_symbol, tf) catch |err| {
+            std.debug.print("march candles fetch error: {}\n", .{err});
+            req.setStatusNumeric(503);
+            try req.sendJson("{\"error\":\"fetch failed\"}");
+            return;
+        };
+        defer alloc.free(body);
+        req.setHeader("Content-Type", "application/octet-stream") catch {};
+        try req.sendBody(body);
+        return;
+    }
+
+    if (std.mem.eql(u8, path, "/api/march/ticks")) {
+        const query = req.query orelse "";
+        const q_symbol = queryParam(query, "symbol") orelse "nq";
+        const q_since = queryParam(query, "since");
+
+        var valid_symbol = false;
+        if (std.mem.eql(u8, q_symbol, "nq") or std.mem.eql(u8, q_symbol, "es")) {
+            valid_symbol = true;
+        }
+
+        if (!valid_symbol) {
+            req.setStatusNumeric(400);
+            try req.sendJson("{\"error\":\"unknown symbol for march\"}");
+            return;
+        }
+
+        var since: ?i64 = null;
+        if (q_since) |s| {
+            since = std.fmt.parseInt(i64, s, 10) catch null;
+        }
+
+        const body = cache.fetchMarchTicks(alloc, q_symbol, since) catch |err| {
+            std.debug.print("march ticks fetch error: {}\n", .{err});
+            req.setStatusNumeric(503);
+            try req.sendJson("{\"error\":\"fetch failed\"}");
+            return;
+        };
+        defer alloc.free(body);
+        try sendJson(req, body);
+        return;
+    }
+
     if (std.mem.eql(u8, path, "/health")) {
         try req.sendJson("{\"status\":\"ok\"}");
         return;

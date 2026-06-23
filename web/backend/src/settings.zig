@@ -1,7 +1,11 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const c = @cImport(@cInclude("sqlite3.h"));
 
-const APP_DB_PATH = "/Users/nawfaldo/Bunker/Quant/web/backend/app.db";
+const APP_DB_PATH = switch (builtin.os.tag) {
+    .macos => "/Users/nawfaldo/Bunker/Quant/web/backend/app.db",
+    else   => "/mnt/c/Users/JawirGaming66/Quant/web/backend/app.db",
+};
 
 const DEFAULT_FROM = "2026-01-01";
 const DEFAULT_TO   = "2026-04-30";
