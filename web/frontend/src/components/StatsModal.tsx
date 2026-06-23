@@ -227,6 +227,17 @@ export default function StatsModal({ id, onClose }: Props) {
             )}
           </div>
         )}
+
+        {activeTab === 'monte-carlo' && b && (
+          <div className="flex-1 flex flex-col items-center justify-center p-8 text-center bg-gray-950">
+            <div className="max-w-md space-y-3">
+              <div className="text-gray-400 font-medium text-sm">Monte Carlo Simulation</div>
+              <p className="text-xs text-gray-600 leading-relaxed">
+                Select parameters and run a Monte Carlo simulation to analyze potential outcome distributions and risk of ruin.
+              </p>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   )

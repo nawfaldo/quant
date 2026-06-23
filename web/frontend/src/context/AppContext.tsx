@@ -27,8 +27,8 @@ export interface AppContextType {
   candleError: any
   selectedBacktestId: number | null
   setSelectedBacktestId: (id: number | null) => void
-  activeTab: 'analysis' | 'equity'
-  setActiveTab: (tab: 'analysis' | 'equity') => void
+  activeTab: 'analysis' | 'equity' | 'monte-carlo'
+  setActiveTab: (tab: 'analysis' | 'equity' | 'monte-carlo') => void
 }
 
 export const AppContext = createContext<AppContextType | null>(null)

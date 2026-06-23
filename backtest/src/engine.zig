@@ -70,12 +70,16 @@ const Position = struct {
 //   .nq_micro — Micro E-mini (MNQ): $2 per index point per contract (1/10 of NQ).
 //   .forex    — CFD at $1 per point per 1 standard lot. A 10-point move on
 //              0.1 lot = $1.
-fn lotMult() f64 {
-    return switch (instrument) {
+fn lotMultOf(inst: Instrument) f64 {
+    return switch (inst) {
         .forex => 1.0,
         .nq_mini => 20.0,
         .nq_micro => 2.0,
     };
+}
+
+fn lotMult() f64 {
+    return lotMultOf(instrument);
 }
 
 // Dollar value of one index point per contract/lot for the active instrument.
@@ -84,16 +88,20 @@ pub fn pointValue() f64 {
     return lotMult();
 }
 
+fn usesContractsOf(inst: Instrument) bool {
+    return inst != .forex;
+}
+
 // Futures instruments (nq mini/micro) trade in whole contracts; the requested
 // size is rounded to the nearest integer (min 1). Forex CFDs keep fractional
 // lots untouched. Also drives the "contract" vs "lot" terminology in the CLI
 // prompts and the report.
 pub fn usesContracts() bool {
-    return instrument != .forex;
+    return usesContractsOf(instrument);
 }
 
-fn sizeFor(raw: f64) f64 {
-    if (usesContracts()) return @max(1.0, @round(raw));
+fn sizeFor(raw: f64, inst: Instrument) f64 {
+    if (usesContractsOf(inst)) return @max(1.0, @round(raw));
     return raw;
 }
 
@@ -129,6 +137,35 @@ pub var slippage: f64 = 0.2; // fixed per-fill slippage in points
 // Set to true by the CLI's stdin reader to abort a running backtest.
 // Atomic so cli.zig (main thread) and engine (worker thread) can race safely.
 pub var cancelled: std.atomic.Value(bool) = .init(false);
+
+// Per-run configuration. The CLI's `/run` and `/tune` paths set the module-level
+// globals above and call the global entry points, which snapshot them via
+// `globalConfig()`. `/combine` instead runs several configs *concurrently*, so it
+// builds an explicit Config per source and calls `runWith` — keeping each run's
+// symbol/instrument/cost/date out of shared mutable state (no data races).
+pub const Config = struct {
+    symbol: []const u8,
+    instrument: Instrument,
+    from: ?[]const u8,
+    to: ?[]const u8,
+    spread: f64,
+    slippage: f64,
+    warmup_days: u32,
+};
+
+// Snapshot the current global config (used by the global `run`/`fetchDataset`/
+// `backtestOn` wrappers that the single-threaded `/run` and `/tune` flows call).
+pub fn globalConfig() Config {
+    return .{
+        .symbol = symbol,
+        .instrument = instrument,
+        .from = from,
+        .to = to,
+        .spread = spread,
+        .slippage = slippage,
+        .warmup_days = warmup_days,
+    };
+}
 
 // Returned by run(). Caller owns `trades` and must free it.
 pub const Result = struct {
@@ -175,11 +212,20 @@ pub const Result = struct {
 // Returns `![]Trade` — an error union of "slice of Trade". The caller owns
 // the returned memory and must `free` it (see main.zig).
 pub fn run(io: Io, gpa: std.mem.Allocator, strat: anytype) !Result {
+    return runWith(io, gpa, strat, globalConfig());
+}
+
+// Like `run`, but driven entirely by an explicit `cfg` instead of the module
+// globals — so several runs can proceed *concurrently* on different threads
+// (each with its own symbol/instrument/cost/date) without racing shared state.
+// The table name is built into a stack buffer here, not the shared `g_table_buf`.
+pub fn runWith(io: Io, gpa: std.mem.Allocator, strat: anytype, cfg: Config) !Result {
     const cols = columnsFor(@TypeOf(strat.*));
-    const table = tableFor(@TypeOf(strat.*));
-    const dataset = try fetchDataset(io, gpa, cols, table);
+    var tbuf: [40]u8 = undefined;
+    const table = std.fmt.bufPrint(&tbuf, "{s}_{s}", .{ cfg.symbol, @TypeOf(strat.*).timeframe }) catch return error.TableName;
+    const dataset = try fetchDatasetCfg(io, gpa, cols, table, cfg);
     defer dataset.deinit();
-    return try backtestOn(gpa, strat, dataset);
+    return try backtestOnCfg(gpa, strat, dataset, cfg);
 }
 
 // Which columns a strategy needs, derived from its compile-time `columns` decl.
@@ -201,30 +247,38 @@ pub fn tableFor(comptime Strat: type) []const u8 {
 // Fetch the bar history once. The tuner calls this a single time and then reuses
 // the dataset across every parameter combination via `backtestOn`.
 pub fn fetchDataset(io: Io, gpa: std.mem.Allocator, cols: data.Columns, table: []const u8) !data.Dataset {
+    return fetchDatasetCfg(io, gpa, cols, table, globalConfig());
+}
+
+pub fn fetchDatasetCfg(io: Io, gpa: std.mem.Allocator, cols: data.Columns, table: []const u8, cfg: Config) !data.Dataset {
     // Widen the fetch backward by `warmup_days` so the strategy can prime its
-    // state before the real window. The module-level `from` is left untouched —
-    // it still marks where trades begin (see realStartIndex / backtestOn).
+    // state before the real window. `cfg.from` is left untouched — it still marks
+    // where trades begin (see realStartIndex / backtestOnCfg).
     var wbuf: [10]u8 = undefined;
-    var fetch_from = from;
-    if (from) |f| {
-        if (warmup_days > 0 and f.len >= 10) {
-            fetch_from = warmupFrom(&wbuf, f, warmup_days) catch f;
+    var fetch_from = cfg.from;
+    if (cfg.from) |f| {
+        if (cfg.warmup_days > 0 and f.len >= 10) {
+            fetch_from = warmupFrom(&wbuf, f, cfg.warmup_days) catch f;
         }
     }
-    const src = data.Source{ .table = table, .from = fetch_from, .to = to };
+    const src = data.Source{ .table = table, .from = fetch_from, .to = cfg.to };
     return try data.fetch(io, gpa, cols, src);
 }
 
 // Run one backtest over an already-fetched dataset. Caller owns Result.trades.
 pub fn backtestOn(gpa: std.mem.Allocator, strat: anytype, dataset: data.Dataset) !Result {
+    return backtestOnCfg(gpa, strat, dataset, globalConfig());
+}
+
+pub fn backtestOnCfg(gpa: std.mem.Allocator, strat: anytype, dataset: data.Dataset, cfg: Config) !Result {
     const blank: data.Ts = [_]u8{' '} ** 16;
     // `start` is the first bar inside the real (post-warm-up) window. Stats and
     // trades begin here; bars before it only prime the strategy.
-    const start = realStartIndex(dataset.timestamps);
+    const start = realStartIndex(dataset.timestamps, cfg.from);
     const first_ts = if (start < dataset.timestamps.len) dataset.timestamps[start] else blank;
     const last_ts = if (dataset.timestamps.len > 0) dataset.timestamps[dataset.timestamps.len - 1] else blank;
 
-    const bt = try backtest(gpa, strat, dataset.bars, dataset.timestamps, start);
+    const bt = try backtest(gpa, strat, dataset.bars, dataset.timestamps, start, cfg);
     return .{
         .trades = bt.trades,
         .first_ts = first_ts,
@@ -261,7 +315,7 @@ const BacktestOut = struct {
 };
 
 // File-private helper. `[]const Bar` means "read-only slice of Bar".
-fn backtest(gpa: std.mem.Allocator, strat: anytype, bars: []const Bar, timestamps: []const data.Ts, start: usize) !BacktestOut {
+fn backtest(gpa: std.mem.Allocator, strat: anytype, bars: []const Bar, timestamps: []const data.Ts, start: usize, cfg: Config) !BacktestOut {
     var trades: std.ArrayList(Trade) = .empty;
     var position: ?Position = null;
 
@@ -319,7 +373,7 @@ fn backtest(gpa: std.mem.Allocator, strat: anytype, bars: []const Bar, timestamp
         // below that `continue` — so drawdown reflects the whole holding period.
         {
             var mtm = equity;
-            if (position) |pos| mtm += calcPnl(pos.side, pos.entry_price, bars[i].close, pos.contracts);
+            if (position) |pos| mtm += calcPnl(pos.side, pos.entry_price, bars[i].close, pos.contracts, cfg.instrument);
 
             // All-time trailing drawdown (peak never resets).
             if (mtm > peak) {
@@ -373,7 +427,7 @@ fn backtest(gpa: std.mem.Allocator, strat: anytype, bars: []const Bar, timestamp
                 if (position) |pos| {
                     const exit_price: f64 = if (i + 1 < bars.len) bars[i + 1].open else bars[i].close;
                     const exit_ts: data.Ts = if (i + 1 < bars.len) timestamps[i + 1] else timestamps[i];
-                    const pnl = calcPnl(pos.side, pos.entry_price, exit_price, pos.contracts);
+                    const pnl = calcPnl(pos.side, pos.entry_price, exit_price, pos.contracts, cfg.instrument);
                     try trades.append(gpa, .{
                         .entry_ts = pos.entry_ts,
                         .exit_ts = exit_ts,
@@ -416,7 +470,7 @@ fn backtest(gpa: std.mem.Allocator, strat: anytype, bars: []const Bar, timestamp
         // closing leg carries its *own* size, so it gets its own impact cost.
         if (position) |pos| {
             const exit_fill = next_open;
-            const pnl = calcPnl(pos.side, pos.entry_price, exit_fill, pos.contracts);
+            const pnl = calcPnl(pos.side, pos.entry_price, exit_fill, pos.contracts, cfg.instrument);
             try trades.append(gpa, .{
                 .entry_ts = pos.entry_ts,
                 .exit_ts = next_ts,
@@ -429,8 +483,8 @@ fn backtest(gpa: std.mem.Allocator, strat: anytype, bars: []const Bar, timestamp
             equity += pnl;
         }
 
-        const open_contracts = sizeFor(strat.contracts);
-        const entry_fill = applyFillCost(next_open, open_contracts, next_bar, new_side == .long);
+        const open_contracts = sizeFor(strat.contracts, cfg.instrument);
+        const entry_fill = applyFillCost(next_open, new_side == .long, cfg.spread, cfg.slippage);
         position = .{ .side = new_side, .entry_price = entry_fill, .entry_ts = next_ts, .contracts = open_contracts };
     }
 
@@ -439,7 +493,7 @@ fn backtest(gpa: std.mem.Allocator, strat: anytype, bars: []const Bar, timestamp
     if (position) |pos| {
         const last = bars[bars.len - 1];
         const exit_price = last.close;
-        const pnl = calcPnl(pos.side, pos.entry_price, exit_price, pos.contracts);
+        const pnl = calcPnl(pos.side, pos.entry_price, exit_price, pos.contracts, cfg.instrument);
         try trades.append(gpa, .{
             .entry_ts = pos.entry_ts,
             .exit_ts = timestamps[bars.len - 1],
@@ -477,8 +531,8 @@ fn backtest(gpa: std.mem.Allocator, strat: anytype, bars: []const Bar, timestamp
     };
 }
 
-fn calcPnl(side: Side, entry: f64, exit: f64, lots: f64) f64 {
-    const mult = lotMult();
+fn calcPnl(side: Side, entry: f64, exit: f64, lots: f64, inst: Instrument) f64 {
+    const mult = lotMultOf(inst);
     return switch (side) {
         .long => (exit - entry) * mult * lots,
         .short => (entry - exit) * mult * lots,
@@ -488,10 +542,9 @@ fn calcPnl(side: Side, entry: f64, exit: f64, lots: f64) f64 {
 // Adjusts a raw fill price for half-spread + fixed slippage.
 // buying=true : long entry or short exit — price is pushed higher (costs more).
 // buying=false: short entry or long exit — price is pushed lower (gets less).
-fn applyFillCost(raw: f64, lots: f64, bar: Bar, buying: bool) f64 {
-    _ = lots; // fixed model — cost does not scale with size
-    _ = bar; // fixed model — cost does not depend on bar range/volume
-    const adverse = spread / 2.0 + slippage;
+// The fixed model ignores size and bar range, so it takes only the cost params.
+fn applyFillCost(raw: f64, buying: bool, sprd: f64, slip: f64) f64 {
+    const adverse = sprd / 2.0 + slip;
     return if (buying) raw + adverse else raw - adverse;
 }
 
@@ -501,8 +554,8 @@ fn applyFillCost(raw: f64, lots: f64, bar: Bar, buying: bool) f64 {
 // warm-up only. Returns 0 when `from` is null (no warm-up). Timestamps are
 // "YYYY-MM-DD HH:MM" and `from` is "YYYY-MM-DD"; lexicographic order matches
 // chronological order, and a same-day bar sorts after the 10-char date prefix.
-fn realStartIndex(timestamps: []const data.Ts) usize {
-    const f = from orelse return 0;
+fn realStartIndex(timestamps: []const data.Ts, from_opt: ?[]const u8) usize {
+    const f = from_opt orelse return 0;
     for (timestamps, 0..) |ts, idx| {
         if (std.mem.order(u8, ts[0..], f) != .lt) return idx;
     }

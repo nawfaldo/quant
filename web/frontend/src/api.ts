@@ -1,4 +1,4 @@
-import { BACKEND_URL, type Bar, type Backtest, type Trade, type VwapPoint, type TF, type Settings } from './types'
+import { BACKEND_URL, type Bar, type Backtest, type Trade, type VwapPoint, type TF, type Settings, type MonteCarloData } from './types'
 import type { UTCTimestamp } from 'lightweight-charts'
 
 const MAGIC       = 0x45444C43
@@ -71,6 +71,46 @@ export async function saveSettings(from_date: string, to_date: string): Promise<
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ from_date, to_date }),
   })
+}
+
+const MC_MAGIC = 0x4D435054
+const MC_HEADER_BYTES = 48
+
+export async function fetchMonteCarloData(id: number): Promise<MonteCarloData> {
+  const res = await fetch(`${BACKEND_URL}/api/montecarlo/${id}`)
+  if (res.status === 404) throw Object.assign(new Error('no_mc_data'), { code: 'not_found' })
+  if (!res.ok) throw new Error(`Backend error: ${res.status}`)
+  const buf = await res.arrayBuffer()
+  const view = new DataView(buf)
+  if (view.getUint32(0, true) !== MC_MAGIC) throw new Error('Bad MC magic')
+  const numPaths = view.getUint32(4, true)
+  const steps = view.getUint32(8, true)
+  const initialBalance = view.getFloat32(12, true)
+  const p5   = view.getFloat32(16, true)
+  const p25  = view.getFloat32(20, true)
+  const p50  = view.getFloat32(24, true)
+  const p75  = view.getFloat32(28, true)
+  const p95  = view.getFloat32(32, true)
+  const pProfit = view.getFloat32(36, true)
+  const pRuin   = view.getFloat32(40, true)
+  const sims = view.getUint32(44, true)
+  // Step values for path 0 (actual trade counts at each checkpoint)
+  let off = MC_HEADER_BYTES
+  const stepValues = new Uint32Array(steps)
+  for (let s = 0; s < steps; s++) {
+    stepValues[s] = view.getUint32(off, true)
+    off += 4
+  }
+  const paths: Float32Array[] = []
+  for (let i = 0; i < numPaths; i++) {
+    const path = new Float32Array(steps)
+    for (let s = 0; s < steps; s++) {
+      path[s] = view.getFloat32(off, true)
+      off += 4
+    }
+    paths.push(path)
+  }
+  return { numPaths, sims, steps, stepValues, initialBalance, p5, p25, p50, p75, p95, pProfit, pRuin, paths }
 }
 
 export async function fetchTrades(id: number): Promise<Trade[]> {

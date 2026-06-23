@@ -66,6 +66,22 @@ export interface Trade {
   qty: number
 }
 
+export interface MonteCarloData {
+  numPaths: number
+  sims: number
+  steps: number
+  stepValues: Uint32Array  // actual trade count at each checkpoint (from montecarlo_paths.step)
+  initialBalance: number
+  p5: number
+  p25: number
+  p50: number
+  p75: number
+  p95: number
+  pProfit: number
+  pRuin: number
+  paths: Float32Array[]
+}
+
 export interface VwapPoint {
   time: UTCTimestamp
   value: number

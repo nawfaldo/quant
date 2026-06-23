@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
-import { fetchBacktests, fetchTrades } from '../api'
+import { fetchBacktests, fetchTrades, fetchMonteCarloData } from '../api'
 import EquityChart from './EquityChart'
+import MonteCarloChart from './MonteCarloChart'
 import { useApp } from '../context/AppContext'
 
 
@@ -30,6 +31,38 @@ function Section({ title, children }: { title: string; children: React.ReactNode
       <div className="bg-gray-900/40 rounded-lg border border-gray-800/50 px-4 py-1">
         {children}
       </div>
+    </div>
+  )
+}
+
+function MonteCarloTab({ backtestId }: { backtestId: number }) {
+  const { data, isLoading, isError, error } = useQuery({
+    queryKey: ['montecarlo', backtestId],
+    queryFn: () => fetchMonteCarloData(backtestId),
+    staleTime: Infinity,
+    retry: false,
+  })
+
+  const isNotFound = (error as { code?: string })?.code === 'not_found'
+
+  if (isLoading) return (
+    <div className="flex-1 flex items-center justify-center">
+      <span className="text-sm text-gray-400">Loading Monte Carlo...</span>
+    </div>
+  )
+  if (isError) return (
+    <div className="flex-1 flex items-center justify-center">
+      {isNotFound
+        ? <span className="text-sm text-gray-600">No Monte Carlo simulation for this backtest.</span>
+        : <span className="text-sm text-red-400">Error loading Monte Carlo data.</span>
+      }
+    </div>
+  )
+  if (!data) return null
+
+  return (
+    <div className="flex-1 min-h-0 w-full relative">
+      <MonteCarloChart data={data} />
     </div>
   )
 }
@@ -176,6 +209,10 @@ export default function StatsPage() {
                   </div>
                 )}
               </div>
+            )}
+
+            {activeTab === 'monte-carlo' && b && (
+              <MonteCarloTab backtestId={b.id} />
             )}
           </div>
         </>

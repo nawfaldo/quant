@@ -2,6 +2,7 @@ const std = @import("std");
 const Io = std.Io;
 const engine = @import("engine.zig");
 const db = @import("db.zig");
+const montecarlo = @import("montecarlo.zig");
 
 pub fn print(io: Io, result: engine.Result) !db.Summary {
     var buf: [512]u8 = undefined;
@@ -202,6 +203,66 @@ pub fn print(io: Io, result: engine.Result) !db.Summary {
         .max_daily_loss_date = max_daily_loss_date,
         .avg_daily_loss = avg_daily_loss,
     };
+}
+
+// Print a Monte Carlo resampling report for a saved backtest's trade series.
+// `src_name`/`src_symbol` identify the source run in the header.
+pub fn printMonteCarlo(io: Io, src_name: []const u8, src_symbol: []const u8, mc: montecarlo.Result) !void {
+    var buf: [512]u8 = undefined;
+    var db1: [32]u8 = undefined;
+    var db2: [32]u8 = undefined;
+    var writer = Io.File.stdout().writer(io, &buf);
+    const w = &writer.interface;
+
+    const method = switch (mc.mode) {
+        .stationary_block => "stationary block bootstrap",
+        .iid => "IID bootstrap",
+    };
+
+    try w.print("\n  Monte Carlo  —  {s}  {s}\n", .{ src_name, src_symbol });
+    try w.print("  Method:  {s}  ({d} sims, avg block {d:.1} trades)\n", .{ method, mc.sims, mc.block_mean });
+    try w.print("  Resampled {d} trades  |  Initial balance ${s}\n\n", .{ mc.num_trades, fmtDollars(&db1, mc.initial_balance) });
+
+    // Header row: percentile columns.
+    try w.print("  {s:<18}{s:>14}{s:>14}{s:>14}{s:>14}{s:>14}\n", .{
+        "", "p5", "p25", "median", "p75", "p95",
+    });
+
+    // Final balance row (dollars).
+    try w.writeAll("  Final balance     ");
+    for (mc.final_balance) |v| {
+        try w.print("{s:>14}", .{fmtDollars(&db2, v)});
+    }
+    try w.writeAll("\n");
+
+    // Max drawdown row (percent). Percentiles are in natural p5→p95 order, so a
+    // higher percentile is a deeper (worse) drawdown — the opposite "good"
+    // direction from the balance row above. The legend below spells this out.
+    var pbuf: [16]u8 = undefined;
+    try w.print("  {s:<18}", .{"Max drawdown %"});
+    for (mc.max_drawdown) |v| {
+        const s = std.fmt.bufPrint(&pbuf, "{d:.1}%", .{v}) catch "?";
+        try w.print("{s:>14}", .{s});
+    }
+    try w.writeAll("\n");
+    try w.writeAll("  (Worst case: the p5 column for balance, the p95 column for drawdown.)\n\n");
+
+    // Headline probabilities.
+    try w.print("  P(profit)            {d:.1}%\n", .{mc.p_profit * 100.0});
+    try w.print("  P(ruin <= {d:.0}% start)  {d:.1}%\n", .{ mc.ruin_frac * 100.0, mc.p_ruin * 100.0 });
+
+    // Tail caveat: the bootstrap only redeals losses that already happened, so a
+    // resampled trade can never be worse than the worst historical one. P(ruin)
+    // and the deep-drawdown percentiles are therefore optimistic.
+    try w.print("\n  Tail note: resampled losses are capped at the worst historical\n", .{});
+    try w.print("             trade ({s}); real-world tail risk can exceed this.\n", .{fmtDollars(&db1, mc.worst_trade)});
+
+    // Historical reference (the single realized path).
+    try w.print("\n  Historical path:  final ${s}   max DD {d:.1}%\n\n", .{
+        fmtDollars(&db1, mc.historical_final), mc.historical_max_drawdown,
+    });
+
+    try w.flush();
 }
 
 // Compute the core metrics without printing — used by the tuner, which runs

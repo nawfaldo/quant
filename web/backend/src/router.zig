@@ -177,6 +177,30 @@ pub fn onRequest(req: zap.Request) !void {
         return;
     }
 
+    if (std.mem.startsWith(u8, path, "/api/montecarlo/")) {
+        const id_str = path["/api/montecarlo/".len..];
+        const backtest_id = std.fmt.parseInt(i64, id_str, 10) catch {
+            req.setStatusNumeric(400);
+            try req.sendJson("{\"error\":\"invalid id\"}");
+            return;
+        };
+        const body = db.getMonteCarloBin(alloc, backtest_id) catch |err| {
+            if (err == error.NotFound) {
+                req.setStatusNumeric(404);
+                try req.sendJson("{\"error\":\"no montecarlo data\"}");
+            } else {
+                std.debug.print("montecarlo error: {}\n", .{err});
+                req.setStatusNumeric(500);
+                try req.sendJson("{\"error\":\"db failed\"}");
+            }
+            return;
+        };
+        defer alloc.free(body);
+        req.setHeader("Content-Type", "application/octet-stream") catch {};
+        try req.sendBody(body);
+        return;
+    }
+
     if (std.mem.eql(u8, path, "/health")) {
         try req.sendJson("{\"status\":\"ok\"}");
         return;

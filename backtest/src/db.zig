@@ -1,5 +1,6 @@
 const std = @import("std");
 const engine = @import("engine.zig");
+const montecarlo = @import("montecarlo.zig");
 
 const c = @cImport(@cInclude("sqlite3.h"));
 
@@ -47,7 +48,18 @@ const SCHEMA =
     \\  avg_intraday_drawdown_dollars REAL    NOT NULL DEFAULT 0,
     \\  max_daily_loss                REAL    NOT NULL DEFAULT 0,
     \\  max_daily_loss_date           TEXT    NOT NULL DEFAULT '',
-    \\  avg_daily_loss                REAL    NOT NULL DEFAULT 0
+    \\  avg_daily_loss                REAL    NOT NULL DEFAULT 0,
+    \\  base_size                     REAL    NOT NULL DEFAULT 0,
+    \\  leverage                      REAL    NOT NULL DEFAULT 1,
+    \\  sizing_mode                   INTEGER NOT NULL DEFAULT 0,
+    \\  vol_target                    REAL    NOT NULL DEFAULT 0,
+    \\  vol_halflife                  REAL    NOT NULL DEFAULT 0,
+    \\  vol_max_mult                  REAL    NOT NULL DEFAULT 0,
+    \\  vol_min_days                  INTEGER NOT NULL DEFAULT 0,
+    \\  date_from                     TEXT    NOT NULL DEFAULT '',
+    \\  date_to                       TEXT    NOT NULL DEFAULT '',
+    \\  spread                        REAL    NOT NULL DEFAULT 0,
+    \\  slippage                      REAL    NOT NULL DEFAULT 0
     \\);
     \\CREATE TABLE IF NOT EXISTS trades (
     \\  id           INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -60,6 +72,41 @@ const SCHEMA =
     \\  pnl          REAL    NOT NULL,
     \\  contracts    REAL    NOT NULL
     \\);
+    \\CREATE TABLE IF NOT EXISTS montecarlo (
+    \\  id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    \\  run_at           TEXT    NOT NULL,
+    \\  source_id        INTEGER NOT NULL,
+    \\  source_strategy  TEXT    NOT NULL,
+    \\  source_symbol    TEXT    NOT NULL,
+    \\  mode             TEXT    NOT NULL,
+    \\  sims             INTEGER NOT NULL,
+    \\  block_mean       REAL    NOT NULL,
+    \\  num_trades       INTEGER NOT NULL,
+    \\  initial_balance  REAL    NOT NULL,
+    \\  ruin_frac        REAL    NOT NULL,
+    \\  hist_final       REAL    NOT NULL,
+    \\  hist_max_dd      REAL    NOT NULL,
+    \\  final_p5         REAL    NOT NULL,
+    \\  final_p25        REAL    NOT NULL,
+    \\  final_p50        REAL    NOT NULL,
+    \\  final_p75        REAL    NOT NULL,
+    \\  final_p95        REAL    NOT NULL,
+    \\  maxdd_p5         REAL    NOT NULL,
+    \\  maxdd_p25        REAL    NOT NULL,
+    \\  maxdd_p50        REAL    NOT NULL,
+    \\  maxdd_p75        REAL    NOT NULL,
+    \\  maxdd_p95        REAL    NOT NULL,
+    \\  p_profit         REAL    NOT NULL,
+    \\  p_ruin           REAL    NOT NULL
+    \\);
+    \\CREATE TABLE IF NOT EXISTS montecarlo_paths (
+    \\  id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    \\  mc_id     INTEGER NOT NULL REFERENCES montecarlo(id),
+    \\  path_idx  INTEGER NOT NULL,
+    \\  step      INTEGER NOT NULL,
+    \\  equity    REAL    NOT NULL
+    \\);
+    \\CREATE INDEX IF NOT EXISTS idx_mc_paths ON montecarlo_paths (mc_id, path_idx, step);
 ;
 
 // Each migration is run separately so a "duplicate column" failure on an already-applied
@@ -99,6 +146,18 @@ fn runMigrations(db_ptr: ?*c.sqlite3) void {
         "ALTER TABLE backtests ADD COLUMN max_daily_loss                REAL    NOT NULL DEFAULT 0;",
         "ALTER TABLE backtests ADD COLUMN max_daily_loss_date           TEXT    NOT NULL DEFAULT '';",
         "ALTER TABLE backtests ADD COLUMN avg_daily_loss                REAL    NOT NULL DEFAULT 0;",
+        // Run parameters — persisted so /combine can re-run a saved config.
+        "ALTER TABLE backtests ADD COLUMN base_size       REAL    NOT NULL DEFAULT 0;",
+        "ALTER TABLE backtests ADD COLUMN leverage        REAL    NOT NULL DEFAULT 1;",
+        "ALTER TABLE backtests ADD COLUMN sizing_mode     INTEGER NOT NULL DEFAULT 0;",
+        "ALTER TABLE backtests ADD COLUMN vol_target      REAL    NOT NULL DEFAULT 0;",
+        "ALTER TABLE backtests ADD COLUMN vol_halflife    REAL    NOT NULL DEFAULT 0;",
+        "ALTER TABLE backtests ADD COLUMN vol_max_mult    REAL    NOT NULL DEFAULT 0;",
+        "ALTER TABLE backtests ADD COLUMN vol_min_days    INTEGER NOT NULL DEFAULT 0;",
+        "ALTER TABLE backtests ADD COLUMN date_from       TEXT    NOT NULL DEFAULT '';",
+        "ALTER TABLE backtests ADD COLUMN date_to         TEXT    NOT NULL DEFAULT '';",
+        "ALTER TABLE backtests ADD COLUMN spread          REAL    NOT NULL DEFAULT 0;",
+        "ALTER TABLE backtests ADD COLUMN slippage        REAL    NOT NULL DEFAULT 0;",
     };
     for (ms) |m| _ = c.sqlite3_exec(db_ptr, m, null, null, null);
 }
@@ -138,7 +197,25 @@ pub const Summary = struct {
     avg_daily_loss: f64,
 };
 
-pub fn save(strategy_name: []const u8, symbol: []const u8, result: engine.Result, summary: Summary) !void {
+// The run's input parameters — persisted alongside the report so a saved config
+// can be re-run later (used by /combine). `sizing_mode` is 0 = none, 1 = vol
+// target; `date_from`/`date_to` are "YYYY-MM-DD" (empty = full history). Combined
+// runs save an all-zero Params (they are not re-runnable as a single strategy).
+pub const Params = struct {
+    base_size: f64 = 0,
+    leverage: f64 = 1,
+    sizing_mode: i64 = 0,
+    vol_target: f64 = 0,
+    vol_halflife: f64 = 0,
+    vol_max_mult: f64 = 0,
+    vol_min_days: i64 = 0,
+    date_from: []const u8 = "",
+    date_to: []const u8 = "",
+    spread: f64 = 0,
+    slippage: f64 = 0,
+};
+
+pub fn save(strategy_name: []const u8, symbol: []const u8, result: engine.Result, summary: Summary, params: Params) !void {
     var db: ?*c.sqlite3 = null;
     if (c.sqlite3_open(DB_PATH, &db) != c.SQLITE_OK) return error.DbOpen;
     defer _ = c.sqlite3_close(db);
@@ -178,8 +255,11 @@ pub fn save(strategy_name: []const u8, symbol: []const u8, result: engine.Result
         \\   avg_drawdown_dollars,
         \\   max_intraday_drawdown,max_intraday_drawdown_dollars,max_intraday_drawdown_date,
         \\   avg_intraday_drawdown,avg_intraday_drawdown_dollars,
-        \\   max_daily_loss,max_daily_loss_date,avg_daily_loss)
-        \\VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);
+        \\   max_daily_loss,max_daily_loss_date,avg_daily_loss,
+        \\   base_size,leverage,sizing_mode,vol_target,vol_halflife,vol_max_mult,vol_min_days,
+        \\   date_from,date_to,spread,slippage)
+        \\VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,
+        \\        ?,?,?,?,?,?,?,?,?,?,?);
     ;
     var stmt: ?*c.sqlite3_stmt = null;
     if (c.sqlite3_prepare_v2(db, insert_run, -1, &stmt, null) != c.SQLITE_OK) return error.DbPrepare;
@@ -236,6 +316,23 @@ pub fn save(strategy_name: []const u8, symbol: []const u8, result: engine.Result
     _ = c.sqlite3_bind_text(stmt, 39, dloss_z.ptr, @intCast(dloss_z.len - 1), c.SQLITE_STATIC);
     _ = c.sqlite3_bind_double(stmt, 40, summary.avg_daily_loss);
 
+    // Run parameters (indices 41–51), appended so the indices above are unchanged.
+    _ = c.sqlite3_bind_double(stmt, 41, params.base_size);
+    _ = c.sqlite3_bind_double(stmt, 42, params.leverage);
+    _ = c.sqlite3_bind_int64(stmt, 43, params.sizing_mode);
+    _ = c.sqlite3_bind_double(stmt, 44, params.vol_target);
+    _ = c.sqlite3_bind_double(stmt, 45, params.vol_halflife);
+    _ = c.sqlite3_bind_double(stmt, 46, params.vol_max_mult);
+    _ = c.sqlite3_bind_int64(stmt, 47, params.vol_min_days);
+    var dfrom_buf: [16]u8 = undefined;
+    const dfrom_z = zStr(&dfrom_buf, params.date_from);
+    _ = c.sqlite3_bind_text(stmt, 48, dfrom_z.ptr, @intCast(dfrom_z.len - 1), c.SQLITE_STATIC);
+    var dto_buf: [16]u8 = undefined;
+    const dto_z = zStr(&dto_buf, params.date_to);
+    _ = c.sqlite3_bind_text(stmt, 49, dto_z.ptr, @intCast(dto_z.len - 1), c.SQLITE_STATIC);
+    _ = c.sqlite3_bind_double(stmt, 50, params.spread);
+    _ = c.sqlite3_bind_double(stmt, 51, params.slippage);
+
     if (c.sqlite3_step(stmt) != c.SQLITE_DONE) return error.DbInsertRun;
     const backtest_id = c.sqlite3_last_insert_rowid(db);
 
@@ -277,6 +374,21 @@ pub const BacktestEntry = struct {
     symbol_len: usize = 0,
     instrument: [32]u8 = [_]u8{0} ** 32,
     instrument_len: usize = 0,
+    // Saved run parameters (for /combine re-run). Zero base_size means the row
+    // predates parameter persistence and cannot be re-run.
+    base_size: f64 = 0,
+    leverage: f64 = 1,
+    sizing_mode: i64 = 0,
+    vol_target: f64 = 0,
+    vol_halflife: f64 = 0,
+    vol_max_mult: f64 = 0,
+    vol_min_days: i64 = 0,
+    date_from: [10]u8 = [_]u8{0} ** 10,
+    date_from_len: usize = 0,
+    date_to: [10]u8 = [_]u8{0} ** 10,
+    date_to_len: usize = 0,
+    spread: f64 = 0,
+    slippage: f64 = 0,
 };
 
 pub fn list(entries: []BacktestEntry) !usize {
@@ -288,38 +400,47 @@ pub fn list(entries: []BacktestEntry) !usize {
     _ = c.sqlite3_exec(db_ptr, SCHEMA, null, null, null);
     runMigrations(db_ptr);
 
-    const sql = "SELECT id, strategy, symbol, instrument FROM backtests ORDER BY id;";
+    const sql =
+        \\SELECT id, strategy, symbol, instrument,
+        \\       base_size, leverage, sizing_mode, vol_target, vol_halflife,
+        \\       vol_max_mult, vol_min_days, date_from, date_to, spread, slippage
+        \\FROM backtests ORDER BY id;
+    ;
     var stmt: ?*c.sqlite3_stmt = null;
     if (c.sqlite3_prepare_v2(db_ptr, sql, -1, &stmt, null) != c.SQLITE_OK) return 0;
     defer _ = c.sqlite3_finalize(stmt);
 
     var count: usize = 0;
     while (c.sqlite3_step(stmt) == c.SQLITE_ROW and count < entries.len) {
-        entries[count].id = c.sqlite3_column_int64(stmt, 0);
-        const sptr = c.sqlite3_column_text(stmt, 1);
-        if (sptr != null) {
-            const len: usize = @intCast(c.sqlite3_column_bytes(stmt, 1));
-            const n = @min(len, entries[count].strategy.len);
-            @memcpy(entries[count].strategy[0..n], sptr[0..n]);
-            entries[count].strategy_len = trimLen(entries[count].strategy[0..n]);
-        }
-        const yptr = c.sqlite3_column_text(stmt, 2);
-        if (yptr != null) {
-            const len: usize = @intCast(c.sqlite3_column_bytes(stmt, 2));
-            const n = @min(len, entries[count].symbol.len);
-            @memcpy(entries[count].symbol[0..n], yptr[0..n]);
-            entries[count].symbol_len = trimLen(entries[count].symbol[0..n]);
-        }
-        const iptr = c.sqlite3_column_text(stmt, 3);
-        if (iptr != null) {
-            const len: usize = @intCast(c.sqlite3_column_bytes(stmt, 3));
-            const n = @min(len, entries[count].instrument.len);
-            @memcpy(entries[count].instrument[0..n], iptr[0..n]);
-            entries[count].instrument_len = trimLen(entries[count].instrument[0..n]);
-        }
+        var e = &entries[count];
+        e.* = .{ .id = c.sqlite3_column_int64(stmt, 0) };
+        copyTextCol(&e.strategy, &e.strategy_len, stmt, 1);
+        copyTextCol(&e.symbol, &e.symbol_len, stmt, 2);
+        copyTextCol(&e.instrument, &e.instrument_len, stmt, 3);
+        e.base_size = c.sqlite3_column_double(stmt, 4);
+        e.leverage = c.sqlite3_column_double(stmt, 5);
+        e.sizing_mode = c.sqlite3_column_int64(stmt, 6);
+        e.vol_target = c.sqlite3_column_double(stmt, 7);
+        e.vol_halflife = c.sqlite3_column_double(stmt, 8);
+        e.vol_max_mult = c.sqlite3_column_double(stmt, 9);
+        e.vol_min_days = c.sqlite3_column_int64(stmt, 10);
+        copyTextCol(&e.date_from, &e.date_from_len, stmt, 11);
+        copyTextCol(&e.date_to, &e.date_to_len, stmt, 12);
+        e.spread = c.sqlite3_column_double(stmt, 13);
+        e.slippage = c.sqlite3_column_double(stmt, 14);
         count += 1;
     }
     return count;
+}
+
+// Copy a TEXT column into a fixed buffer, setting `*len` to the trimmed length.
+fn copyTextCol(buf: []u8, len: *usize, stmt: ?*c.sqlite3_stmt, col: c_int) void {
+    const ptr = c.sqlite3_column_text(stmt, col);
+    if (ptr == null) return;
+    const blen: usize = @intCast(c.sqlite3_column_bytes(stmt, col));
+    const n = @min(blen, buf.len);
+    @memcpy(buf[0..n], ptr[0..n]);
+    len.* = trimLen(buf[0..n]);
 }
 
 pub fn delete(id: i64) !void {
@@ -348,55 +469,145 @@ pub fn delete(id: i64) !void {
     if (c.sqlite3_exec(db_ptr, "COMMIT;", null, null, null) != c.SQLITE_OK) return error.DbCommit;
 }
 
-// Loads every trade belonging to one saved backtest as engine.Trade values, in
-// insertion (chronological) order. Caller owns the returned slice and must free
-// it. Used by /combine to merge multiple backtests' trade logs into one.
-pub fn loadTrades(gpa: std.mem.Allocator, id: i64) ![]engine.Trade {
+// Load the realized per-trade PnL series for a saved backtest into `out`
+// (exit-ordered), returning the number of trades read. Used by /montecarlo.
+pub fn loadTradePnls(id: i64, out: []f64) !usize {
     var db_ptr: ?*c.sqlite3 = null;
     if (c.sqlite3_open(DB_PATH, &db_ptr) != c.SQLITE_OK) return error.DbOpen;
     defer _ = c.sqlite3_close(db_ptr);
 
-    // Create tables if needed so SELECT doesn't fail on a fresh db.
-    _ = c.sqlite3_exec(db_ptr, SCHEMA, null, null, null);
-    runMigrations(db_ptr);
-
-    const sql = "SELECT side, entry_ts, exit_ts, entry_price, exit_price, pnl, contracts FROM trades WHERE backtest_id = ? ORDER BY id;";
+    const sql = "SELECT pnl FROM trades WHERE backtest_id = ? ORDER BY exit_ts, id;";
     var stmt: ?*c.sqlite3_stmt = null;
     if (c.sqlite3_prepare_v2(db_ptr, sql, -1, &stmt, null) != c.SQLITE_OK) return error.DbPrepare;
     defer _ = c.sqlite3_finalize(stmt);
     _ = c.sqlite3_bind_int64(stmt, 1, id);
 
-    var trades: std.ArrayList(engine.Trade) = .empty;
-    errdefer trades.deinit(gpa);
-
-    while (c.sqlite3_step(stmt) == c.SQLITE_ROW) {
-        var entry_ts: engine.Ts = [_]u8{' '} ** 16;
-        var exit_ts: engine.Ts = [_]u8{' '} ** 16;
-        copyTsCol(&entry_ts, stmt, 1);
-        copyTsCol(&exit_ts, stmt, 2);
-        const sptr = c.sqlite3_column_text(stmt, 0);
-        // Stored as "long"/"short"; the first byte ('l' vs 's') disambiguates.
-        const side: engine.Side = if (sptr != null and sptr[0] == 's') .short else .long;
-        try trades.append(gpa, .{
-            .entry_ts = entry_ts,
-            .exit_ts = exit_ts,
-            .side = side,
-            .entry_price = c.sqlite3_column_double(stmt, 3),
-            .exit_price = c.sqlite3_column_double(stmt, 4),
-            .pnl = c.sqlite3_column_double(stmt, 5),
-            .contracts = c.sqlite3_column_double(stmt, 6),
-        });
+    var count: usize = 0;
+    while (c.sqlite3_step(stmt) == c.SQLITE_ROW and count < out.len) {
+        out[count] = c.sqlite3_column_double(stmt, 0);
+        count += 1;
     }
-    return trades.toOwnedSlice(gpa);
+    return count;
 }
 
-// Copy a TEXT timestamp column into a fixed [16]u8 (space-padded if shorter).
-fn copyTsCol(dst: *engine.Ts, stmt: ?*c.sqlite3_stmt, col: c_int) void {
-    const ptr = c.sqlite3_column_text(stmt, col);
-    if (ptr == null) return;
-    const len: usize = @intCast(c.sqlite3_column_bytes(stmt, col));
-    const n = @min(len, dst.len);
-    @memcpy(dst[0..n], ptr[0..n]);
+// Read the initial balance recorded for a saved backtest.
+pub fn loadInitialBalance(id: i64) !f64 {
+    var db_ptr: ?*c.sqlite3 = null;
+    if (c.sqlite3_open(DB_PATH, &db_ptr) != c.SQLITE_OK) return error.DbOpen;
+    defer _ = c.sqlite3_close(db_ptr);
+
+    const sql = "SELECT initial_bal FROM backtests WHERE id = ?;";
+    var stmt: ?*c.sqlite3_stmt = null;
+    if (c.sqlite3_prepare_v2(db_ptr, sql, -1, &stmt, null) != c.SQLITE_OK) return error.DbPrepare;
+    defer _ = c.sqlite3_finalize(stmt);
+    _ = c.sqlite3_bind_int64(stmt, 1, id);
+
+    if (c.sqlite3_step(stmt) != c.SQLITE_ROW) return error.NotFound;
+    return c.sqlite3_column_double(stmt, 0);
+}
+
+// Persist a Monte Carlo result (one row in `montecarlo`, linked to its source
+// backtest by `source_id`).
+// Remove any Monte Carlo rows (and their sample paths) for a source backtest,
+// so a re-run can replace them. Best-effort within the caller's transaction.
+fn deleteExistingMonteCarlo(db_ptr: ?*c.sqlite3, source_id: i64) void {
+    const stmts = [_][*c]const u8{
+        "DELETE FROM montecarlo_paths WHERE mc_id IN (SELECT id FROM montecarlo WHERE source_id = ?);",
+        "DELETE FROM montecarlo WHERE source_id = ?;",
+    };
+    for (stmts) |sql| {
+        var st: ?*c.sqlite3_stmt = null;
+        if (c.sqlite3_prepare_v2(db_ptr, sql, -1, &st, null) == c.SQLITE_OK) {
+            _ = c.sqlite3_bind_int64(st, 1, source_id);
+            _ = c.sqlite3_step(st);
+        }
+        _ = c.sqlite3_finalize(st);
+    }
+}
+
+// Returns the new `montecarlo` row id. If `paths` is given, its sample equity
+// curves are written to `montecarlo_paths` in the same transaction. Any prior
+// Monte Carlo for the same source backtest is replaced (see deleteExistingMonteCarlo).
+pub fn saveMonteCarlo(source_id: i64, source_strategy: []const u8, source_symbol: []const u8, mc: montecarlo.Result, paths: ?montecarlo.Paths) !i64 {
+    var db_ptr: ?*c.sqlite3 = null;
+    if (c.sqlite3_open(DB_PATH, &db_ptr) != c.SQLITE_OK) return error.DbOpen;
+    defer _ = c.sqlite3_close(db_ptr);
+
+    _ = c.sqlite3_exec(db_ptr, SCHEMA, null, null, null);
+    runMigrations(db_ptr);
+    _ = c.sqlite3_exec(db_ptr, "BEGIN;", null, null, null);
+
+    // One Monte Carlo per source backtest: re-running /montecarlo on the same id
+    // replaces the previous result (and its sample paths) instead of accumulating
+    // rows. Paths are deleted first since SQLite does not cascade by default.
+    deleteExistingMonteCarlo(db_ptr, source_id);
+
+    const sql =
+        \\INSERT INTO montecarlo (
+        \\  run_at, source_id, source_strategy, source_symbol, mode, sims,
+        \\  block_mean, num_trades, initial_balance, ruin_frac, hist_final, hist_max_dd,
+        \\  final_p5, final_p25, final_p50, final_p75, final_p95,
+        \\  maxdd_p5, maxdd_p25, maxdd_p50, maxdd_p75, maxdd_p95,
+        \\  p_profit, p_ruin
+        \\) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);
+    ;
+    var stmt: ?*c.sqlite3_stmt = null;
+    if (c.sqlite3_prepare_v2(db_ptr, sql, -1, &stmt, null) != c.SQLITE_OK) return error.DbPrepare;
+    defer _ = c.sqlite3_finalize(stmt);
+
+    var nowbuf: [32]u8 = undefined;
+    const now = fmtNow(&nowbuf);
+    const mode_str: []const u8 = switch (mc.mode) {
+        .stationary_block => "stationary_block",
+        .iid => "iid",
+    };
+    _ = c.sqlite3_bind_text(stmt, 1, now.ptr, @intCast(now.len), c.SQLITE_STATIC);
+    _ = c.sqlite3_bind_int64(stmt, 2, source_id);
+    _ = c.sqlite3_bind_text(stmt, 3, source_strategy.ptr, @intCast(source_strategy.len), c.SQLITE_STATIC);
+    _ = c.sqlite3_bind_text(stmt, 4, source_symbol.ptr, @intCast(source_symbol.len), c.SQLITE_STATIC);
+    _ = c.sqlite3_bind_text(stmt, 5, mode_str.ptr, @intCast(mode_str.len), c.SQLITE_STATIC);
+    _ = c.sqlite3_bind_int64(stmt, 6, @intCast(mc.sims));
+    _ = c.sqlite3_bind_double(stmt, 7, mc.block_mean);
+    _ = c.sqlite3_bind_int64(stmt, 8, @intCast(mc.num_trades));
+    _ = c.sqlite3_bind_double(stmt, 9, mc.initial_balance);
+    _ = c.sqlite3_bind_double(stmt, 10, mc.ruin_frac);
+    _ = c.sqlite3_bind_double(stmt, 11, mc.historical_final);
+    _ = c.sqlite3_bind_double(stmt, 12, mc.historical_max_drawdown);
+    _ = c.sqlite3_bind_double(stmt, 13, mc.final_balance[0]);
+    _ = c.sqlite3_bind_double(stmt, 14, mc.final_balance[1]);
+    _ = c.sqlite3_bind_double(stmt, 15, mc.final_balance[2]);
+    _ = c.sqlite3_bind_double(stmt, 16, mc.final_balance[3]);
+    _ = c.sqlite3_bind_double(stmt, 17, mc.final_balance[4]);
+    _ = c.sqlite3_bind_double(stmt, 18, mc.max_drawdown[0]);
+    _ = c.sqlite3_bind_double(stmt, 19, mc.max_drawdown[1]);
+    _ = c.sqlite3_bind_double(stmt, 20, mc.max_drawdown[2]);
+    _ = c.sqlite3_bind_double(stmt, 21, mc.max_drawdown[3]);
+    _ = c.sqlite3_bind_double(stmt, 22, mc.max_drawdown[4]);
+    _ = c.sqlite3_bind_double(stmt, 23, mc.p_profit);
+    _ = c.sqlite3_bind_double(stmt, 24, mc.p_ruin);
+
+    if (c.sqlite3_step(stmt) != c.SQLITE_DONE) return error.DbInsert;
+    const mc_id = c.sqlite3_last_insert_rowid(db_ptr);
+
+    if (paths) |pth| {
+        const psql = "INSERT INTO montecarlo_paths (mc_id, path_idx, step, equity) VALUES (?,?,?,?);";
+        var pstmt: ?*c.sqlite3_stmt = null;
+        if (c.sqlite3_prepare_v2(db_ptr, psql, -1, &pstmt, null) != c.SQLITE_OK) return error.DbPrepare;
+        defer _ = c.sqlite3_finalize(pstmt);
+        for (0..pth.n_paths) |pi| {
+            for (0..pth.n_steps) |st| {
+                _ = c.sqlite3_bind_int64(pstmt, 1, mc_id);
+                _ = c.sqlite3_bind_int64(pstmt, 2, @intCast(pi));
+                _ = c.sqlite3_bind_int64(pstmt, 3, @intCast(pth.steps[st]));
+                _ = c.sqlite3_bind_double(pstmt, 4, pth.equity[pi * pth.n_steps + st]);
+                if (c.sqlite3_step(pstmt) != c.SQLITE_DONE) return error.DbInsert;
+                _ = c.sqlite3_reset(pstmt);
+            }
+        }
+    }
+
+    _ = c.sqlite3_exec(db_ptr, "COMMIT;", null, null, null);
+    return mc_id;
 }
 
 // Length of `s` with trailing NUL / space padding stripped. Older rows were

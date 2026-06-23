@@ -144,7 +144,7 @@ export default function App() {
   const [visibleIds, setVisibleIds] = useState<Set<number>>(new Set())
   const [indicators, setIndicators] = useState<Indicators>({ vwap: false, openingRange: false })
   const [selectedBacktestId, setSelectedBacktestId] = useState<number | null>(null)
-  const [activeTab, setActiveTab] = useState<'analysis' | 'equity'>('analysis')
+  const [activeTab, setActiveTab] = useState<'analysis' | 'equity' | 'monte-carlo'>('analysis')
 
   // Default until the DB responds; overwritten once by the settings query effect below.
   const [fromDate, setFromDate] = useState('2026-01-01')

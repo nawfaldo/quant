@@ -151,6 +151,129 @@ pub fn getTradesBin(a: std.mem.Allocator, backtest_id: i64) ![]const u8 {
     return out.toOwnedSlice(a);
 }
 
+pub const MC_MAGIC: u32 = 0x4D435054; // "MCPT"
+
+// Returns binary: 48-byte header + num_paths*steps*f32 equity values.
+// Header layout (all little-endian):
+//   [0..4]  magic     u32
+//   [4..8]  num_paths u32   (all curves in binary)
+//   [8..12] steps     u32
+//   [12..16] initial_balance f32
+//   [16..20] final_p5  f32
+//   [20..24] final_p25 f32
+//   [24..28] final_p50 f32
+//   [28..32] final_p75 f32
+//   [32..36] final_p95 f32
+//   [36..40] p_profit  f32
+//   [40..44] p_ruin    f32
+//   [44..48] sims      u32  (total simulations run)
+pub fn getMonteCarloBin(a: std.mem.Allocator, backtest_id: i64) ![]const u8 {
+    var db_ptr: ?*c.sqlite3 = null;
+    if (c.sqlite3_open_v2(DB_PATH, &db_ptr, c.SQLITE_OPEN_READONLY | c.SQLITE_OPEN_FULLMUTEX, null) != c.SQLITE_OK)
+        return error.DbOpenFailed;
+    defer _ = c.sqlite3_close(db_ptr);
+    _ = c.sqlite3_busy_timeout(db_ptr, 3000);
+
+    var mc_id: i64 = 0;
+    var sims: u32 = 0;
+    var initial_balance: f32 = 0;
+    var p5: f32 = 0;
+    var p25: f32 = 0;
+    var p50: f32 = 0;
+    var p75: f32 = 0;
+    var p95: f32 = 0;
+    var p_profit: f32 = 0;
+    var p_ruin: f32 = 0;
+    {
+        var stmt: ?*c.sqlite3_stmt = null;
+        if (c.sqlite3_prepare_v2(db_ptr, "SELECT id, initial_balance, final_p5, final_p25, final_p50, final_p75, final_p95, p_profit, p_ruin, sims FROM montecarlo WHERE source_id = ? ORDER BY run_at DESC LIMIT 1", -1, &stmt, null) != c.SQLITE_OK)
+            return error.PrepFailed;
+        defer _ = c.sqlite3_finalize(stmt);
+        if (c.sqlite3_bind_int64(stmt, 1, backtest_id) != c.SQLITE_OK) return error.BindFailed;
+        if (c.sqlite3_step(stmt) != c.SQLITE_ROW) return error.NotFound;
+        mc_id = c.sqlite3_column_int64(stmt, 0);
+        initial_balance = @floatCast(c.sqlite3_column_double(stmt, 1));
+        p5  = @floatCast(c.sqlite3_column_double(stmt, 2));
+        p25 = @floatCast(c.sqlite3_column_double(stmt, 3));
+        p50 = @floatCast(c.sqlite3_column_double(stmt, 4));
+        p75 = @floatCast(c.sqlite3_column_double(stmt, 5));
+        p95 = @floatCast(c.sqlite3_column_double(stmt, 6));
+        p_profit = @floatCast(c.sqlite3_column_double(stmt, 7));
+        p_ruin   = @floatCast(c.sqlite3_column_double(stmt, 8));
+        sims     = @intCast(c.sqlite3_column_int64(stmt, 9));
+    }
+
+    var steps: u32 = 0;
+    {
+        var stmt: ?*c.sqlite3_stmt = null;
+        if (c.sqlite3_prepare_v2(db_ptr, "SELECT COUNT(*) FROM montecarlo_paths WHERE mc_id = ? AND path_idx = 0", -1, &stmt, null) != c.SQLITE_OK)
+            return error.PrepFailed;
+        defer _ = c.sqlite3_finalize(stmt);
+        if (c.sqlite3_bind_int64(stmt, 1, mc_id) != c.SQLITE_OK) return error.BindFailed;
+        if (c.sqlite3_step(stmt) == c.SQLITE_ROW)
+            steps = @intCast(c.sqlite3_column_int64(stmt, 0));
+    }
+    if (steps == 0) return error.NotFound;
+
+    // Fetch actual trade-count values at each checkpoint (path 0 is the reference).
+    // These are written after the header so the frontend can map step index → trade count.
+    var step_values: std.ArrayList(u8) = .empty;
+    defer step_values.deinit(a);
+    {
+        var stmt: ?*c.sqlite3_stmt = null;
+        if (c.sqlite3_prepare_v2(db_ptr, "SELECT step FROM montecarlo_paths WHERE mc_id = ? AND path_idx = 0 ORDER BY step", -1, &stmt, null) != c.SQLITE_OK)
+            return error.PrepFailed;
+        defer _ = c.sqlite3_finalize(stmt);
+        if (c.sqlite3_bind_int64(stmt, 1, mc_id) != c.SQLITE_OK) return error.BindFailed;
+        while (c.sqlite3_step(stmt) == c.SQLITE_ROW) {
+            const s: u32 = @intCast(c.sqlite3_column_int64(stmt, 0));
+            var bytes: [4]u8 = undefined;
+            std.mem.writeInt(u32, &bytes, s, .little);
+            try step_values.appendSlice(a, &bytes);
+        }
+    }
+
+    var equity_data: std.ArrayList(u8) = .empty;
+    defer equity_data.deinit(a);
+    var path_rows: u32 = 0;
+    {
+        var stmt: ?*c.sqlite3_stmt = null;
+        if (c.sqlite3_prepare_v2(db_ptr, "SELECT equity FROM montecarlo_paths WHERE mc_id = ? ORDER BY path_idx, step", -1, &stmt, null) != c.SQLITE_OK)
+            return error.PrepFailed;
+        defer _ = c.sqlite3_finalize(stmt);
+        if (c.sqlite3_bind_int64(stmt, 1, mc_id) != c.SQLITE_OK) return error.BindFailed;
+        while (c.sqlite3_step(stmt) == c.SQLITE_ROW) {
+            const eq: f32 = @floatCast(c.sqlite3_column_double(stmt, 0));
+            var bytes: [4]u8 = undefined;
+            std.mem.writeInt(u32, &bytes, @bitCast(eq), .little);
+            try equity_data.appendSlice(a, &bytes);
+            path_rows += 1;
+        }
+    }
+
+    const num_paths: u32 = path_rows / steps;
+
+    // Binary layout: 48-byte header | steps*u32 step_values | num_paths*steps*f32 equity
+    var out: std.ArrayList(u8) = .empty;
+    errdefer out.deinit(a);
+    try out.appendNTimes(a, 0, 48);
+    std.mem.writeInt(u32, out.items[0..4],  MC_MAGIC,                    .little);
+    std.mem.writeInt(u32, out.items[4..8],  num_paths,                   .little);
+    std.mem.writeInt(u32, out.items[8..12], steps,                       .little);
+    std.mem.writeInt(u32, out.items[12..16], @as(u32, @bitCast(initial_balance)), .little);
+    std.mem.writeInt(u32, out.items[16..20], @as(u32, @bitCast(p5)),     .little);
+    std.mem.writeInt(u32, out.items[20..24], @as(u32, @bitCast(p25)),    .little);
+    std.mem.writeInt(u32, out.items[24..28], @as(u32, @bitCast(p50)),    .little);
+    std.mem.writeInt(u32, out.items[28..32], @as(u32, @bitCast(p75)),    .little);
+    std.mem.writeInt(u32, out.items[32..36], @as(u32, @bitCast(p95)),    .little);
+    std.mem.writeInt(u32, out.items[36..40], @as(u32, @bitCast(p_profit)), .little);
+    std.mem.writeInt(u32, out.items[40..44], @as(u32, @bitCast(p_ruin)),  .little);
+    std.mem.writeInt(u32, out.items[44..48], sims,                        .little);
+    try out.appendSlice(a, step_values.items);
+    try out.appendSlice(a, equity_data.items);
+    return out.toOwnedSlice(a);
+}
+
 pub fn getTrades(a: std.mem.Allocator, backtest_id: i64) ![]const u8 {
     var db: ?*c.sqlite3 = null;
     if (c.sqlite3_open_v2(DB_PATH, &db, c.SQLITE_OPEN_READONLY, null) != c.SQLITE_OK)

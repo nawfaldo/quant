@@ -6,6 +6,7 @@ const report = @import("report.zig");
 const db = @import("db.zig");
 const tune = @import("tune.zig");
 const combine = @import("combine.zig");
+const montecarlo = @import("montecarlo.zig");
 
 const STDIN = posix.STDIN_FILENO;
 const STDOUT = posix.STDOUT_FILENO;
@@ -30,7 +31,8 @@ const COMMANDS = [_]Command{
     .{ .name = "/run", .description = "run backtest" },
     .{ .name = "/tune", .description = "grid-search strategy parameters" },
     .{ .name = "/delete", .description = "delete a saved backtest" },
-    .{ .name = "/combine", .description = "merge saved backtests into one report" },
+    .{ .name = "/combine", .description = "run several saved configs as one portfolio" },
+    .{ .name = "/montecarlo", .description = "resample a saved backtest's trades" },
     .{ .name = "/exit", .description = "exit" },
 };
 
@@ -115,6 +117,8 @@ const State = enum {
     // /combine flow
     awaiting_combine_balance,
     awaiting_combine_pick,
+    // /montecarlo flow
+    awaiting_mc_pick,
 };
 
 var g_running: bool = false;
@@ -162,6 +166,9 @@ const MAX_COMBINE = MAX_DELETE_ENTRIES;
 var g_combine_balance: f64 = 0;
 var g_combine_ids: [MAX_COMBINE]i64 = undefined;
 var g_combine_count: usize = 0;
+// The picked entries, snapshotted before the combine worker starts so its thread
+// reads from stable storage (g_delete_entries may be re-listed meanwhile).
+var g_combine_entries: [MAX_COMBINE]db.BacktestEntry = undefined;
 
 // ── Raw mode ──────────────────────────────────────────────────────────────────
 
@@ -456,7 +463,7 @@ fn drawBar(input: []const u8) void {
 
 // ── Save prompt ───────────────────────────────────────────────────────────────
 
-fn promptSave(result: engine.Result, summary: db.Summary, strat_name: []const u8, symbol: []const u8) void {
+fn promptSave(result: engine.Result, summary: db.Summary, strat_name: []const u8, symbol: []const u8, params: db.Params) void {
     printContent("  Save result? (y/n)  ");
 
     var ch: [1]u8 = undefined;
@@ -464,13 +471,97 @@ fn promptSave(result: engine.Result, summary: db.Summary, strat_name: []const u8
     if (n == 0) return;
 
     if (ch[0] == 'y' or ch[0] == 'Y') {
-        db.save(strat_name, symbol, result, summary) catch |err| {
+        db.save(strat_name, symbol, result, summary, params) catch |err| {
             var buf: [128]u8 = undefined;
             const msg = std.fmt.bufPrint(&buf, "\n  Save failed: {s}\n\n", .{@errorName(err)}) catch "\n  Save failed.\n\n";
             printContent(msg);
             return;
         };
         printContent("\n  Saved.\n\n");
+    } else {
+        printContent("\n\n");
+    }
+}
+
+// ── Monte Carlo ─────────────────────────────────────────────────────────────
+// Resample a saved backtest's realized trade PnLs (stationary block bootstrap)
+// to recover the distribution of final balance / drawdown the edge could have
+// produced, then offer to persist the result. MC is fast (~10k sims over a few
+// thousand trades is sub-millisecond), so it runs synchronously here — no worker
+// thread / Ctrl+C polling needed.
+fn runMonteCarlo(io: std.Io, gpa: std.mem.Allocator, entry: db.BacktestEntry, sel_id: i64) void {
+    const sname = entry.strategy[0..entry.strategy_len];
+    const sym = entry.symbol[0..entry.symbol_len];
+
+    drawBar(""); // clear the input bar before any blocking operation
+
+    // Echo the selection on the question line.
+    var hbuf: [64]u8 = undefined;
+    out("\x1b8\r\x1b[2K");
+    const echoed = std.fmt.bufPrint(&hbuf, "  Select id: {d}\n", .{sel_id}) catch "  Select id:\n";
+    out(echoed);
+    out("\x1b7");
+
+    const balance = db.loadInitialBalance(entry.id) catch {
+        printContent("\n  Could not load backtest.\n\n");
+        return;
+    };
+
+    // Load the trade PnL series (capped; strategies rarely exceed this).
+    const MAX_TRADES = 200_000;
+    const pnls = gpa.alloc(f64, MAX_TRADES) catch {
+        printContent("\n  Out of memory.\n\n");
+        return;
+    };
+    defer gpa.free(pnls);
+    const ntr = db.loadTradePnls(entry.id, pnls) catch {
+        printContent("\n  Could not load trades.\n\n");
+        return;
+    };
+    if (ntr == 0) {
+        printContent("\n  That backtest has no trades.\n\n");
+        return;
+    }
+
+    // Capture every sim's equity curve too, so the saved spaghetti is the same
+    // set of simulations behind the summary stats (default 1000 sims).
+    var paths: ?montecarlo.Paths = null;
+    const mc = montecarlo.run(gpa, pnls[0..ntr], balance, .{}, &paths) catch {
+        printContent("\n  Monte Carlo failed.\n\n");
+        return;
+    };
+    defer if (paths) |*p| p.deinit(gpa);
+
+    out("\x1b8"); // restore content cursor so the report flows in the content area
+    report.printMonteCarlo(io, sname, sym, mc) catch {
+        out("\x1b7");
+        return;
+    };
+    out("\x1b7");
+
+    promptSaveMonteCarlo(entry.id, sname, sym, mc, paths);
+}
+
+fn promptSaveMonteCarlo(source_id: i64, sname: []const u8, sym: []const u8, mc: montecarlo.Result, paths: ?montecarlo.Paths) void {
+    printContent("  Save Monte Carlo result? (y/n)  ");
+
+    var ch: [1]u8 = undefined;
+    const n = posix.read(STDIN, &ch) catch return;
+    if (n == 0) return;
+
+    if (ch[0] == 'y' or ch[0] == 'Y') {
+        const mc_id = db.saveMonteCarlo(source_id, sname, sym, mc, paths) catch |err| {
+            var buf: [128]u8 = undefined;
+            const msg = std.fmt.bufPrint(&buf, "\n  Save failed: {s}\n\n", .{@errorName(err)}) catch "\n  Save failed.\n\n";
+            printContent(msg);
+            return;
+        };
+        var buf: [256]u8 = undefined;
+        const msg = if (paths) |p|
+            std.fmt.bufPrint(&buf, "\n  Saved.  mc_id={d}  ({d} chart paths x {d} steps in montecarlo_paths)\n\n", .{ mc_id, p.n_paths, p.n_steps }) catch "\n  Saved.\n\n"
+        else
+            std.fmt.bufPrint(&buf, "\n  Saved.  mc_id={d}\n\n", .{mc_id}) catch "\n  Saved.\n\n";
+        printContent(msg);
     } else {
         printContent("\n\n");
     }
@@ -491,7 +582,7 @@ fn RunCtx(comptime S: type) type {
     };
 }
 
-fn runAndReport(comptime S: type, io: std.Io, gpa: std.mem.Allocator, strat: *S, save_name: []const u8, save_symbol: []const u8) void {
+fn runAndReport(comptime S: type, io: std.Io, gpa: std.mem.Allocator, strat: *S, save_name: []const u8, save_symbol: []const u8, params: db.Params) void {
     g_running = true;
     engine.cancelled.store(false, .monotonic);
     drawBar("");
@@ -548,8 +639,27 @@ fn runAndReport(comptime S: type, io: std.Io, gpa: std.mem.Allocator, strat: *S,
             return;
         };
         out("\x1b7"); // save content cursor after the report
-        promptSave(result, summary, save_name, save_symbol);
+        promptSave(result, summary, save_name, save_symbol, params);
     }
+}
+
+// Snapshot the active run parameters (sizing/vol/date/cost) into a db.Params so
+// the run can be persisted and later re-run by /combine. `base_size` is the base
+// lots/contracts before leverage; `contracts = base_size × leverage` at run time.
+fn currentParams(base_size: f64, leverage: f64) db.Params {
+    return .{
+        .base_size = base_size,
+        .leverage = leverage,
+        .sizing_mode = if (g_sizing_mode == .vol_target) 1 else 0,
+        .vol_target = g_vol.target,
+        .vol_halflife = g_vol.halflife,
+        .vol_max_mult = g_vol.max_mult,
+        .vol_min_days = @intCast(g_vol.min_days),
+        .date_from = engine.from orelse "",
+        .date_to = engine.to orelse "",
+        .spread = engine.spread,
+        .slippage = engine.slippage,
+    };
 }
 
 // Generic over the strategy type. OrbBuy and RthVwap share the same parameter
@@ -563,12 +673,21 @@ fn runStrategy(comptime S: type, io: std.Io, gpa: std.mem.Allocator, balance: f6
         .sizing_mode = g_sizing_mode,
         .vol = g_vol,
     };
-    runAndReport(S, io, gpa, &strat, save_name, SYMBOL_LABELS[g_symbol_idx]);
+    runAndReport(S, io, gpa, &strat, save_name, SYMBOL_LABELS[g_symbol_idx], currentParams(base_contracts, leverage));
 }
 
 fn runBuyHold(io: std.Io, gpa: std.mem.Allocator, balance: f64, lots: f64) void {
     var strat = strategy.BuyHold{ .initial_balance = balance, .contracts = lots };
-    runAndReport(strategy.BuyHold, io, gpa, &strat, "BUY_HOLD", SYMBOL_LABELS[g_symbol_idx]);
+    const params = db.Params{
+        .base_size = lots,
+        .leverage = 1,
+        .sizing_mode = 0, // Buy & Hold has no sizing model
+        .date_from = engine.from orelse "",
+        .date_to = engine.to orelse "",
+        .spread = engine.spread,
+        .slippage = engine.slippage,
+    };
+    runAndReport(strategy.BuyHold, io, gpa, &strat, "BUY_HOLD", SYMBOL_LABELS[g_symbol_idx], params);
 }
 
 // ── Combine ───────────────────────────────────────────────────────────────────
@@ -656,86 +775,282 @@ fn combineFindEntry(id: i64) ?db.BacktestEntry {
     return null;
 }
 
-fn runCombine(io: std.Io, gpa: std.mem.Allocator, balance: f64, ids: []const i64) void {
+// Map a stored sizing_mode int (0 none / 1 vol target) back to the enum.
+fn combineMode(v: i64) strategy.sizing.Mode {
+    return if (v == 1) .vol_target else .none;
+}
+
+// Rebuild a VolTarget from a saved entry's params (only consulted when the saved
+// sizing_mode is vol target).
+fn combineVol(e: *const db.BacktestEntry) strategy.sizing.VolTarget {
+    return .{
+        .target = e.vol_target,
+        .halflife = e.vol_halflife,
+        .max_mult = e.vol_max_mult,
+        .min_days = @intCast(@max(@as(i64, 0), e.vol_min_days)),
+    };
+}
+
+// A saved row is usable in /combine only if it carries run parameters (rows saved
+// before parameter persistence have base_size 0) and is not itself a combined run.
+fn combineEntryUsable(e: db.BacktestEntry) bool {
+    if (std.mem.eql(u8, e.strategy[0..e.strategy_len], "COMBINED")) return false;
+    return e.base_size > 0;
+}
+
+// Re-run one saved config through the engine and return its fresh trade log.
+// Builds an explicit engine.Config from the saved params (no global mutation),
+// so several sources can run concurrently without racing engine state. Position
+// sizing is balance-independent, so running at the combine-level balance
+// reproduces the saved run's trades.
+fn runOneSource(io: std.Io, gpa: std.mem.Allocator, e: *const db.BacktestEntry, balance: f64) !engine.Result {
+    const cfg = engine.Config{
+        .symbol = combineSymbolPrefix(e.symbol[0..e.symbol_len]) orelse return error.UnknownSymbol,
+        .instrument = combineInstrument(e.instrument[0..e.instrument_len]) orelse .forex,
+        .from = if (e.date_from_len > 0) e.date_from[0..e.date_from_len] else null,
+        .to = if (e.date_to_len > 0) e.date_to[0..e.date_to_len] else null,
+        .spread = e.spread,
+        .slippage = e.slippage,
+        .warmup_days = engine.warmup_days,
+    };
+
+    const sname = e.strategy[0..e.strategy_len];
+    if (std.mem.eql(u8, sname, "30M_BUY")) {
+        var s = strategy.OrbBuy{
+            .initial_balance = balance,
+            .contracts = e.base_size * e.leverage,
+            .leverage = e.leverage,
+            .sizing_mode = combineMode(e.sizing_mode),
+            .vol = combineVol(e),
+        };
+        return engine.runWith(io, gpa, &s, cfg);
+    } else if (std.mem.eql(u8, sname, "RTH_VWAP")) {
+        var s = strategy.RthVwap{
+            .initial_balance = balance,
+            .contracts = e.base_size * e.leverage,
+            .leverage = e.leverage,
+            .sizing_mode = combineMode(e.sizing_mode),
+            .vol = combineVol(e),
+        };
+        return engine.runWith(io, gpa, &s, cfg);
+    } else if (std.mem.eql(u8, sname, "BUY_HOLD")) {
+        var s = strategy.BuyHold{ .initial_balance = balance, .contracts = e.base_size };
+        return engine.runWith(io, gpa, &s, cfg);
+    }
+    return error.UnknownStrategy;
+}
+
+// Result of the combine worker: one synthetic Result over the merged book, the
+// shared instrument (null when sources mix instruments), and whether the drawdown
+// fell back to the trade-close estimate (no bars fetchable).
+const CombineOut = struct { result: engine.Result, common_inst: ?engine.Instrument, fallback: bool };
+
+// One source's re-run: its own thread does the fetch + backtest, writes its fresh
+// trade log (or error) here, and bumps the shared progress counter when done.
+const SourceCtx = struct {
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    entry: *const db.BacktestEntry,
+    balance: f64,
+    progress: *std.atomic.Value(usize),
+    trades: ?[]engine.Trade = null,
+    err: ?anyerror = null,
+};
+
+fn sourceThread(sc: *SourceCtx) void {
+    if (runOneSource(sc.io, sc.gpa, sc.entry, sc.balance)) |res| {
+        sc.trades = res.trades;
+    } else |err| {
+        sc.err = err;
+    }
+    _ = sc.progress.fetchAdd(1, .release);
+}
+
+// Re-run every picked config CONCURRENTLY (one thread per source — each opens its
+// own QuestDB connection and runs an independent engine pass), then merge their
+// trade logs and mark the combined book to market for a real portfolio drawdown.
+// Caller owns the returned result.trades.
+fn combineCompute(io: std.Io, gpa: std.mem.Allocator, balance: f64, entries: []const db.BacktestEntry, progress: *std.atomic.Value(usize)) !CombineOut {
+    const ne = entries.len;
+
+    // Launch all sources at once; if a spawn fails, run that source inline.
+    var scs: [MAX_COMBINE]SourceCtx = undefined;
+    var threads: [MAX_COMBINE]?std.Thread = undefined;
+    for (0..ne) |i| {
+        scs[i] = .{ .io = io, .gpa = gpa, .entry = &entries[i], .balance = balance, .progress = progress };
+    }
+    for (0..ne) |i| {
+        threads[i] = std.Thread.spawn(.{}, sourceThread, .{&scs[i]}) catch blk: {
+            sourceThread(&scs[i]);
+            break :blk null;
+        };
+    }
+    for (0..ne) |i| if (threads[i]) |t| t.join();
+
+    // If any source failed, free the ones that succeeded and surface the error
+    // (Cancelled wins so Ctrl+C reads as a cancel, not a generic error).
+    var first_err: ?anyerror = null;
+    for (0..ne) |i| {
+        if (scs[i].err) |e| {
+            if (first_err == null or e == error.Cancelled) first_err = e;
+        }
+    }
+    if (first_err) |e| {
+        for (0..ne) |i| if (scs[i].trades) |t| gpa.free(t);
+        return e;
+    }
+
+    // Collect each source's fresh trades + its price table / point value.
     var loaded: [MAX_COMBINE][]engine.Trade = undefined;
     var srcs: [MAX_COMBINE]combine.TradeSrc = undefined;
-    var ns: usize = 0;
-    defer for (loaded[0..ns]) |s| gpa.free(s);
-
-    // Track the instrument across sources so the report shows the right label /
-    // size terminology. Stays set only while every source shares one instrument.
     var common_inst: ?engine.Instrument = null;
     var inst_seen = false;
+    for (0..ne) |i| {
+        const entry = &entries[i];
+        loaded[i] = scs[i].trades.?;
 
-    for (ids) |id| {
-        const entry = combineFindEntry(id) orelse continue;
-        const t = db.loadTrades(gpa, id) catch |err| {
-            var errbuf: [128]u8 = undefined;
-            const msg = std.fmt.bufPrint(&errbuf, "  Load failed for #{d}: {s}\n\n", .{ id, @errorName(err) }) catch "  Load failed.\n\n";
-            printContent(msg);
-            return;
-        };
-        loaded[ns] = t;
-        const inst_label = entry.instrument[0..entry.instrument_len];
-        const ei = combineInstrument(inst_label);
+        const inst = combineInstrument(entry.instrument[0..entry.instrument_len]);
         if (!inst_seen) {
-            common_inst = ei;
+            common_inst = inst;
             inst_seen = true;
-        } else if (common_inst != ei) {
+        } else if (common_inst != inst) {
             common_inst = null; // mixed instruments
         }
-        var src = combine.TradeSrc{ .trades = t, .mult = combineMult(inst_label) };
-        // Resolve the price table for mark-to-market; leave unresolved if we
-        // can't (the source then books realized PnL only).
+
+        var src = combine.TradeSrc{ .trades = loaded[i], .mult = combineMult(entry.instrument[0..entry.instrument_len]) };
         if (combineSymbolPrefix(entry.symbol[0..entry.symbol_len])) |prefix| {
             if (combineTimeframe(entry.strategy[0..entry.strategy_len])) |tf| {
                 const tbl = std.fmt.bufPrint(&src.table_buf, "{s}_{s}", .{ prefix, tf }) catch "";
                 src.table_len = tbl.len;
             }
         }
-        srcs[ns] = src;
-        ns += 1;
+        srcs[i] = src;
     }
-
-    if (ns == 0) {
-        printContent("  Nothing to combine.\n\n");
-        return;
-    }
+    errdefer for (loaded[0..ne]) |s| gpa.free(s);
 
     // Merge every source's trades into one exit-sorted log for the report.
     var all: std.ArrayList(engine.Trade) = .empty;
-    defer all.deinit(gpa);
-    for (srcs[0..ns]) |s| {
-        all.appendSlice(gpa, s.trades) catch {
-            printContent("  Out of memory.\n\n");
-            return;
-        };
-    }
-    if (all.items.len == 0) {
-        printContent("  No trades to combine.\n\n");
-        return;
-    }
-
-    const owned = all.toOwnedSlice(gpa) catch {
-        printContent("  Out of memory.\n\n");
-        return;
-    };
+    errdefer all.deinit(gpa);
+    for (srcs[0..ne]) |s| try all.appendSlice(gpa, s.trades);
+    if (all.items.len == 0) return error.NoTrades;
+    const owned = try all.toOwnedSlice(gpa);
+    errdefer gpa.free(owned);
     std.mem.sort(engine.Trade, owned, {}, tradeBeforeByExit);
 
     // Real drawdown: re-fetch each source's bars and mark the combined book to
     // market. Falls back to a realized-equity drawdown if no bars can be fetched.
-    const dd = if (combine.markToMarket(io, gpa, balance, srcs[0..ns])) |d| d else |err| blk: {
-        var eb: [192]u8 = undefined;
-        const m = std.fmt.bufPrint(&eb, "  (couldn't fetch bars [{s}] — drawdown is a trade-close estimate)\n", .{@errorName(err)}) catch "  (drawdown is a trade-close estimate)\n";
-        printContent(m);
+    var fallback = false;
+    const dd = combine.markToMarket(io, gpa, balance, srcs[0..ne]) catch blk: {
+        fallback = true;
         break :blk combine.realizedDrawdown(balance, owned);
     };
     const result = buildCombinedResult(balance, owned, dd);
+
+    // The per-source trade slices were copied into `owned`; free them now.
+    for (loaded[0..ne]) |s| gpa.free(s);
+    return .{ .result = result, .common_inst = common_inst, .fallback = fallback };
+}
+
+const CombineCtx = struct {
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    balance: f64,
+    entries: []const db.BacktestEntry,
+    progress: std.atomic.Value(usize) = .init(0),
+    out: ?CombineOut = null,
+    err: ?anyerror = null,
+    done: std.atomic.Value(bool) = .init(false),
+};
+
+fn combineThread(ctx: *CombineCtx) void {
+    if (combineCompute(ctx.io, ctx.gpa, ctx.balance, ctx.entries, &ctx.progress)) |o| {
+        ctx.out = o;
+    } else |err| {
+        ctx.err = err;
+    }
+    ctx.done.store(true, .release);
+}
+
+fn drawCombineProgress(done: usize, total: usize) void {
+    var buf: [128]u8 = undefined;
+    const s = std.fmt.bufPrint(&buf, "\x1b[{d};1H\x1b[2K  \x1b[90mrunning {d} strategies together ({d} done)  Ctrl+C to cancel\x1b[0m", .{ term_rows - 3, total, done }) catch return;
+    out(s);
+}
+
+// Re-run the picked saved configs and print one portfolio report over the merged
+// book. The heavy work (fetch + backtest per source + mark-to-market) runs on a
+// worker thread; the main thread polls stdin so Ctrl+C cancels.
+fn runCombine(io: std.Io, gpa: std.mem.Allocator, balance: f64, ids: []const i64) void {
+    // Snapshot the picked entries (with their saved params) into stable storage
+    // the worker can read without racing a re-list of g_delete_entries.
+    var ne: usize = 0;
+    for (ids) |id| {
+        const entry = combineFindEntry(id) orelse continue;
+        if (!combineEntryUsable(entry)) continue;
+        g_combine_entries[ne] = entry;
+        ne += 1;
+    }
+    if (ne == 0) {
+        printContent("  Nothing to combine.\n\n");
+        return;
+    }
+
+    g_running = true;
+    engine.cancelled.store(false, .monotonic);
+    drawBar("");
+    drawCombineProgress(0, ne);
+
+    var ctx = CombineCtx{ .io = io, .gpa = gpa, .balance = balance, .entries = g_combine_entries[0..ne] };
+    const t = std.Thread.spawn(.{}, combineThread, .{&ctx}) catch |err| {
+        g_running = false;
+        var errbuf: [128]u8 = undefined;
+        const msg = std.fmt.bufPrint(&errbuf, "  Error: {s}\n\n", .{@errorName(err)}) catch "  Error.\n\n";
+        printContent(msg);
+        return;
+    };
+
+    var last_done: usize = 0;
+    var pfd = [1]posix.pollfd{.{ .fd = STDIN, .events = posix.POLL.IN, .revents = 0 }};
+    while (!ctx.done.load(.acquire)) {
+        const ready = posix.poll(&pfd, 10) catch 0;
+        if (ready > 0 and pfd[0].revents & posix.POLL.IN != 0) {
+            var ch: [1]u8 = undefined;
+            const n = posix.read(STDIN, &ch) catch break;
+            if (n > 0 and ch[0] == 3) engine.cancelled.store(true, .release);
+        }
+        const done = ctx.progress.load(.acquire);
+        if (done != last_done) {
+            drawCombineProgress(done, ne);
+            last_done = done;
+        }
+    }
+    t.join();
+
+    g_running = false;
+    engine.cancelled.store(false, .monotonic);
+
+    if (ctx.err) |err| {
+        if (err == error.Cancelled) {
+            printContent("  Cancelled.\n\n");
+        } else if (err == error.NoTrades) {
+            printContent("  No trades to combine.\n\n");
+        } else {
+            var errbuf: [128]u8 = undefined;
+            const msg = std.fmt.bufPrint(&errbuf, "  Error: {s}\n\n", .{@errorName(err)}) catch "  Error.\n\n";
+            printContent(msg);
+        }
+        return;
+    }
+
+    const o = ctx.out.?;
+    const result = o.result;
     defer result.deinit(gpa);
+
+    if (o.fallback) printContent("  (couldn't fetch bars — drawdown is a trade-close estimate)\n");
 
     // Show the sources' instrument (label + lot/contract terminology) when they
     // share one; fall back to forex (generic "lots") for a mixed combine.
-    engine.instrument = common_inst orelse .forex;
+    engine.instrument = o.common_inst orelse .forex;
 
     out("\x1b8"); // restore content cursor so the report flows in the content area
     const summary = report.print(io, result) catch {
@@ -744,8 +1059,8 @@ fn runCombine(io: std.Io, gpa: std.mem.Allocator, balance: f64, ids: []const i64
     };
     out("\x1b7"); // save content cursor after the report
     // Combined runs mix strategies/symbols, so they're saved under a generic
-    // "COMBINED" / "mixed" label (the instrument column still uses the current one).
-    promptSave(result, summary, "COMBINED", "mixed");
+    // "COMBINED" / "mixed" label with empty params (not re-runnable as one strategy).
+    promptSave(result, summary, "COMBINED", "mixed", .{});
 }
 
 // Render the "pick a backtest" prompt: the ids picked so far, the still-available
@@ -769,11 +1084,16 @@ fn renderCombinePick() void {
     pos += ah.len;
     for (g_delete_entries[0..g_delete_count]) |entry| {
         if (combineHasId(entry.id)) continue;
+        if (!combineEntryUsable(entry)) continue;
         const sname = entry.strategy[0..entry.strategy_len];
-        if (std.mem.eql(u8, sname, "COMBINED")) continue;
         const sym = entry.symbol[0..entry.symbol_len];
         const inst = entry.instrument[0..entry.instrument_len];
-        const s = std.fmt.bufPrint(buf[pos..], "    #{d}  {s}  {s}  {s}\n", .{ entry.id, sname, sym, inst }) catch break;
+        // Param hint so configs of the same strategy are distinguishable: base
+        // size, sizing mode, and the date range the trades will be re-run over.
+        const sizing_label: []const u8 = if (entry.sizing_mode == 1) "voltgt" else "fixed";
+        const dfrom = if (entry.date_from_len >= 4) entry.date_from[0..4] else "????";
+        const dto = if (entry.date_to_len >= 4) entry.date_to[0..4] else "????";
+        const s = std.fmt.bufPrint(buf[pos..], "    #{d}  {s}  {s}  {s}  size {d:.2}  {s}  {s}-{s}\n", .{ entry.id, sname, sym, inst, entry.base_size, sizing_label, dfrom, dto }) catch break;
         pos += s.len;
     }
     // Once at least one is picked, an empty Enter runs the combination.
@@ -1093,6 +1413,30 @@ pub fn run(io: std.Io, gpa: std.mem.Allocator) !void {
                         } else if (std.mem.eql(u8, cmd, "/combine")) {
                             startFlow("/combine", "  Initial balance? (enter for 1000) ");
                             state = .awaiting_combine_balance;
+                            drawBar(input[0..0]);
+                        } else if (std.mem.eql(u8, cmd, "/montecarlo")) {
+                            g_delete_count = db.list(&g_delete_entries) catch 0;
+                            if (g_delete_count == 0) {
+                                printContent("\x1b[100m\x1b[1m  > /montecarlo\x1b[K\x1b[0m\n\n  No saved backtests.\n\n");
+                            } else {
+                                var dbuf: [4096]u8 = undefined;
+                                var dpos: usize = 0;
+                                const hdr = std.fmt.bufPrint(dbuf[dpos..], "\x1b[100m\x1b[1m  > /montecarlo\x1b[K\x1b[0m\n\n", .{}) catch "";
+                                dpos += hdr.len;
+                                for (g_delete_entries[0..g_delete_count]) |entry| {
+                                    const sname = entry.strategy[0..entry.strategy_len];
+                                    const sym = entry.symbol[0..entry.symbol_len];
+                                    const inst = entry.instrument[0..entry.instrument_len];
+                                    const s = std.fmt.bufPrint(dbuf[dpos..], "  #{d}  {s}  {s}  {s}\n", .{ entry.id, sname, sym, inst }) catch break;
+                                    dpos += s.len;
+                                }
+                                const q = std.fmt.bufPrint(dbuf[dpos..], "\n  Select id: ", .{}) catch "";
+                                dpos += q.len;
+                                out("\x1b8");
+                                out(dbuf[0..dpos]);
+                                out("\x1b7");
+                                state = .awaiting_mc_pick;
+                            }
                             drawBar(input[0..0]);
                         } else {
                             drawBar(input[0..0]);
@@ -1686,6 +2030,27 @@ pub fn run(io: std.Io, gpa: std.mem.Allocator) !void {
                         drawBar(input[0..0]);
                     },
 
+                    // ── /montecarlo flow ────────────────────────────────────────
+                    .awaiting_mc_pick => {
+                        if (cmd.len > 0) {
+                            const sel_id = std.fmt.parseInt(i64, cmd, 10) catch -1;
+                            var found: ?db.BacktestEntry = null;
+                            for (g_delete_entries[0..g_delete_count]) |entry| {
+                                if (entry.id == sel_id) {
+                                    found = entry;
+                                    break;
+                                }
+                            }
+                            if (found) |entry| {
+                                runMonteCarlo(io, gpa, entry, sel_id);
+                            } else {
+                                flowFail("  No backtest with that id.");
+                            }
+                        }
+                        state = .idle;
+                        drawBar(input[0..0]);
+                    },
+
                     // ── /combine flow ───────────────────────────────────────────
                     .awaiting_combine_balance => {
                         g_combine_balance = 1000.0;
@@ -1697,12 +2062,16 @@ pub fn run(io: std.Io, gpa: std.mem.Allocator) !void {
                         }
                         g_combine_count = 0;
                         g_delete_count = db.list(&g_delete_entries) catch 0;
+                        var usable: usize = 0;
+                        for (g_delete_entries[0..g_delete_count]) |ve| {
+                            if (combineEntryUsable(ve)) usable += 1;
+                        }
                         var abuf: [128]u8 = undefined;
                         const answered = std.fmt.bufPrint(&abuf, "  Initial balance? ${d}", .{g_combine_balance}) catch "  Initial balance? ?";
-                        if (g_delete_count == 0) {
+                        if (usable == 0) {
                             out("\x1b8\r\x1b[2K");
                             out(answered);
-                            out("\n\n  No saved backtests.\n\n");
+                            out("\n\n  No saved runs with parameters. Run a strategy and save it first.\n\n");
                             out("\x1b7");
                             state = .idle;
                         } else {
@@ -1740,8 +2109,7 @@ pub fn run(io: std.Io, gpa: std.mem.Allocator) !void {
                         var ok = false;
                         for (g_delete_entries[0..g_delete_count]) |entry| {
                             if (entry.id != sel_id or combineHasId(sel_id)) continue;
-                            const sname = entry.strategy[0..entry.strategy_len];
-                            if (std.mem.eql(u8, sname, "COMBINED")) continue;
+                            if (!combineEntryUsable(entry)) continue;
                             ok = true;
                             break;
                         }
@@ -1755,11 +2123,10 @@ pub fn run(io: std.Io, gpa: std.mem.Allocator) !void {
                         g_combine_ids[g_combine_count] = sel_id;
                         g_combine_count += 1;
 
-                        // Count non-COMBINED entries to detect when all are picked.
+                        // Count usable entries to detect when all are picked.
                         var visible: usize = 0;
                         for (g_delete_entries[0..g_delete_count]) |ve| {
-                            if (std.mem.eql(u8, ve.strategy[0..ve.strategy_len], "COMBINED")) continue;
-                            visible += 1;
+                            if (combineEntryUsable(ve)) visible += 1;
                         }
                         if (g_combine_count >= visible) {
                             printContent("\n");
@@ -1819,6 +2186,7 @@ pub fn run(io: std.Io, gpa: std.mem.Allocator) !void {
                     .awaiting_delete,
                     .awaiting_combine_balance,
                     .awaiting_combine_pick,
+                    .awaiting_mc_pick,
                     => {
                         flowFail("  Cancelled.");
                         state = .idle;

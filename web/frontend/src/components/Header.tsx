@@ -50,7 +50,7 @@ export default function Header({
     staleTime: Infinity,
   })
 
-  function handleTabClick(tabId: 'analysis' | 'equity') {
+  function handleTabClick(tabId: 'analysis' | 'equity' | 'monte-carlo') {
     setActiveTab(tabId)
     if (location.pathname !== '/stats') {
       navigate({ to: '/stats' })
@@ -139,6 +139,16 @@ export default function Header({
               }`}
             >
               Equity
+            </button>
+            <button
+              onClick={() => handleTabClick('monte-carlo')}
+              className={`px-2.5 py-1 transition-all duration-150 text-xs font-medium rounded-md select-none ${
+                activeTab === 'monte-carlo'
+                  ? 'bg-gray-700 text-white shadow-sm'
+                  : 'text-gray-500 hover:text-gray-200 hover:bg-gray-800/70'
+              }`}
+            >
+              Monte Carlo
             </button>
           </div>
         </>
