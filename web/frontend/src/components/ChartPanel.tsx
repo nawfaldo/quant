@@ -1,0 +1,806 @@
+import { useRef, useEffect, useState } from "react";
+import {
+  createChart,
+  CandlestickSeries,
+  LineSeries,
+  ColorType,
+  CrosshairMode,
+  type UTCTimestamp,
+} from "lightweight-charts";
+import {
+  ActivePositionsPrimitive,
+  type ActivePosInfo,
+  HistoricalTradesPrimitive,
+  type HistoricalTradeInfo,
+} from "../lib/primitives";
+import { useQuery } from "@tanstack/react-query";
+import { useApp } from "../context/AppContext";
+import { fetchActivePositions, fetchLiveTradeHistory } from "../api";
+import { BACKEND_URL, type Bar, type TF } from "../types";
+import Header from "./Header";
+
+// Per-panel chart configuration. Each ChartPanel runs its own data fetch and
+// live stream against this config, independent of the other panels.
+export interface PanelConfig {
+  symbol: "nq" | "es";
+  tf: TF;
+  mode: "latest" | "range";
+  fromDate: string;
+  toDate: string;
+  vwap: boolean;
+}
+
+interface ChartPanelProps {
+  config: PanelConfig;
+  setSymbol: (sym: "nq" | "es") => void;
+  setTf: (tf: TF) => void;
+  onApplyRange: (from: string, to: string) => void;
+  onLatest: (from: string) => void;
+  onOpenIndicators: () => void;
+  onOpenBacktests: () => void;
+}
+
+function matchesMarchSymbol(
+  posSymbol: string,
+  marchSymbol: "nq" | "es",
+): boolean {
+  const ps = posSymbol.toLowerCase();
+  if (marchSymbol === "nq") {
+    return ps.includes("nq") || ps.includes("ustec") || ps.includes("nas");
+  } else if (marchSymbol === "es") {
+    return ps.includes("es") || ps.includes("us500") || ps.includes("spx");
+  }
+  return false;
+}
+
+interface Tick {
+  ts: number; // nanoseconds
+  price: number;
+  size: number;
+  side: "BUY" | "SELL";
+  sym?: string; // present on WS pushes (addon broadcasts all instruments)
+}
+
+// The Bookmap addon's live-push WebSocket server (runs on the Windows host,
+// same machine as the browser). Bypasses QuestDB + the Zig backend for sub-100ms ticks.
+const MARCH_WS_PORT = 8765;
+
+// Session VWAP window, in minutes since ET midnight — must mirror
+// web/backend/src/march/strategies/rth_vwap_config.zig (rth_open / rth_close). The
+// strategy only accumulates VWAP for bars in [09:30, 16:00); the chart must do
+// the same so the line matches what the strategy actually trades on.
+const RTH_OPEN_MIN = 9 * 60 + 30; // 09:30 ET
+const RTH_CLOSE_MIN = 16 * 60; // 16:00 ET (exclusive)
+
+async function fetchMarchCandles(
+  symbol: string,
+  tf: TF,
+  from?: string,
+  to?: string,
+): Promise<Bar[]> {
+  const params = new URLSearchParams({ symbol, tf: tf.table });
+  if (from) params.set("from", from);
+  if (to) params.set("to", to);
+  const res = await fetch(
+    `${BACKEND_URL}/api/march/candles/bin?${params.toString()}`,
+  );
+  if (!res.ok) throw new Error(`Backend error: ${res.status}`);
+  const buf = await res.arrayBuffer();
+  const view = new DataView(buf);
+  if (view.getUint32(0, true) !== 0x45444c43)
+    throw new Error("Bad response magic");
+  const count = view.getUint32(4, true);
+  const data: Bar[] = new Array(count);
+  let off = 8;
+  for (let i = 0; i < count; i++) {
+    data[i] = {
+      time: view.getUint32(off, true) as UTCTimestamp,
+      open: view.getFloat32(off + 4, true),
+      high: view.getFloat32(off + 8, true),
+      low: view.getFloat32(off + 12, true),
+      close: view.getFloat32(off + 16, true),
+      volume: view.getFloat32(off + 20, true),
+    };
+    off += 24;
+  }
+  return data;
+}
+
+const TZ = "UTC";
+
+const timeFormatter = new Intl.DateTimeFormat("en-US", {
+  timeZone: TZ,
+  year: "numeric",
+  month: "short",
+  day: "numeric",
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: false,
+});
+
+const tickTimeFormatter = new Intl.DateTimeFormat("en-US", {
+  timeZone: TZ,
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: false,
+});
+
+const tickDateFormatter = new Intl.DateTimeFormat("en-US", {
+  timeZone: TZ,
+  year: "numeric",
+  month: "short",
+  day: "numeric",
+});
+
+// Inserts whitespace entries for every missing TF slot so lightweight-charts
+// renders real time gaps instead of compressing bars together.
+function fillGaps(
+  candles: Bar[],
+  tfSecs: number,
+): Array<Bar | { time: UTCTimestamp }> {
+  if (candles.length === 0) return [];
+  const map = new Map(candles.map((c) => [c.time, c]));
+  const first = candles[0].time;
+  const last = candles[candles.length - 1].time;
+  const out: Array<Bar | { time: UTCTimestamp }> = [];
+  for (let t = first as number; t <= (last as number); t += tfSecs) {
+    out.push(map.get(t as UTCTimestamp) ?? { time: t as UTCTimestamp });
+  }
+  return out;
+}
+
+export default function ChartPanel({
+  config,
+  setSymbol,
+  setTf,
+  onApplyRange,
+  onLatest,
+  onOpenIndicators,
+  onOpenBacktests,
+}: ChartPanelProps) {
+  const { symbol, tf, mode, fromDate, toDate, vwap } = config;
+
+  const containerRef = useRef<HTMLDivElement>(null);
+  const { visibleTradeStrategies } = useApp();
+  const [streamStatus, setStreamStatus] = useState<
+    "loading" | "live" | "idle" | "error"
+  >("idle");
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [chartSeries, setChartSeries] = useState<any>(null);
+  const chartRef = useRef<any>(null);
+  const vwapSeriesRef = useRef<any>(null);
+  const activePositionsPlugin = useRef(new ActivePositionsPrimitive());
+  const historicalTradesPlugin = useRef(new HistoricalTradesPrimitive());
+  const [chartContextMenu, setChartContextMenu] = useState<{ x: number; y: number } | null>(null);
+
+  useEffect(() => {
+    const handleClose = () => setChartContextMenu(null);
+    window.addEventListener("click", handleClose);
+    window.addEventListener("contextmenu", handleClose);
+    return () => {
+      window.removeEventListener("click", handleClose);
+      window.removeEventListener("contextmenu", handleClose);
+    };
+  }, []);
+
+  const { data: positions } = useQuery({
+    queryKey: ["activePositions"],
+    queryFn: fetchActivePositions,
+    refetchInterval: 2000,
+    retry: false,
+  });
+
+  const { data: liveTrades } = useQuery({
+    queryKey: ["liveTradeHistory"],
+    queryFn: fetchLiveTradeHistory,
+    refetchInterval: 5000,
+    retry: false,
+  });
+
+  useEffect(() => {
+    if (!containerRef.current) return;
+
+    let active = true;
+    let ws: WebSocket | null = null;
+    let reconnectId: any = null;
+    let idleTimerId: any = null;
+
+    // Create chart
+    const chart = createChart(containerRef.current, {
+      autoSize: true,
+      ...({ attributionLogo: false } as any),
+      layout: {
+        background: { type: ColorType.Solid, color: "#030712" },
+        textColor: "#d1d5db",
+      },
+      grid: {
+        vertLines: { color: "#111827" },
+        horzLines: { color: "#111827" },
+      },
+      crosshair: {
+        mode: CrosshairMode.Normal,
+        vertLine: { color: "#374151" },
+        horzLine: { color: "#374151" },
+      },
+      localization: {
+        timeFormatter: (time: number) =>
+          timeFormatter.format(new Date(time * 1000)),
+      },
+      timeScale: {
+        borderColor: "#1f2937",
+        timeVisible: true,
+        secondsVisible: false,
+        tickMarkFormatter: (time: number, tickMarkType: number) => {
+          const date = new Date(time * 1000);
+          return tickMarkType >= 3
+            ? tickTimeFormatter.format(date)
+            : tickDateFormatter.format(date);
+        },
+      },
+      rightPriceScale: { borderColor: "#1f2937" },
+    });
+
+    const series = chart.addSeries(CandlestickSeries, {
+      upColor: "#22c55e",
+      downColor: "#ef4444",
+      borderUpColor: "#22c55e",
+      borderDownColor: "#ef4444",
+      wickUpColor: "#22c55e",
+      wickDownColor: "#ef4444",
+      lastValueVisible: true,
+      priceLineVisible: true,
+    });
+    setChartSeries(series);
+    chartRef.current = chart;
+    series.attachPrimitive(activePositionsPlugin.current);
+    series.attachPrimitive(historicalTradesPlugin.current);
+
+    const vwapSeries = chart.addSeries(LineSeries, {
+      color: "#60a5fa",
+      lineWidth: 1,
+      priceLineVisible: false,
+      lastValueVisible: false,
+      crosshairMarkerVisible: false,
+      visible: vwap && symbol === "nq",
+    });
+    vwapSeriesRef.current = vwapSeries;
+
+    // Streaming state — shared between the catch-up fetch and the live WS feed.
+    let lastCandle: Bar | null = null;
+    // Highest tick timestamp (ns) seen so far; null means "give me the latest".
+    let lastTickNanos: number | null = null;
+
+    // Session VWAP state — mirrors rth_vwap.zig: RTH-only (09:30–16:00 ET),
+    // typical price (h+l+c)/3 weighted by bar volume, reset each ET day.
+    // sessionPv/sessionVol cover COMPLETED RTH bars; formingVol is the volume
+    // accumulated in the bar currently being built from live ticks.
+    let curDay: number = -1;
+    let sessionPv: number = 0;
+    let sessionVol: number = 0;
+    let formingVol: number = 0;
+
+    // Apply one batch of ticks to the chart. Never throws — bad ticks are
+    // skipped individually so a single rejected bar can't stop the stream.
+    function applyTicks(ticks: Tick[]) {
+      const tfSecs = tf.seconds;
+      const isNq = symbol === "nq";
+
+      for (const tick of ticks) {
+        if (!Number.isFinite(tick.ts) || !Number.isFinite(tick.price)) continue;
+        if (lastTickNanos === null || tick.ts > lastTickNanos)
+          lastTickNanos = tick.ts;
+
+        const tsSecs = Math.floor(tick.ts / 1_000_000_000);
+        const etDay = Math.floor(tsSecs / 86400);
+        const minOfDay = Math.floor((tsSecs % 86400) / 60);
+        const size = Number.isFinite(tick.size) ? tick.size : 0;
+
+        // New ET day → reset session VWAP accumulators (matches rth_vwap.zig).
+        if (etDay !== curDay) {
+          curDay = etDay;
+          sessionPv = 0;
+          sessionVol = 0;
+          formingVol = 0;
+        }
+
+        const candleStartSecs = Math.floor(tsSecs / tfSecs) * tfSecs;
+        const lastTime = lastCandle ? (lastCandle.time as number) : -1;
+
+        try {
+          if (lastCandle && candleStartSecs === lastTime) {
+            lastCandle.close = tick.price;
+            if (tick.price > lastCandle.high) lastCandle.high = tick.price;
+            if (tick.price < lastCandle.low) lastCandle.low = tick.price;
+            series.update(lastCandle);
+            formingVol += size;
+          } else if (candleStartSecs > lastTime) {
+            // A new bar starts: fold the just-completed bar into the session
+            // sums (RTH only, by the completed bar's typical price × its
+            // volume), then begin the new bar's volume tally.
+            if (lastCandle) {
+              const lastMin = Math.floor(
+                ((lastCandle.time as number) % 86400) / 60,
+              );
+              if (lastMin >= RTH_OPEN_MIN && lastMin < RTH_CLOSE_MIN) {
+                const t =
+                  (lastCandle.high + lastCandle.low + lastCandle.close) / 3;
+                sessionPv += t * formingVol;
+                sessionVol += formingVol;
+              }
+            }
+            formingVol = size;
+            const newCandle: Bar = {
+              time: candleStartSecs as UTCTimestamp,
+              open: tick.price,
+              high: tick.price,
+              low: tick.price,
+              close: tick.price,
+            };
+            series.update(newCandle);
+            lastCandle = newCandle;
+          } else {
+            continue; // stale/out-of-order tick
+          }
+
+          // VWAP for the forming bar (RTH only) = completed Σ(typical×vol) plus
+          // the forming bar folded in, over the matching volume — exactly the
+          // running value rth_vwap.zig reads after folding the current bar.
+          if (
+            isNq &&
+            minOfDay >= RTH_OPEN_MIN &&
+            minOfDay < RTH_CLOSE_MIN &&
+            lastCandle
+          ) {
+            const curTypical =
+              (lastCandle.high + lastCandle.low + lastCandle.close) / 3;
+            const denom = sessionVol + formingVol;
+            if (denom > 0) {
+              vwapSeries.update({
+                time: candleStartSecs as UTCTimestamp,
+                value: (sessionPv + curTypical * formingVol) / denom,
+              });
+            }
+          }
+        } catch {
+          // lightweight-charts rejected this bar; skip it and keep streaming.
+        }
+      }
+    }
+
+    const WS_URL = `ws://${window.location.hostname}:${MARCH_WS_PORT}`;
+
+    // Live stream over WebSocket. Fail-safe: a dropped connection (Bookmap
+    // closed, addon restart) never errors — it flips to idle and auto-reconnects.
+    function connectWs() {
+      if (!active) return;
+      let socket: WebSocket;
+      try {
+        socket = new WebSocket(WS_URL);
+      } catch {
+        reconnectId = setTimeout(connectWs, 1000);
+        return;
+      }
+      ws = socket;
+
+      socket.onmessage = (ev) => {
+        if (!active) return;
+        let ticks: Tick[];
+        try {
+          ticks = JSON.parse(ev.data);
+        } catch {
+          return;
+        }
+        if (!Array.isArray(ticks) || ticks.length === 0) return;
+        // The addon broadcasts all instruments — keep only the selected symbol.
+        const mine = ticks.filter(
+          (t) => !t.sym || t.sym.toLowerCase() === symbol,
+        );
+        if (mine.length === 0) return;
+        applyTicks(mine);
+        setStreamStatus("live");
+        clearTimeout(idleTimerId);
+        idleTimerId = setTimeout(() => {
+          if (active) setStreamStatus("idle");
+        }, 5000);
+      };
+
+      socket.onclose = () => {
+        if (!active) return;
+        setStreamStatus("idle");
+        reconnectId = setTimeout(connectWs, 1000);
+      };
+      socket.onerror = () => {
+        try {
+          socket.close();
+        } catch {}
+      };
+    }
+
+    // 'range' → static historical window from nq_; 'latest' → recent nq_ history
+    // (bounded below by fromDate) followed by live bm_nq_ticks streaming.
+    async function initAndPoll() {
+      setLoading(true);
+      setError(null);
+      setStreamStatus("loading");
+
+      const isLatest = mode === "latest";
+
+      // 1. Load historical candles from nq_. Failure is non-fatal: start empty
+      //    and (in latest mode) let the live stream fill it in.
+      let candles: Bar[] = [];
+      try {
+        candles = isLatest
+          ? await fetchMarchCandles(symbol, tf, fromDate)
+          : await fetchMarchCandles(symbol, tf, fromDate, toDate);
+      } catch (err) {
+        console.warn("March historical load failed (starting empty):", err);
+      }
+      if (!active) return;
+
+      try {
+        series.setData(fillGaps(candles, tf.seconds) as any);
+        chart.timeScale().fitContent();
+      } catch (err) {
+        console.error("Failed to render historical candles:", err);
+      }
+
+      // Historical VWAP — mirror rth_vwap.zig exactly: reset each ET day, and
+      // only accumulate/draw bars inside [09:30, 16:00). typical = (h+l+c)/3
+      // weighted by bar volume.
+      let hCurDay = -1;
+      let hCumPv = 0;
+      let hCumVol = 0;
+      const vwapPoints: { time: UTCTimestamp; value: number }[] = [];
+
+      for (const c of candles) {
+        const tsSecs = c.time as number;
+        const etDay = Math.floor(tsSecs / 86400);
+        const minOfDay = Math.floor((tsSecs % 86400) / 60);
+
+        if (etDay !== hCurDay) {
+          hCurDay = etDay;
+          hCumPv = 0;
+          hCumVol = 0;
+        }
+
+        // RTH only — skip bars outside the trading window (no VWAP there).
+        if (minOfDay < RTH_OPEN_MIN || minOfDay >= RTH_CLOSE_MIN) continue;
+
+        const vol = c.volume ?? 0;
+        const typical = ((c.high ?? 0) + (c.low ?? 0) + (c.close ?? 0)) / 3;
+        hCumPv += typical * vol;
+        hCumVol += vol;
+
+        if (hCumVol > 0) {
+          vwapPoints.push({ time: c.time, value: hCumPv / hCumVol });
+        }
+      }
+
+      // Seed the streaming state. Treat the LAST historical bar as still
+      // forming (live ticks may continue it) by un-folding it from the session
+      // sums and moving its volume into formingVol — otherwise it's counted
+      // twice once live ticks land in that same bar.
+      curDay = hCurDay;
+      sessionPv = hCumPv;
+      sessionVol = hCumVol;
+      formingVol = 0;
+      if (candles.length > 0) {
+        const lastC = candles[candles.length - 1];
+        const lastMin = Math.floor(((lastC.time as number) % 86400) / 60);
+        if (lastMin >= RTH_OPEN_MIN && lastMin < RTH_CLOSE_MIN) {
+          const lastVol = lastC.volume ?? 0;
+          const lastTypical =
+            ((lastC.high ?? 0) + (lastC.low ?? 0) + (lastC.close ?? 0)) / 3;
+          sessionPv -= lastTypical * lastVol;
+          sessionVol -= lastVol;
+          formingVol = lastVol;
+        }
+      }
+
+      try {
+        if (symbol === "nq") {
+          vwapSeries.setData(vwapPoints);
+        } else {
+          vwapSeries.setData([]);
+        }
+      } catch (err) {
+        console.error("Failed to render historical VWAP:", err);
+      }
+
+      // Static range mode: render history and stop — no catch-up, no WS.
+      if (!isLatest) {
+        setLoading(false);
+        setStreamStatus("idle");
+        return;
+      }
+
+      // Seed streaming state from the last historical candle (if any).
+      lastCandle =
+        candles.length > 0 ? { ...candles[candles.length - 1] } : null;
+      lastTickNanos = lastCandle
+        ? (lastCandle.time as number) * 1_000_000_000
+        : null;
+
+      setLoading(false);
+      setStreamStatus("idle");
+
+      // 4. Switch to the realtime WebSocket stream (sub-100ms path).
+      connectWs();
+    }
+
+    initAndPoll();
+
+    return () => {
+      active = false;
+      if (reconnectId) clearTimeout(reconnectId);
+      if (idleTimerId) clearTimeout(idleTimerId);
+      if (ws) {
+        try {
+          ws.close();
+        } catch {}
+      }
+      setStreamStatus("idle");
+      chart.remove();
+      setChartSeries(null);
+      chartRef.current = null;
+    };
+  }, [symbol, tf, mode, fromDate, toDate]);
+
+  useEffect(() => {
+    const series = chartSeries;
+    if (!series) return;
+
+    if (!positions || positions.length === 0) {
+      activePositionsPlugin.current.setPositions([]);
+      return;
+    }
+
+    const activeForChart = positions.filter((pos) =>
+      matchesMarchSymbol(pos.symbol, symbol),
+    );
+    const activePosList: ActivePosInfo[] = [];
+    const tfSecs = tf.seconds;
+
+    // Get visible time range so we can clamp positions that are newer than the
+    // last chart bar (happens when streaming is idle and candles haven't arrived yet).
+    const visRange = chartRef.current?.timeScale().getVisibleRange();
+
+    for (const pos of activeForChart) {
+      // Need at least a price to show the marker. zig_entry_price falls back to
+      // MT5 open_price in Python, so it's always set. zig_entry_time falls back
+      // to p.time (MT5 open time) after the Python fix.
+      if (!pos.zig_entry_price) continue;
+
+      let markerTime: number;
+
+      if (pos.zig_entry_time) {
+        // Convert real-UTC entry time to fake-UTC (ET wall clock) to align with chart candles.
+        const date = new Date(pos.zig_entry_time * 1000);
+        const utcDate = new Date(date.toLocaleString("en-US", { timeZone: "UTC" }));
+        const nyDate  = new Date(date.toLocaleString("en-US", { timeZone: "America/New_York" }));
+        const offsetSeconds = (utcDate.getTime() - nyDate.getTime()) / 1000;
+        const adjustedTime = pos.zig_entry_time - offsetSeconds;
+        markerTime = Math.floor(adjustedTime / tfSecs) * tfSecs;
+      } else {
+        // No time info at all — place at the chart's right edge so it's always visible.
+        markerTime = visRange ? (visRange.to as number) : Math.floor(Date.now() / 1000);
+      }
+
+      // If the position is newer than the last visible bar (streaming lag), clamp to
+      // the right edge so the arrow is still visible on screen.
+      if (visRange && markerTime > (visRange.to as number)) {
+        markerTime = visRange.to as number;
+      }
+
+      activePosList.push({
+        time: markerTime,
+        price: pos.zig_entry_price,
+        volume: pos.volume,
+        profit: pos.profit,
+        isLong: pos.type === "long",
+        strategy: pos.strategy || "",
+      });
+    }
+
+    activePositionsPlugin.current.setPositions(activePosList);
+  }, [positions, symbol, tf, chartSeries]);
+
+  useEffect(() => {
+    const series = chartSeries;
+    if (!series) return;
+
+    if (!liveTrades || liveTrades.length === 0 || visibleTradeStrategies.size === 0) {
+      historicalTradesPlugin.current.setTrades([]);
+      return;
+    }
+
+    const tfSecs = tf.seconds;
+
+    const parseZigTime = (timeStr: string): number => {
+      if (!timeStr) return 0;
+      const cleaned = timeStr.trim();
+      const parts = cleaned.split(/[- :.]/);
+      if (parts.length >= 6) {
+        const year = parseInt(parts[0], 10);
+        const month = parseInt(parts[1], 10) - 1;
+        const day = parseInt(parts[2], 10);
+        const hour = parseInt(parts[3], 10);
+        const minute = parseInt(parts[4], 10);
+        const second = parseInt(parts[5], 10);
+        const ms = parts[6] ? parseInt(parts[6].padEnd(3, "0").slice(0, 3), 10) : 0;
+        return Math.floor(Date.UTC(year, month, day, hour, minute, second, ms) / 1000);
+      } else {
+        const utcString = cleaned.replace(" ", "T") + (cleaned.endsWith("Z") ? "" : "Z");
+        return Math.floor(new Date(utcString).getTime() / 1000);
+      }
+    };
+
+    const tradesForChart: HistoricalTradeInfo[] = [];
+
+    for (const t of liveTrades) {
+      if (!visibleTradeStrategies.has(t.strategy_name)) continue;
+
+      const openSecs = parseZigTime(t.zig_open_time);
+      const closeSecs = parseZigTime(t.zig_close_time);
+
+      if (openSecs === 0 || closeSecs === 0) continue;
+
+      // zig_open/close_time are ET wall-clock stored as fake-UTC — parseZigTime
+      // already returns the correct chart-space epoch. Just snap to timeframe.
+      const et = Math.floor(openSecs / tfSecs) * tfSecs;
+      const xt = Math.floor(closeSecs / tfSecs) * tfSecs;
+
+      tradesForChart.push({
+        et,
+        xt,
+        ep: t.zig_entry_price,
+        xp: t.zig_close_price,
+        isLong: t.side === "long",
+        strategy: t.strategy_name,
+      });
+    }
+
+    historicalTradesPlugin.current.setTrades(tradesForChart);
+  }, [liveTrades, visibleTradeStrategies, tf, chartSeries]);
+
+  useEffect(() => {
+    vwapSeriesRef.current?.applyOptions({ visible: vwap && symbol === "nq" });
+  }, [vwap, symbol, chartSeries]);
+
+  return (
+    <div className="flex flex-col bg-gray-950 min-h-0 min-w-0 h-full w-full">
+      <Header
+        symbol={symbol}
+        setSymbol={setSymbol}
+        tf={tf}
+        setTf={setTf}
+        streamStatus={streamStatus}
+        mode={mode}
+        fromDate={fromDate}
+        toDate={toDate}
+        onApplyRange={onApplyRange}
+        onLatest={onLatest}
+      />
+      <div className="flex-1 flex flex-col relative min-h-0 min-w-0">
+        {loading && (
+          <div className="absolute inset-0 bg-gray-950/80 backdrop-blur-sm flex items-center justify-center z-10">
+            <div className="text-gray-400 text-sm flex items-center gap-2">
+              <svg
+                className="animate-spin h-4 w-4 text-blue-500"
+                viewBox="0 0 24 24"
+                fill="none"
+              >
+                <circle
+                  className="opacity-25"
+                  cx="12"
+                  cy="12"
+                  r="10"
+                  stroke="currentColor"
+                  strokeWidth="4"
+                />
+                <path
+                  className="opacity-75"
+                  fill="currentColor"
+                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+                />
+              </svg>
+              Loading Chart...
+            </div>
+          </div>
+        )}
+        {error && (
+          <div className="absolute inset-0 bg-gray-950/90 flex flex-col items-center justify-center gap-3 z-10 p-4">
+            <div className="text-red-400 text-sm text-center">{error}</div>
+            <button
+              onClick={() => {
+                setError(null);
+                window.location.reload();
+              }}
+              className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-xs font-medium rounded-md transition-colors"
+            >
+              Retry
+            </button>
+          </div>
+        )}
+        <div
+          ref={containerRef}
+          className="flex-1 min-h-0"
+          onContextMenu={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const menuWidth = 140;
+            const menuHeight = 72;
+            let x = e.clientX;
+            let y = e.clientY;
+
+            if (x + menuWidth > window.innerWidth) {
+              x = window.innerWidth - menuWidth - 8;
+            }
+            if (y + menuHeight > window.innerHeight) {
+              y = window.innerHeight - menuHeight - 8;
+            }
+            setChartContextMenu({ x, y });
+          }}
+        />
+      </div>
+
+      {/* Chart Context Menu */}
+      {chartContextMenu && (
+        <div
+          className="fixed z-50 bg-gray-900/95 backdrop-blur-md border border-gray-800/80 rounded-lg shadow-xl shadow-black/60 py-0.5 font-sans text-xs text-gray-300 select-none transition-all duration-100 ease-out"
+          style={{ left: chartContextMenu.x, top: chartContextMenu.y }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button
+            onClick={() => {
+              onOpenIndicators();
+              setChartContextMenu(null);
+            }}
+            className="w-full px-4 py-2 text-left hover:bg-blue-600/20 hover:text-white transition-colors duration-150 cursor-pointer whitespace-nowrap flex items-center gap-2"
+          >
+            <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
+              <polyline
+                points="1,7.5 5,3 9,5 14.5,0.5"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+              <rect x="0.8" y="12" width="3" height="3.5" rx="0.4" stroke="currentColor" strokeWidth="1.1" />
+              <rect x="5.5" y="10" width="3" height="5.5" rx="0.4" stroke="currentColor" strokeWidth="1.1" />
+              <rect x="10.5" y="7.5" width="3" height="8" rx="0.4" stroke="currentColor" strokeWidth="1.1" />
+            </svg>
+            Indicators
+          </button>
+          <button
+            onClick={() => {
+              onOpenBacktests();
+              setChartContextMenu(null);
+            }}
+            className="w-full px-4 py-2 text-left hover:bg-blue-600/20 hover:text-white transition-colors duration-150 cursor-pointer whitespace-nowrap flex items-center gap-2"
+          >
+            <svg width="12" height="12" viewBox="0 0 14 16" fill="none">
+              <path
+                d="M1 1h8l4 4v10H1V1z"
+                stroke="currentColor"
+                strokeWidth="1.2"
+                strokeLinejoin="round"
+              />
+              <path
+                d="M9 1v4h4"
+                stroke="currentColor"
+                strokeWidth="1.2"
+                strokeLinejoin="round"
+              />
+              <line x1="3" y1="7" x2="7" y2="7" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" />
+              <line x1="3" y1="9.5" x2="11" y2="9.5" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" />
+              <line x1="3" y1="12" x2="11" y2="12" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" />
+            </svg>
+            Backtests
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}

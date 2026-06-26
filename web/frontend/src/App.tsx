@@ -1,13 +1,15 @@
-import { useState, useMemo, useEffect } from 'react'
+import { useState, useMemo, useEffect, useRef } from 'react'
 import { useQuery, useQueries } from '@tanstack/react-query'
-import { TIMEFRAMES, type TF, type Indicators, type SymbolId } from './types'
-import { fetchCandles, fetchTrades, fetchVwap, fetchSettings, saveSettings } from './api'
-import Chart from './components/Chart'
-import Header from './components/Header'
+import { TIMEFRAMES, makeDefaultPanelConfig, type TF, type Indicators, type SymbolId, type MarchLayouts, type LayoutPanelConfig } from './types'
+import { fetchCandles, fetchTrades, fetchVwap, fetchSettings, saveSettings, fetchMarchSettings, saveMarchSettings, fetchMarchLayouts, saveMarchLayouts } from './api'
+
 import BacktestsModal from './components/BacktestsModal'
 import IndicatorsModal from './components/IndicatorsModal'
 import StatsPage from './components/StatsPage'
 import MarchPage from './components/MarchPage'
+import AccountModal from './components/AccountModal'
+import StrategyModal from './components/StrategyModal'
+import Sidebar from './components/Sidebar'
 import { AppContext, useApp } from './context/AppContext'
 import {
   createRootRoute,
@@ -29,36 +31,33 @@ const DEFAULT_TF = TIMEFRAMES.find(t => t.table === '5m') ?? TIMEFRAMES[0]
 
 function RootRouteComponent() {
   const {
-    activeTf, setActiveTf,
-    activeSymbol, handleSymbolChange,
     setIndicatorsOpen, setModalOpen,
-    fromDate, toDate, handleApplyRange,
     modalOpen, visibleIds, loadingIds, toggleId,
-    indicatorsOpen, indicators, toggleIndicator, isNq,
-    candleError
+    indicatorsOpen,
+    candleError,
+    marchAccountModalOpen, setMarchAccountModalOpen, setSelectedAccountId,
+    selectedAccountId, marchStrategyModalOpen, setMarchStrategyModalOpen,
+    marchLayouts, activeMarchPanel, updateMarchPanel,
   } = useApp()
 
+  // The Indicators / Backtests modals act on whichever chart panel opened them.
+  const activeCfg: LayoutPanelConfig =
+    (activeMarchPanel && marchLayouts[activeMarchPanel.layout]?.[activeMarchPanel.index]) ||
+    makeDefaultPanelConfig()
+
   return (
-    <div className="min-h-screen bg-gray-950 text-white flex flex-col">
-      <Header
-        activeTf={activeTf}
-        onTfChange={setActiveTf}
-        activeSymbol={activeSymbol}
-        onSymbolChange={handleSymbolChange}
-        onIndicatorsOpen={() => setIndicatorsOpen(true)}
-        onResearchOpen={() => setModalOpen(true)}
-        fromDate={fromDate}
-        toDate={toDate}
-        onApplyRange={handleApplyRange}
-      />
+    <div className="h-screen bg-gray-950 text-white flex flex-row overflow-hidden">
+      <Sidebar />
 
-      <Outlet />
+      <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
+        <Outlet />
 
-      {candleError && (
-        <div className="text-sm text-red-400 text-center py-4">
-          Failed to load data: {(candleError as Error).message}
-        </div>
-      )}
+        {candleError && (
+          <div className="text-sm text-red-400 text-center py-4">
+            Failed to load data: {(candleError as Error).message}
+          </div>
+        )}
+      </div>
 
       <BacktestsModal
         open={modalOpen}
@@ -66,34 +65,29 @@ function RootRouteComponent() {
         visibleIds={visibleIds}
         loadingIds={loadingIds}
         onToggle={toggleId}
-        activeSymbol={activeSymbol}
+        activeSymbol={activeCfg.symbol}
       />
       <IndicatorsModal
         open={indicatorsOpen}
         onClose={() => setIndicatorsOpen(false)}
-        indicators={indicators}
-        onToggle={toggleIndicator}
-        isNq={isNq}
+        indicators={activeCfg.indicators}
+        onToggle={(key) => {
+          if (!activeMarchPanel) return
+          updateMarchPanel(activeMarchPanel.layout, activeMarchPanel.index, {
+            indicators: { ...activeCfg.indicators, [key]: !activeCfg.indicators[key] },
+          })
+        }}
+        isNq={activeCfg.symbol === 'nq'}
       />
-    </div>
-  )
-}
-
-function ChartRouteComponent() {
-  const {
-    bars, activeTf, allTrades, vwapData, indicators, isNq, fromTs, toTs
-  } = useApp()
-
-  return (
-    <div className="flex flex-1 overflow-hidden">
-      <Chart
-        bars={bars}
-        activeTf={activeTf}
-        allTrades={allTrades}
-        vwapData={vwapData}
-        indicators={isNq ? indicators : { vwap: false, openingRange: false }}
-        fromTs={fromTs}
-        toTs={toTs}
+      <AccountModal
+        open={marchAccountModalOpen}
+        onClose={() => setMarchAccountModalOpen(false)}
+        onAdded={(id) => setSelectedAccountId(id)}
+      />
+      <StrategyModal
+        open={marchStrategyModalOpen}
+        onClose={() => setMarchStrategyModalOpen(false)}
+        accountId={selectedAccountId}
       />
     </div>
   )
@@ -124,7 +118,7 @@ const rootRoute = createRootRoute({
 const indexRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/',
-  component: ChartRouteComponent,
+  component: MarchRouteComponent,
 })
 
 const statsRoute = createRoute({
@@ -133,13 +127,7 @@ const statsRoute = createRoute({
   component: StatsRouteComponent,
 })
 
-const marchRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: '/march',
-  component: MarchRouteComponent,
-})
-
-const routeTree = rootRoute.addChildren([indexRoute, statsRoute, marchRoute])
+const routeTree = rootRoute.addChildren([indexRoute, statsRoute])
 
 const router = createRouter({ routeTree })
 
@@ -163,6 +151,134 @@ export default function App() {
   const [marchSymbol, setMarchSymbol] = useState<'nq' | 'es'>('nq')
   const [marchTf, setMarchTf] = useState<TF>(DEFAULT_TF)
   const [marchStreamStatus, setMarchStreamStatus] = useState<'loading' | 'live' | 'idle' | 'error'>('idle')
+  const [isBottomOpen, setIsBottomOpen] = useState(true)
+  const [marchLayout, setMarchLayout] = useState('single')
+  const [marchBottomHeight, setMarchBottomHeight] = useState(400)
+  const [marchLayouts, setMarchLayouts] = useState<MarchLayouts>({})
+  const [activeMarchPanel, setActiveMarchPanel] = useState<{ layout: string; index: number } | null>(null)
+
+  function updateMarchPanel(layout: string, index: number, patch: Partial<LayoutPanelConfig>) {
+    setMarchLayouts(prev => {
+      const next = { ...prev }
+      const arr = next[layout] ? [...next[layout]] : []
+      while (arr.length <= index) arr.push(makeDefaultPanelConfig())
+      arr[index] = { ...arr[index], ...patch }
+      next[layout] = arr
+      return next
+    })
+  }
+
+  // March chart date selection. Default to live "Latest" mode with a recent
+  // (7-day) lower bound so the chart opens on current price and streams. `to`
+  // defaults to today so the range-mode Apply button is usable immediately.
+  const today = new Date().toISOString().slice(0, 10)
+  const recentFrom = (() => {
+    const d = new Date()
+    d.setDate(d.getDate() - 7)
+    return d.toISOString().slice(0, 10)
+  })()
+  const [marchMode, setMarchMode] = useState<'latest' | 'range'>('latest')
+  const [marchFromDate, setMarchFromDate] = useState(recentFrom)
+  const [marchToDate, setMarchToDate] = useState(today)
+
+  function handleMarchApplyRange(from: string, to: string) {
+    setMarchFromDate(from)
+    setMarchToDate(to)
+    setMarchMode('range')
+  }
+
+  function handleMarchLatest(from: string) {
+    setMarchFromDate(from)
+    setMarchMode('latest')
+  }
+
+  // Load persisted march settings from app.db once on mount, then persist any
+  // change back. `marchLoaded` gates the save effect so we don't immediately
+  // overwrite the stored values with the component defaults on first render.
+  const marchLoaded = useRef(false)
+  const { data: savedMarch } = useQuery({
+    queryKey: ['marchSettings'],
+    queryFn: fetchMarchSettings,
+    staleTime: Infinity,
+  })
+
+  useEffect(() => {
+    if (!savedMarch) return
+    setMarchSymbol(savedMarch.symbol)
+    const tf = TIMEFRAMES.find(t => t.table === savedMarch.tf)
+    if (tf) setMarchTf(tf)
+    setMarchFromDate(savedMarch.from)
+    setMarchToDate(savedMarch.to)
+    setMarchMode(savedMarch.mode)
+    if (savedMarch.bottomOpen !== undefined) {
+      const isOpen = typeof savedMarch.bottomOpen === 'boolean'
+        ? savedMarch.bottomOpen
+        : savedMarch.bottomOpen === 'true';
+      setIsBottomOpen(isOpen);
+    }
+    if (savedMarch.layout) {
+      setMarchLayout(savedMarch.layout)
+    }
+    if (savedMarch.bottomHeight !== undefined) {
+      const h = parseInt(String(savedMarch.bottomHeight), 10)
+      if (!isNaN(h) && h > 0) {
+        setMarchBottomHeight(h)
+      }
+    }
+    marchLoaded.current = true
+  }, [savedMarch])
+
+  useEffect(() => {
+    if (!marchLoaded.current) return
+    saveMarchSettings({
+      symbol: marchSymbol,
+      tf: marchTf.table,
+      from: marchFromDate,
+      to: marchToDate,
+      mode: marchMode,
+      bottomOpen: String(isBottomOpen),
+      layout: marchLayout,
+      bottomHeight: String(marchBottomHeight),
+    })
+  }, [marchSymbol, marchTf, marchFromDate, marchToDate, marchMode, isBottomOpen, marchLayout, marchBottomHeight])
+
+  // Load persisted per-layout panel configs once; persist any change back. The
+  // `marchLayoutsLoaded` ref gates the save effect so the initial empty {} default
+  // doesn't overwrite stored values before the fetch resolves.
+  const marchLayoutsLoaded = useRef(false)
+  const { data: savedMarchLayouts } = useQuery({
+    queryKey: ['marchLayouts'],
+    queryFn: fetchMarchLayouts,
+    staleTime: Infinity,
+  })
+
+  useEffect(() => {
+    if (!savedMarchLayouts) return
+    setMarchLayouts(savedMarchLayouts)
+    marchLayoutsLoaded.current = true
+  }, [savedMarchLayouts])
+
+  useEffect(() => {
+    if (!marchLayoutsLoaded.current) return
+    saveMarchLayouts(marchLayouts)
+  }, [marchLayouts])
+
+  const [selectedAccountId, setSelectedAccountId] = useState<number | null>(null)
+  const [marchAccountModalOpen, setMarchAccountModalOpen] = useState(false)
+  const [marchStrategyModalOpen, setMarchStrategyModalOpen] = useState(false)
+  const [visibleTradeStrategies, setVisibleTradeStrategies] = useState<Set<string>>(new Set())
+
+  function toggleTradeStrategy(strategy: string) {
+    setVisibleTradeStrategies(prev => {
+      const next = new Set(prev)
+      if (next.has(strategy)) {
+        next.delete(strategy)
+      } else {
+        next.add(strategy)
+      }
+      return next
+    })
+  }
 
   // Default until the DB responds; overwritten once by the settings query effect below.
   const [fromDate, setFromDate] = useState('2026-01-01')
@@ -262,6 +378,17 @@ export default function App() {
       marchSymbol, setMarchSymbol,
       marchTf, setMarchTf,
       marchStreamStatus, setMarchStreamStatus,
+      marchMode, marchFromDate, marchToDate,
+      handleMarchApplyRange, handleMarchLatest,
+      selectedAccountId, setSelectedAccountId,
+      marchAccountModalOpen, setMarchAccountModalOpen,
+      marchStrategyModalOpen, setMarchStrategyModalOpen,
+      visibleTradeStrategies, toggleTradeStrategy,
+      isBottomOpen, setIsBottomOpen,
+      marchLayout, setMarchLayout,
+      marchBottomHeight, setMarchBottomHeight,
+      marchLayouts, updateMarchPanel,
+      activeMarchPanel, setActiveMarchPanel,
     }}>
       <RouterProvider router={router} />
     </AppContext.Provider>

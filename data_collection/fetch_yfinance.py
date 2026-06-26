@@ -1,11 +1,12 @@
 """Yahoo Finance data ingestion and aggregation script.
 
-Fetches 1-minute intraday data for NQ futures, streams it to QuestDB,
-and aggregates it to multiple higher timeframes without duplication.
+Fetches historical data for multiple timeframes directly from yfinance,
+clears the database (yf only) to start fresh, and stores the data in QuestDB.
 """
 
 import socket
 import logging
+import argparse
 from datetime import datetime
 import pandas as pd
 import yfinance as yf
@@ -21,6 +22,31 @@ logging.basicConfig(
 logger = logging.getLogger("fetch_yfinance")
 
 
+def drop_yfinance_tables() -> None:
+    """Drop all yfinance tables in QuestDB to start fresh."""
+    timeframes = ["1m", "5m", "15m", "30m", "1h", "4h", "1d"]
+    url = f"http://{config.QUESTDB_HOST}:{config.QUESTDB_HTTP_PORT}/exec"
+    
+    for tf in timeframes:
+        table_name = f"yf_{config.BASE_TABLE_NAME}_{tf}"
+        query = f"DROP TABLE {table_name}"
+        logger.info(f"Dropping table {table_name} if it exists...")
+        try:
+            response = httpx.get(url, params={"query": query}, timeout=10.0)
+            if response.status_code == 200:
+                logger.info(f"Successfully dropped table {table_name}.")
+            elif response.status_code == 400:
+                err_json = response.json()
+                if "table does not exist" in err_json.get("error", ""):
+                    logger.info(f"Table {table_name} does not exist. Skipping.")
+                else:
+                    logger.warning(f"Error response dropping table {table_name}: {err_json}")
+            else:
+                logger.warning(f"Unexpected status code {response.status_code} dropping table {table_name}: {response.text}")
+        except Exception as e:
+            logger.warning(f"Failed to drop table {table_name}: {e}")
+
+
 def get_max_timestamp(table_name: str) -> pd.Timestamp | None:
     """Query QuestDB REST API for the maximum timestamp in a table.
 
@@ -34,7 +60,7 @@ def get_max_timestamp(table_name: str) -> pd.Timestamp | None:
         if response.status_code == 400:
             err_json = response.json()
             if "table does not exist" in err_json.get("error", ""):
-                logger.info(f"Table {table_name} does not exist. Starting fresh.")
+                logger.info(f"Table {table_name} does not exist. Treating as empty.")
                 return None
             response.raise_for_status()
 
@@ -56,26 +82,28 @@ def get_max_timestamp(table_name: str) -> pd.Timestamp | None:
     return None
 
 
-def fetch_yfinance_1m(start_dt: pd.Timestamp, end_dt: pd.Timestamp) -> pd.DataFrame:
-    """Fetch 1-minute historical data for TICKER from start_dt to end_dt.
-
-    Downloads in 7-day chunks to respect Yahoo Finance's constraints.
-    """
-    logger.info(f"Fetching 1m data for {config.TICKER} from {start_dt} to {end_dt}")
+def fetch_yfinance_data(interval: str, start_dt: pd.Timestamp, end_dt: pd.Timestamp) -> pd.DataFrame:
+    """Fetch historical data for config.TICKER with the given interval and date range from yfinance."""
+    logger.info(f"Fetching {interval} data for {config.TICKER} from {start_dt} to {end_dt}")
     ticker = yf.Ticker(config.TICKER)
 
-    # 7-day chunk size limit
-    chunk_size = pd.Timedelta(days=7)
+    # 1-minute data must be fetched in chunks due to yfinance constraints
+    if interval == "1m":
+        chunk_size = pd.Timedelta(days=7)
+    else:
+        chunk_size = end_dt - start_dt
+
     current_start = start_dt
     dfs = []
 
     while current_start < end_dt:
-        # yfinance end is exclusive, so add 1 minute to avoid missing the boundary minute
         current_end = min(current_start + chunk_size, end_dt)
+        if current_start >= current_end:
+            break
         logger.info(f"Downloading chunk: {current_start} to {current_end}")
 
         try:
-            df_chunk = ticker.history(start=current_start, end=current_end, interval="1m")
+            df_chunk = ticker.history(start=current_start, end=current_end, interval=interval)
             if not df_chunk.empty:
                 logger.info(f"Downloaded {len(df_chunk)} rows.")
                 dfs.append(df_chunk)
@@ -92,6 +120,13 @@ def fetch_yfinance_1m(start_dt: pd.Timestamp, end_dt: pd.Timestamp) -> pd.DataFr
     # Combine and drop duplicates
     df = pd.concat(dfs).sort_index()
     df = df[~df.index.duplicated(keep="first")]
+
+    # Normalize index to America/New_York timezone
+    if df.index.tz is not None:
+        df.index = df.index.tz_convert("America/New_York")
+    else:
+        df.index = df.index.tz_localize("America/New_York")
+
     return df
 
 
@@ -142,13 +177,10 @@ def write_to_questdb(table_name: str, df: pd.DataFrame) -> int:
         s.close()
 
 
-def query_1m_data(start_dt: pd.Timestamp | None) -> pd.DataFrame:
-    """Fetch 1-minute records from QuestDB's base 1m table for aggregation."""
-    table_name = f"yf_{config.BASE_TABLE_NAME}_1m"
-
+def query_table_data(table_name: str, start_dt: pd.Timestamp | None) -> pd.DataFrame:
+    """Fetch records from a QuestDB table starting from start_dt."""
     query = f"SELECT timestamp, open, high, low, close, volume FROM {table_name}"
     if start_dt is not None:
-        # Convert start_dt to naive timestamp for UTC string representation in QuestDB
         formatted_ts = start_dt.tz_localize(None).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
         query += f" WHERE timestamp >= '{formatted_ts}'"
 
@@ -178,58 +210,126 @@ def query_1m_data(start_dt: pd.Timestamp | None) -> pd.DataFrame:
             "volume": "Volume"
         }, inplace=True)
 
-        # Convert index from naive (stored as UTC) to America/New_York timezone
         if df.index.tz is not None:
             df.index = df.index.tz_convert("America/New_York")
         else:
             df.index = df.index.tz_localize("UTC").tz_convert("America/New_York")
         return df
     except Exception as e:
-        logger.error(f"Error querying 1m data: {e}")
+        logger.error(f"Error querying data from {table_name}: {e}")
         return pd.DataFrame()
 
 
-def is_candle_complete(start_time: pd.Timestamp, duration_minutes: int, max_1m_time: pd.Timestamp) -> bool:
-    """Determine if a candle is fully completed based on the maximum 1m bar timestamp available."""
-    # A candle of length duration_minutes starting at start_time is complete
-    # when we have the 1-minute bar that is at or after start_time + (duration_minutes - 1)
-    return max_1m_time >= start_time + pd.Timedelta(minutes=duration_minutes - 1)
+def is_yfinance_candle_complete(start_time: pd.Timestamp, interval: str, now: pd.Timestamp) -> bool:
+    """Determine if a candle is fully completed based on current exchange time."""
+    if interval == "1d":
+        # 1d candle starting at 00:00 is complete after 17:00 (5 PM) Exchange Time
+        return now >= start_time + pd.Timedelta(hours=17)
+
+    # Intraday candles: complete if now is at or after start_time + duration
+    duration_map = {
+        "1m": 1,
+        "5m": 5,
+        "15m": 15,
+        "30m": 30,
+        "1h": 60,
+    }
+    minutes = duration_map.get(interval)
+    if minutes is not None:
+        return now >= start_time + pd.Timedelta(minutes=minutes)
+    return True
 
 
-def aggregate_and_write() -> None:
-    """Aggregate 1-minute data into higher timeframes and write them to QuestDB."""
-    base_1m_table = f"yf_{config.BASE_TABLE_NAME}_1m"
-    max_1m_time = get_max_timestamp(base_1m_table)
+def main() -> None:
+    """Main execution function."""
+    parser = argparse.ArgumentParser(description="Yahoo Finance data collection and storage.")
+    parser.add_argument("--skip-clear", action="store_true", help="Skip clearing database tables before fetching.")
+    args = parser.parse_args()
 
-    if max_1m_time is None:
-        logger.info("No 1-minute data found in database. Skipping aggregation.")
-        return
+    # 1. Clear database tables first if not requested to skip
+    if not args.skip_clear:
+        drop_yfinance_tables()
 
-    # Timeframes: (suffix, pandas resample rule, duration in minutes)
-    timeframes = [
-        ("5m", "5min", 5),
-        ("15m", "15min", 15),
-        ("30m", "30min", 30),
-        ("1h", "h", 60),
-        ("4h", "4h", 240),
-        ("1d", "D", 1440),
-    ]
+    now = pd.Timestamp.now(tz="America/New_York")
 
-    for suffix, rule, duration in timeframes:
-        target_table = f"yf_{config.BASE_TABLE_NAME}_{suffix}"
-        logger.info(f"Processing aggregation for {target_table}...")
+    # Timeframe limits in days
+    lookback_days = {
+        "1m": 29,
+        "5m": 59,
+        "15m": 59,
+        "30m": 59,
+        "1h": 365,
+        "1d": 365,
+    }
 
-        # Query max timestamp of the target table
+    # 2. Process direct yfinance timeframes
+    timeframes = ["1m", "5m", "15m", "30m", "1h", "1d"]
+
+    for tf in timeframes:
+        target_table = f"yf_{config.BASE_TABLE_NAME}_{tf}"
+        logger.info(f"--- Processing timeframe {tf} ---")
+
+        # Determine start date
+        limit_dt = now - pd.Timedelta(days=lookback_days[tf])
         T_max_tf = get_max_timestamp(target_table)
 
-        # Query 1m data starting from T_max_tf (or None if empty)
-        df_1m = query_1m_data(T_max_tf)
-        if df_1m.empty:
-            logger.info(f"No new 1-minute data to aggregate for {target_table}.")
+        if T_max_tf is None:
+            start_dt = limit_dt
+            logger.info(f"Table empty. Fetching full history starting: {start_dt}")
+        else:
+            start_dt = max(T_max_tf, limit_dt)
+            logger.info(f"Incremental fetch starting at: {start_dt}")
+
+        df = fetch_yfinance_data(tf, start_dt, now)
+
+        if df.empty:
+            logger.info(f"No new data fetched for {tf}.")
             continue
 
-        # Perform OHLCV resampling
-        df_resampled = df_1m.resample(rule, label="left", closed="left").agg({
+        # Filter out existing data to prevent duplicates
+        if T_max_tf is not None:
+            df = df[df.index > T_max_tf]
+
+        if df.empty:
+            logger.info(f"All fetched rows were already in database for {tf}.")
+            continue
+
+        # Filter out incomplete candles
+        valid_rows = []
+        for ts, row in df.iterrows():
+            if is_yfinance_candle_complete(ts, tf, now):
+                row.name = ts
+                valid_rows.append(row)
+
+        if not valid_rows:
+            logger.info(f"No complete candles to write for {tf}.")
+            continue
+
+        df_to_write = pd.DataFrame(valid_rows)
+        write_to_questdb(target_table, df_to_write)
+
+    # 3. Process resampled 4h timeframe from 1h data
+    tf_4h = "4h"
+    target_table_4h = f"yf_{config.BASE_TABLE_NAME}_{tf_4h}"
+    logger.info(f"--- Processing resampled timeframe {tf_4h} ---")
+
+    limit_dt_4h = now - pd.Timedelta(days=365)
+    T_max_4h = get_max_timestamp(target_table_4h)
+
+    # If incremental, we start querying 1h data from slightly before the last 4h timestamp
+    if T_max_4h is None:
+        query_start = limit_dt_4h
+        logger.info("Table empty. Querying full 1h history to resample.")
+    else:
+        query_start = max(T_max_4h - pd.Timedelta(hours=4), limit_dt_4h)
+        logger.info(f"Incremental aggregation starting from: {query_start}")
+
+    # Query 1h data from QuestDB
+    df_1h = query_table_data(f"yf_{config.BASE_TABLE_NAME}_1h", query_start)
+
+    if not df_1h.empty:
+        # Resample to 4h
+        df_resampled = df_1h.resample("4h", label="left", closed="left").agg({
             "Open": "first",
             "High": "max",
             "Low": "min",
@@ -237,72 +337,24 @@ def aggregate_and_write() -> None:
             "Volume": "sum"
         }).dropna()
 
-        if df_resampled.empty:
-            logger.info(f"Resampling resulted in empty DataFrame for {target_table}.")
-            continue
+        # Filter out rows before or equal to T_max_4h
+        if T_max_4h is not None:
+            df_resampled = df_resampled[df_resampled.index > T_max_4h]
 
-        # Filter rules:
-        # 1. Start time must be strictly greater than T_max_tf (future proof / no duplicate inserts)
-        # 2. Candle must be fully completed
-        valid_candles = []
+        # Filter for complete candles (now >= start_time + 4 hours)
+        valid_candles_4h = []
         for start_time, row in df_resampled.iterrows():
-            # T_max_tf check
-            if T_max_tf is not None and start_time <= T_max_tf:
-                continue
+            if now >= start_time + pd.Timedelta(hours=4):
+                row.name = start_time
+                valid_candles_4h.append(row)
 
-            # Candle completion check
-            if not is_candle_complete(start_time, duration, max_1m_time):
-                continue
-
-            # In order to construct the series properly, we must assign name to start_time
-            row.name = start_time
-            valid_candles.append(row)
-
-        if not valid_candles:
-            logger.info(f"No new completed candles to write for {target_table}.")
-            continue
-
-        df_to_write = pd.DataFrame(valid_candles)
-        write_to_questdb(target_table, df_to_write)
-
-
-def main() -> None:
-    """Main execution function."""
-    base_1m_table = f"yf_{config.BASE_TABLE_NAME}_1m"
-
-    # 1. Determine where to start fetching from
-    T_max_1m = get_max_timestamp(base_1m_table)
-
-    now = pd.Timestamp.now(tz="America/New_York")
-    if T_max_1m is None:
-        # Empty database: Fetch full history (maximum yfinance lookback of 29 days)
-        start_dt = now - pd.Timedelta(days=29)
-        logger.info(f"Starting fresh. Historical limit start: {start_dt}")
-    else:
-        # Fetch starting from the last known timestamp (to fetch any updates or new bars)
-        # We start exactly at T_max_1m to ensure we catch any overlapping/forming bar,
-        # but we filter out duplicates afterwards.
-        start_dt = T_max_1m
-        logger.info(f"Incremental fetch starting at: {start_dt}")
-
-    # 2. Fetch the 1-minute data from yfinance
-    df_1m = fetch_yfinance_1m(start_dt, now)
-
-    if df_1m.empty:
-        logger.info("No new data fetched from yfinance.")
-    else:
-        # 3. Filter out any rows at or before T_max_1m to avoid duplicates
-        if T_max_1m is not None:
-            df_1m = df_1m[df_1m.index > T_max_1m]
-
-        if df_1m.empty:
-            logger.info("All fetched rows were already in the database. No new 1m data to write.")
+        if valid_candles_4h:
+            df_to_write_4h = pd.DataFrame(valid_candles_4h)
+            write_to_questdb(target_table_4h, df_to_write_4h)
         else:
-            # 4. Stream 1-minute data into QuestDB
-            write_to_questdb(base_1m_table, df_1m)
-
-    # 5. Run aggregations for all higher timeframes
-    aggregate_and_write()
+            logger.info("No complete 4h candles to write.")
+    else:
+        logger.warning("No 1h data found in database. Skipping 4h resampling.")
 
     logger.info("Data collection and aggregation completed successfully.")
 

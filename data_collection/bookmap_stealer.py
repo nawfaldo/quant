@@ -21,6 +21,13 @@ from typing import Any, Dict, Optional
 from collections import defaultdict
 from questdb.ingress import Sender, TimestampNanos
 
+import asyncio
+try:
+    import websockets
+    _WS_AVAILABLE = True
+except ImportError:
+    _WS_AVAILABLE = False
+
 def get_ny_timestamp_ns() -> int:
     try:
         # Get current time in New York
@@ -126,6 +133,85 @@ def flush_loop() -> None:
 def close_sender() -> None:
     """Flush and close the sender on shutdown."""
     clear_sender()
+
+# ============================================================================
+# WEBSOCKET LIVE PUSH (sub-100ms path to the browser, bypasses QuestDB)
+# ============================================================================
+# The QuestDB path persists every tick but has flush + WAL-commit latency that
+# makes sub-100ms read-after-write impossible. For the realtime chart we push
+# each trade straight to connected browsers over a WebSocket the instant it
+# arrives in on_trade. Browsers receive ticks in ~1-10ms; QuestDB stays the
+# source of truth for historical backfill on page load.
+
+WS_PORT = 8765
+ws_loop: Optional[asyncio.AbstractEventLoop] = None
+ws_queue: Optional["asyncio.Queue"] = None
+ws_clients: set = set()
+
+async def _ws_handler(websocket, *_) -> None:
+    ws_clients.add(websocket)
+    print(f"[WS] client connected ({len(ws_clients)} total)", flush=True)
+    try:
+        await websocket.wait_closed()
+    finally:
+        ws_clients.discard(websocket)
+        print(f"[WS] client disconnected ({len(ws_clients)} total)", flush=True)
+
+async def _ws_safe_send(client, payload: str) -> None:
+    try:
+        await client.send(payload)
+    except Exception:
+        ws_clients.discard(client)
+
+async def _ws_consumer() -> None:
+    """Drain the queue and fan out to clients. Coalesces bursts into one batch
+    (immediate when idle, naturally batched under load). Same JSON shape as
+    /api/march/ticks so the frontend handles both paths identically."""
+    global ws_queue
+    ws_queue = asyncio.Queue()
+    while True:
+        first = await ws_queue.get()
+        batch = [first]
+        while not ws_queue.empty() and len(batch) < 2000:
+            batch.append(ws_queue.get_nowait())
+        if ws_clients:
+            payload = "[" + ",".join(batch) + "]"
+            await asyncio.gather(
+                *[_ws_safe_send(c, payload) for c in list(ws_clients)],
+                return_exceptions=True,
+            )
+
+async def _ws_main() -> None:
+    async with websockets.serve(_ws_handler, "0.0.0.0", WS_PORT, ping_interval=20):
+        print(f"[WS] live-push server listening on :{WS_PORT}", flush=True)
+        await _ws_consumer()
+
+def start_ws_server() -> None:
+    """Run the WebSocket server in a daemon thread with its own event loop."""
+    global ws_loop
+    if not _WS_AVAILABLE:
+        print("[WS] 'websockets' not installed — live push DISABLED. "
+              "Run: pip install websockets  (chart falls back to QuestDB polling)", flush=True)
+        return
+    ws_loop = asyncio.new_event_loop()
+    def _run():
+        asyncio.set_event_loop(ws_loop)
+        try:
+            ws_loop.run_until_complete(_ws_main())
+        except Exception as e:
+            print(f"[WS] server crashed: {e}", flush=True)
+    threading.Thread(target=_run, daemon=True, name="ws-server").start()
+
+def ws_push(sym: str, t_ns: int, price: float, size: float, side: str) -> None:
+    """Non-blocking hand-off of one trade to the WS loop. Safe to call from the
+    Bookmap on_trade callback thread. No-op when nobody is watching."""
+    if ws_loop is None or ws_queue is None or not ws_clients:
+        return
+    row = f'{{"sym":"{sym}","ts":{t_ns},"price":{price},"size":{size},"side":"{side}"}}'
+    try:
+        ws_loop.call_soon_threadsafe(ws_queue.put_nowait, row)
+    except RuntimeError:
+        pass
 
 # ============================================================================
 # HELPERS
@@ -246,8 +332,12 @@ def on_trade(
         # Cache lookup for table name
         table_name = table_name_cache.get(alias)
         
-        # Send trade row (TCP/HTTP ILP buffer write, extremely fast)
         t_ns = get_ny_timestamp_ns()
+
+        # Live path first: push to browsers immediately (lowest latency, ~1-10ms).
+        ws_push(alias_to_symbol.get(alias, ""), t_ns, price, size, side)
+
+        # Persistence path: buffered ILP write to QuestDB (historical backfill).
         send_row_safe(
             table_name,
             symbols={"side": side},
@@ -287,6 +377,9 @@ if __name__ == "__main__":
     running = True
     flush_thread = threading.Thread(target=flush_loop, daemon=True)
     flush_thread.start()
+
+    # Start the WebSocket live-push server (realtime path to the browser).
+    start_ws_server()
 
     addon = bm.create_addon()
 

@@ -1,11 +1,8 @@
 const std = @import("std");
 
 const QUESTDB_PORT: u16 = 9000;
-const RECV_BUF_BYTES: usize = 512 * 1024;
+const STREAM_BUF_BYTES: usize = 512 * 1024;
 
-extern "c" fn socket(domain: c_uint, sock_type: c_uint, protocol: c_uint) c_int;
-extern "c" fn close(fd: c_int) c_int;
-extern "c" fn usleep(usec: c_uint) c_int;
 extern "c" fn getenv(name: [*:0]const u8) ?[*:0]const u8;
 
 fn urlEncode(a: std.mem.Allocator, input: []const u8) ![]u8 {
@@ -32,66 +29,69 @@ fn hexVal(c: u8) ?usize {
     };
 }
 
+fn stripCr(s: []const u8) []const u8 {
+    return if (s.len > 0 and s[s.len - 1] == '\r') s[0 .. s.len - 1] else s;
+}
+
 // Streaming HTTP reader for QuestDB's /exp (CSV) endpoint.
 //
-// Why streaming: the nq_1m table is ~5.9M rows (~350 MB CSV). The previous
-// implementation buffered the entire chunked HTTP response in memory, then
-// allocated a *second* full copy to de-chunk it, then the caller parsed that
-// into a binary cache — a transient spike near 1 GB per fetch. On an 8 GB
-// machine that drives the whole system into swap. This reader instead de-chunks
-// on the fly and hands out one CSV line at a time, so peak memory for a fetch is
-// just the 512 KB recv buffer plus the (small) line-spanning accumulator. The
-// binary cache being built by the caller is the only large allocation.
+// Why streaming: the nq_1m table is ~5.9M rows (~350 MB CSV). De-chunking on the
+// fly and handing out one CSV line at a time keeps peak memory to the recv
+// buffer plus a tiny line-spanning accumulator, instead of buffering the whole
+// response twice.
 //
-// Raw C sockets are used because std.http.Client requires a std.Io, which is
-// unavailable inside zap callbacks (they run in facil.io's own event loop).
+// Transport is std.Io.net (cross-platform: Windows / macOS / Linux). The Reader
+// is heap-allocated so its embedded std.Io reader interface has a stable address
+// (the interface resolves its parent via @fieldParentPtr, which breaks if the
+// struct is copied to a new location after construction).
 pub const Reader = struct {
     a: std.mem.Allocator,
-    sock: c_int,
-    rbuf: []u8,
-    rstart: usize = 0,
-    rend: usize = 0,
-    sock_eof: bool = false,
+    io: std.Io,
+    stream: std.Io.net.Stream,
+    sr: std.Io.net.Stream.Reader,
+    srbuf: []u8,
+    eof: bool = false,
 
     chunked: bool = false,
     chunk_left: usize = 0, // remaining data bytes in the current chunk
     body_done: bool = false,
     // True once the body has been fully and correctly received: the final
     // zero-size chunk (chunked) or a clean socket close (identity). If a fetch
-    // ends with `complete == false` the stream was truncated and the caller
-    // must discard whatever it parsed and retry.
+    // ends with `complete == false` the stream was truncated and the caller must
+    // discard whatever it parsed and retry.
     complete: bool = false,
 
-    // Unconsumed bytes of the current decoded body run, pointing into `rbuf`.
+    // Unconsumed bytes of the current decoded body run, pointing into the reader
+    // buffer (valid only until the next bodyChunk()).
     cur: []const u8 = &.{},
     // Accumulates a CSV line that spans a recv/chunk boundary. Tiny (~one row).
     line: std.ArrayList(u8) = .empty,
 
-    pub fn deinit(self: *Reader) void {
-        self.line.deinit(self.a);
-        self.a.free(self.rbuf);
-        _ = close(self.sock);
+    fn r(self: *Reader) *std.Io.Reader {
+        return &self.sr.interface;
     }
 
-    // Ensures rbuf holds at least one unread byte. False on socket EOF/error.
-    fn fillRaw(self: *Reader) bool {
-        if (self.rstart < self.rend) return true;
-        if (self.sock_eof) return false;
-        const n = std.c.recv(self.sock, self.rbuf.ptr, self.rbuf.len, 0);
-        if (n <= 0) {
-            self.sock_eof = true;
+    pub fn deinit(self: *Reader) void {
+        self.line.deinit(self.a);
+        self.stream.close(self.io);
+        const a = self.a;
+        a.free(self.srbuf);
+        a.destroy(self);
+    }
+
+    // Ensures the reader holds at least one buffered byte. False on EOF/error.
+    fn ensure(self: *Reader) bool {
+        if (self.eof) return false;
+        if (self.r().bufferedLen() > 0) return true;
+        self.r().fillMore() catch {
+            self.eof = true;
             return false;
-        }
-        self.rstart = 0;
-        self.rend = @intCast(n);
-        return true;
+        };
+        return self.r().bufferedLen() > 0;
     }
 
     fn nextByte(self: *Reader) ?u8 {
-        if (!self.fillRaw()) return null;
-        const b = self.rbuf[self.rstart];
-        self.rstart += 1;
-        return b;
+        return self.r().takeByte() catch null;
     }
 
     // Reads the next chunk-size line, setting chunk_left. Tolerates the trailing
@@ -111,8 +111,8 @@ pub const Reader = struct {
         return true;
     }
 
-    // Returns the next contiguous run of decoded body bytes (a slice into rbuf),
-    // or null at end-of-body. Sets `complete` only when the body ended cleanly.
+    // Returns the next contiguous run of decoded body bytes (a slice into the
+    // reader buffer), or null at end-of-body. Sets `complete` only on a clean end.
     fn bodyChunk(self: *Reader) ?[]const u8 {
         if (self.body_done) return null;
         if (self.chunked) {
@@ -122,31 +122,29 @@ pub const Reader = struct {
                     return null;
                 }
             }
-            if (!self.fillRaw()) {
+            if (!self.ensure()) {
                 self.body_done = true;
                 return null;
             }
-            const avail = self.rend - self.rstart;
-            const take = @min(avail, self.chunk_left);
-            const s = self.rbuf[self.rstart .. self.rstart + take];
-            self.rstart += take;
+            const buf = self.r().buffered();
+            const take = @min(buf.len, self.chunk_left);
+            const s = buf[0..take];
+            self.r().toss(take);
             self.chunk_left -= take;
             return s;
         }
-        if (!self.fillRaw()) {
+        if (!self.ensure()) {
             self.body_done = true;
             self.complete = true; // identity body ends at clean socket close
             return null;
         }
-        const s = self.rbuf[self.rstart..self.rend];
-        self.rstart = self.rend;
-        return s;
+        const buf = self.r().buffered();
+        self.r().toss(buf.len);
+        return buf;
     }
 
     // Returns the next CSV line (without trailing CRLF), or null at end-of-body.
-    // The returned slice is valid only until the next nextLine() call. Memory
-    // errors on the spanning accumulator surface as a truncated stream (null
-    // with complete == false), which the retry path handles.
+    // The returned slice is valid only until the next nextLine() call.
     pub fn nextLine(self: *Reader) ?[]const u8 {
         self.line.clearRetainingCapacity();
         var used_accum = false;
@@ -178,87 +176,65 @@ pub const Reader = struct {
     }
 };
 
-fn stripCr(s: []const u8) []const u8 {
-    return if (s.len > 0 and s[s.len - 1] == '\r') s[0 .. s.len - 1] else s;
-}
-
-fn parseIp4(s: []const u8) ![4]u8 {
-    var it = std.mem.splitScalar(u8, s, '.');
-    const a0 = try std.fmt.parseInt(u8, it.next() orelse return error.Invalid, 10);
-    const a1 = try std.fmt.parseInt(u8, it.next() orelse return error.Invalid, 10);
-    const a2 = try std.fmt.parseInt(u8, it.next() orelse return error.Invalid, 10);
-    const a3 = try std.fmt.parseInt(u8, it.next() orelse return error.Invalid, 10);
-    return .{ a0, a1, a2, a3 };
-}
-
 // Opens a connection to QuestDB, sends the /exp query, and consumes the HTTP
 // response headers so the returned Reader is positioned at the first body byte.
 // CSV (/exp) is used over JSON (/exec) because it serializes ~2.6x faster for
-// large result sets. Caller owns the Reader and must deinit() it.
-pub fn open(a: std.mem.Allocator, sql: []const u8) !Reader {
+// large result sets. Caller owns the returned Reader and must deinit() it.
+pub fn open(io: std.Io, a: std.mem.Allocator, sql: []const u8) !*Reader {
     const encoded = try urlEncode(a, sql);
     defer a.free(encoded);
 
-    // QUESTDB_HOST lets WSL builds reach a QuestDB running on the Windows host.
-    // safe-build.sh sets it to the WSL gateway IP automatically.
+    // QUESTDB_HOST allows pointing at a non-local QuestDB; defaults to localhost.
     const host_cstr = getenv("QUESTDB_HOST");
     const host_str = if (host_cstr) |p| std.mem.sliceTo(p, 0) else "127.0.0.1";
-    const ip4 = parseIp4(host_str) catch [4]u8{ 127, 0, 0, 1 };
 
-    const req_str = try std.fmt.allocPrint(a,
+    const req_str = try std.fmt.allocPrint(
+        a,
         "GET /exp?query={s} HTTP/1.1\r\nHost: {s}:9000\r\nConnection: close\r\n\r\n",
         .{ encoded, host_str },
     );
     defer a.free(req_str);
 
-    const sock = socket(@intCast(std.c.AF.INET), std.c.SOCK.STREAM, 0);
-    if (sock < 0) return error.SocketFailed;
-    errdefer _ = close(sock);
+    const addr = std.Io.net.IpAddress.parse(host_str, QUESTDB_PORT) catch
+        try std.Io.net.IpAddress.parse("127.0.0.1", QUESTDB_PORT);
 
-    // Bump SO_RCVBUF: the small macOS default stalls the localhost sender.
-    const rcvbuf: c_int = 8 * 1024 * 1024;
-    _ = std.c.setsockopt(sock, std.c.SOL.SOCKET, std.c.SO.RCVBUF, &rcvbuf, @sizeOf(c_int));
-    // Disable Nagle/delayed-ACK coalescing, which throttles a chunked sender on
-    // localhost to ~10 MB/s.
-    const one: c_int = 1;
-    _ = std.c.setsockopt(sock, std.c.IPPROTO.TCP, std.c.TCP.NODELAY, &one, @sizeOf(c_int));
-    // Safety net: QuestDB ignores "Connection: close" and holds the socket open
-    // after the final chunk, so a missed end-of-stream would otherwise block
-    // forever. 30 s is far longer than any healthy inter-packet gap.
-    const rcvtimeo = std.c.timeval{ .sec = 30, .usec = 0 };
-    _ = std.c.setsockopt(sock, std.c.SOL.SOCKET, std.c.SO.RCVTIMEO, &rcvtimeo, @sizeOf(std.c.timeval));
+    var stream = try addr.connect(io, .{ .mode = .stream });
+    errdefer stream.close(io);
 
-    const addr = std.c.sockaddr.in{
-        .port = std.mem.nativeToBig(u16, QUESTDB_PORT),
-        .addr = @bitCast(ip4),
-    };
-    if (std.c.connect(sock, @ptrCast(&addr), @sizeOf(std.c.sockaddr.in)) != 0)
-        return error.ConnectFailed;
-
-    var sent: usize = 0;
-    while (sent < req_str.len) {
-        const n = std.c.send(sock, req_str[sent..].ptr, req_str.len - sent, 0);
-        if (n < 0) return error.SendFailed;
-        sent += @intCast(n);
+    // Send the request.
+    {
+        var wbuf: [1024]u8 = undefined;
+        var sw = stream.writer(io, &wbuf);
+        const w = &sw.interface;
+        try w.writeAll(req_str);
+        try w.flush();
     }
 
-    const rbuf = try a.alloc(u8, RECV_BUF_BYTES);
-    errdefer a.free(rbuf);
+    const srbuf = try a.alloc(u8, STREAM_BUF_BYTES);
+    errdefer a.free(srbuf);
 
-    var rd = Reader{ .a = a, .sock = sock, .rbuf = rbuf };
+    const self = try a.create(Reader);
+    errdefer a.destroy(self);
+
+    self.* = .{
+        .a = a,
+        .io = io,
+        .stream = stream,
+        .sr = stream.reader(io, srbuf),
+        .srbuf = srbuf,
+    };
 
     // Consume HTTP headers (terminated by CRLFCRLF) and detect chunked encoding.
-    // Headers are small; scanning byte-by-byte is cheap.
     var hdr: [16 * 1024]u8 = undefined;
     var hlen: usize = 0;
     while (true) {
-        const b = rd.nextByte() orelse return error.BadResponse;
+        const b = self.nextByte() orelse return error.BadResponse;
         if (hlen < hdr.len) {
             hdr[hlen] = b;
             hlen += 1;
         } else return error.HeaderTooLarge;
         if (hlen >= 4 and std.mem.eql(u8, hdr[hlen - 4 .. hlen], "\r\n\r\n")) break;
     }
-    rd.chunked = std.mem.indexOf(u8, hdr[0..hlen], "chunked") != null;
-    return rd;
+    self.chunked = std.mem.indexOf(u8, hdr[0..hlen], "chunked") != null;
+    return self;
 }

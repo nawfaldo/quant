@@ -1,39 +1,55 @@
 # Backend
 
-Zig 0.16 HTTP server using the zap framework (backed by facil.io). Acts as a proxy/cache layer between the frontend and QuestDB + SQLite, adding CORS headers.
+Zig 0.16 HTTP server, **cross-platform (Windows / macOS / Linux), built on `std.Io.net`** — no zap/facil.io (which is POSIX-only and forced a WSL build on Windows). Acts as a proxy/cache layer between the frontend and QuestDB + SQLite, adding CORS headers.
+
+**The march live-trading engine is integrated into this process** (`src/march/`). All march routes (`/api/march/strategies`, `/api/march/bar`, `/api/march/trades`, `/api/march/mt5/accounts/**`) are served on the **same port 8080** as the web routes — there is no separate port-4000 server. On Windows, `main()` spawns a thread that calls `march.init(io)`: this re-arms active strategies and starts the Bookmap WebSocket client (ws.zig / ws2_32 / Python on :5001). The Bookmap WS client is Windows-only; on macOS/Linux the march routes still compile and respond but live tick data does not flow. Outgoing HTTP calls (Python :5001, QuestDB :9000) use `std.Io.net` so they compile cross-platform.
 
 ## Stack
 
 | Layer | Technology |
 |-------|-----------|
 | Language | Zig 0.16 |
-| HTTP framework | [zap](https://github.com/zigzap/zap) (facil.io wrapper) |
-| OHLCV data | QuestDB on `localhost:9000` (table: `nq_1min`) |
-| Backtest results | SQLite at `/Users/nawfaldo/Bunker/Quant/backtest/backtests.db` |
+| HTTP server | Hand-rolled HTTP/1.1 on `std.Io.net` (`src/http.zig`) — cross-platform, no external dependency |
+| SQLite | **bundled** (`src/sqlite3.c` amalgamation, compiled by `build.zig`) — not system-linked, so it builds the same on every OS |
+| OHLCV data | QuestDB on `localhost:9000` over `std.Io.net` (chunked-CSV `/exp`) |
+| Backtest results | SQLite at the per-OS path in `db.zig` (`DB_PATH`) |
 | Allocator | `std.heap.page_allocator` (per-request, supports free) |
 
 ## Commands
 
 ```bash
-zig build          # compile
+zig build          # compile (native: Windows, macOS, or Linux — no WSL needed)
 zig build run      # compile and run (port 8080)
+PORT=8090 zig build run   # run on a different port (env override)
 ```
 
-Always kill any existing process on port 8080 before `zig build run` (`lsof -ti :8080 | xargs kill -9`).
+The accept loop is single-threaded and binds `127.0.0.1`. `std.Io.net`'s Windows backend needs Winsock, which `build.zig` links (`ws2_32`) only on Windows. Kill any existing listener on the port first (Windows: `netstat -ano | findstr :8080` then `taskkill /PID <pid> /F`; POSIX: `lsof -ti :8080 | xargs kill -9`).
 
 ## Project layout
 
 ```
 backend/
-├── build.zig          # build script
-├── build.zig.zon      # package manifest
+├── build.zig          # build script (bundles sqlite3.c; links ws2_32 on Windows)
+├── build.zig.zon      # package manifest (no dependencies)
 └── src/
-    ├── main.zig       # entry point: startup, cache init, listener
-    ├── router.zig     # request dispatch (onRequest)
-    ├── cache.zig      # startup caches for candles + VWAP (QuestDB)
-    ├── db.zig         # SQLite helpers: backtests list, trades binary
-    └── questdb.zig    # raw C-socket fetch + chunked-decode from QuestDB
+    ├── main.zig       # entry: web accept loop (PORT env) + spawns march.serve on Windows
+    ├── http.zig       # cross-platform HTTP/1.1 server + Ctx (request/response adapter)
+    ├── router.zig     # web request dispatch (onRequest takes *http.Ctx)
+    ├── cache.zig      # on-demand candle/VWAP blob builders (QuestDB); takes std.Io
+    ├── db.zig         # SQLite helpers: backtests list, trades/montecarlo binary
+    ├── settings.zig   # app.db key/value settings (incl. march settings + layouts)
+    ├── questdb.zig    # std.Io.net fetch + chunked-decode from QuestDB
+    ├── sqlite3.c/.h   # bundled SQLite amalgamation
+    └── march/         # integrated march live-trading server (Windows-only thread)
+        ├── api.zig         # serve(io): port-4000 server + WS engine (was march/zig api)
+        ├── db.zig          # march.db (mt5_accounts, strategies, trades) — at web/backend/march.db
+        ├── ws.zig          # Bookmap live-push WebSocket client
+        ├── engine.zig / data.zig
+        ├── signal_runner.zig   # stdin/stdout strategy bridge → built as a separate exe
+        ├── strategies/ , sizings/
 ```
+
+`march.db` lives at `web/backend/march.db` (absolute path in `march/db.zig`); `march/db.py` reads it from `../web/backend/march.db`. The Python side (`march/`, port 5001) is unchanged otherwise — it still receives `/execute` from the march server on 4000.
 
 ## API routes
 
@@ -64,8 +80,10 @@ backend/
 
 ## Key implementation details
 
-### Why raw C sockets instead of `std.http.Client`
-Zig 0.16 redesigned the I/O model: `std.http.Client` now requires a `std.Io` instance only available from `main(init: std.process.Init)`. zap callbacks run inside facil.io's event loop where `std.Io` is inaccessible. The workaround is calling C library `socket`/`connect`/`send`/`recv` directly via `extern "c"`.
+### HTTP server: `std.Io.net`, not zap
+The server is hand-rolled on `std.Io.net` (`http.zig`), which works natively on Windows, macOS, and Linux. zap/facil.io was dropped because it does not compile on Windows (forced a WSL build). `main(init: std.process.Init)` supplies the `std.Io` instance; it is threaded through `http.Ctx` → `router.onRequest` → `cache.*` → `questdb.open`, so the QuestDB client uses the same cross-platform `std.Io.net` networking (no `extern "c"` sockets — `std.posix` no longer exposes `socket`/`connect`/`recv`/`send` in Zig 0.16, so `std.Io.net` is the only portable path). `http.Ctx` mirrors the small slice of zap's `Request` surface the router relied on (`path`/`query`/`method`/`body`, `setHeader`/`setStatusNumeric`/`setContentType`/`sendBody`/`sendJson`), so routing code was unchanged apart from the request type.
+
+> **macOS note:** the old `extern "c"` QuestDB socket set `SO_RCVBUF`/`TCP_NODELAY` to work around a macOS localhost stall. `std.Io.net` doesn't expose those options, so they were dropped — correctness is unaffected; if large-result QuestDB fetches feel slow on macOS, that tuning is the thing to reintroduce.
 
 ### Why chunked decoding is needed
 QuestDB always responds with `Transfer-Encoding: chunked`. The proxy decodes it into a plain byte stream before parsing.

@@ -66,7 +66,8 @@ pub fn main(init: std.process.Init) !void {
     var cfg = Config{};
 
     // ── argument parsing ─────────────────────────────────────────────────────
-    var args_it = std.process.Args.Iterator.init(init.minimal.args);
+    var args_it = try std.process.Args.Iterator.initAllocator(init.minimal.args, gpa);
+    defer args_it.deinit();
     _ = args_it.skip(); // argv[0]
 
     while (args_it.next()) |arg| {

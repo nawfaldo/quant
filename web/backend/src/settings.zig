@@ -3,13 +3,23 @@ const builtin = @import("builtin");
 const c = @cImport(@cInclude("sqlite3.h"));
 
 const APP_DB_PATH = switch (builtin.os.tag) {
-    .macos => "/Users/nawfaldo/Bunker/Quant/web/backend/app.db",
-    else   => "/mnt/c/Users/JawirGaming66/Quant/web/backend/app.db",
+    .macos   => "/Users/nawfaldo/Bunker/Quant/web/backend/app.db",
+    .windows => "C:/Users/JawirGaming66/Quant/web/backend/app.db",
+    else     => "/mnt/c/Users/JawirGaming66/Quant/web/backend/app.db",
 };
 
 const DEFAULT_FROM = "2026-01-01";
 const DEFAULT_TO   = "2026-04-30";
 const DEFAULT_TF   = "5m";
+
+// March page defaults (persisted under the same key/value settings table).
+const DEFAULT_MARCH_SYMBOL = "nq";
+const DEFAULT_MARCH_TF     = "1m";
+const DEFAULT_MARCH_FROM   = "2026-06-18";
+const DEFAULT_MARCH_TO     = "2026-06-25";
+const DEFAULT_MARCH_MODE   = "latest"; // "latest" (stream) | "range" (static)
+const DEFAULT_MARCH_LAYOUT = "single";
+const DEFAULT_MARCH_BOTTOM_HEIGHT = "400";
 
 fn spanOrEmpty(ptr: ?[*:0]const u8) []const u8 {
     return if (ptr) |p| std.mem.span(p) else "";
@@ -36,6 +46,34 @@ pub fn init() !void {
 
     if (c.sqlite3_exec(db,
         "INSERT OR IGNORE INTO settings (key, value) VALUES ('default_timeframe', '" ++ DEFAULT_TF ++ "')",
+        null, null, null) != c.SQLITE_OK) return error.SeedFailed;
+
+    if (c.sqlite3_exec(db,
+        "INSERT OR IGNORE INTO settings (key, value) VALUES ('march_symbol', '" ++ DEFAULT_MARCH_SYMBOL ++ "')",
+        null, null, null) != c.SQLITE_OK) return error.SeedFailed;
+
+    if (c.sqlite3_exec(db,
+        "INSERT OR IGNORE INTO settings (key, value) VALUES ('march_tf', '" ++ DEFAULT_MARCH_TF ++ "')",
+        null, null, null) != c.SQLITE_OK) return error.SeedFailed;
+
+    if (c.sqlite3_exec(db,
+        "INSERT OR IGNORE INTO settings (key, value) VALUES ('march_from', '" ++ DEFAULT_MARCH_FROM ++ "')",
+        null, null, null) != c.SQLITE_OK) return error.SeedFailed;
+
+    if (c.sqlite3_exec(db,
+        "INSERT OR IGNORE INTO settings (key, value) VALUES ('march_to', '" ++ DEFAULT_MARCH_TO ++ "')",
+        null, null, null) != c.SQLITE_OK) return error.SeedFailed;
+
+    if (c.sqlite3_exec(db,
+        "INSERT OR IGNORE INTO settings (key, value) VALUES ('march_mode', '" ++ DEFAULT_MARCH_MODE ++ "')",
+        null, null, null) != c.SQLITE_OK) return error.SeedFailed;
+
+    if (c.sqlite3_exec(db,
+        "INSERT OR IGNORE INTO settings (key, value) VALUES ('march_layout', '" ++ DEFAULT_MARCH_LAYOUT ++ "')",
+        null, null, null) != c.SQLITE_OK) return error.SeedFailed;
+
+    if (c.sqlite3_exec(db,
+        "INSERT OR IGNORE INTO settings (key, value) VALUES ('march_bottom_height', '" ++ DEFAULT_MARCH_BOTTOM_HEIGHT ++ "')",
         null, null, null) != c.SQLITE_OK) return error.SeedFailed;
 }
 
@@ -172,4 +210,147 @@ pub fn save(from_date: []const u8, to_date: []const u8) !void {
     _ = c.sqlite3_bind_text(stmt, 1, "to_date", -1, null);
     _ = c.sqlite3_bind_text(stmt, 2, to_date.ptr, @intCast(to_date.len), null);
     if (c.sqlite3_step(stmt) != c.SQLITE_DONE) return error.SaveFailed;
+}
+
+// ── March page settings (symbol / tf / from / to / mode) ─────────────────────
+
+pub fn marchGet(a: std.mem.Allocator) ![]const u8 {
+    var db: ?*c.sqlite3 = null;
+    if (c.sqlite3_open_v2(APP_DB_PATH, &db,
+        c.SQLITE_OPEN_READONLY | c.SQLITE_OPEN_FULLMUTEX, null) != c.SQLITE_OK)
+        return error.DbOpenFailed;
+    defer _ = c.sqlite3_close(db);
+
+    var stmt: ?*c.sqlite3_stmt = null;
+    if (c.sqlite3_prepare_v2(db, "SELECT key, value FROM settings WHERE key LIKE 'march_%'", -1, &stmt, null) != c.SQLITE_OK)
+        return error.PrepFailed;
+    defer _ = c.sqlite3_finalize(stmt);
+
+    var symbol_buf: [8]u8  = undefined;
+    var tf_buf:     [8]u8  = undefined;
+    var from_buf:   [16]u8 = undefined;
+    var to_buf:     [16]u8 = undefined;
+    var mode_buf:   [8]u8  = undefined;
+    var bottom_open_buf: [8]u8 = undefined;
+    var layout_buf: [16]u8 = undefined;
+    var bottom_height_buf: [8]u8 = undefined;
+    var symbol: []const u8 = DEFAULT_MARCH_SYMBOL;
+    var tf:     []const u8 = DEFAULT_MARCH_TF;
+    var from:   []const u8 = DEFAULT_MARCH_FROM;
+    var to:     []const u8 = DEFAULT_MARCH_TO;
+    var mode:   []const u8 = DEFAULT_MARCH_MODE;
+    var bottom_open: []const u8 = "true";
+    var layout: []const u8 = DEFAULT_MARCH_LAYOUT;
+    var bottom_height: []const u8 = DEFAULT_MARCH_BOTTOM_HEIGHT;
+
+    while (c.sqlite3_step(stmt) == c.SQLITE_ROW) {
+        const key = spanOrEmpty(c.sqlite3_column_text(stmt, 0));
+        const val = spanOrEmpty(c.sqlite3_column_text(stmt, 1));
+        if (val.len == 0) continue;
+        if (std.mem.eql(u8, key, "march_symbol") and val.len <= symbol_buf.len) {
+            @memcpy(symbol_buf[0..val.len], val);
+            symbol = symbol_buf[0..val.len];
+        } else if (std.mem.eql(u8, key, "march_tf") and val.len <= tf_buf.len) {
+            @memcpy(tf_buf[0..val.len], val);
+            tf = tf_buf[0..val.len];
+        } else if (std.mem.eql(u8, key, "march_from") and val.len <= from_buf.len) {
+            @memcpy(from_buf[0..val.len], val);
+            from = from_buf[0..val.len];
+        } else if (std.mem.eql(u8, key, "march_to") and val.len <= to_buf.len) {
+            @memcpy(to_buf[0..val.len], val);
+            to = to_buf[0..val.len];
+        } else if (std.mem.eql(u8, key, "march_mode") and val.len <= mode_buf.len) {
+            @memcpy(mode_buf[0..val.len], val);
+            mode = mode_buf[0..val.len];
+        } else if (std.mem.eql(u8, key, "march_bottom_open") and val.len <= bottom_open_buf.len) {
+            @memcpy(bottom_open_buf[0..val.len], val);
+            bottom_open = bottom_open_buf[0..val.len];
+        } else if (std.mem.eql(u8, key, "march_layout") and val.len <= layout_buf.len) {
+            @memcpy(layout_buf[0..val.len], val);
+            layout = layout_buf[0..val.len];
+        } else if (std.mem.eql(u8, key, "march_bottom_height") and val.len <= bottom_height_buf.len) {
+            @memcpy(bottom_height_buf[0..val.len], val);
+            bottom_height = bottom_height_buf[0..val.len];
+        }
+    }
+
+    return std.fmt.allocPrint(a,
+        "{{\"symbol\":\"{s}\",\"tf\":\"{s}\",\"from\":\"{s}\",\"to\":\"{s}\",\"mode\":\"{s}\",\"bottomOpen\":\"{s}\",\"layout\":\"{s}\",\"bottomHeight\":\"{s}\"}}",
+        .{ symbol, tf, from, to, mode, bottom_open, layout, bottom_height },
+    );
+}
+
+// ── March per-layout panel configs ───────────────────────────────────────────
+// Stored as one opaque JSON blob under key 'march_layouts'. The frontend owns
+// the shape ({ "<layout-id>": [ {symbol, tf, mode, from, to, indicators}, ... ] });
+// the backend just round-trips the string so adding panel fields needs no Zig change.
+
+pub fn marchLayoutsGet(a: std.mem.Allocator) ![]const u8 {
+    var db: ?*c.sqlite3 = null;
+    if (c.sqlite3_open_v2(APP_DB_PATH, &db,
+        c.SQLITE_OPEN_READONLY | c.SQLITE_OPEN_FULLMUTEX, null) != c.SQLITE_OK)
+        return error.DbOpenFailed;
+    defer _ = c.sqlite3_close(db);
+
+    var stmt: ?*c.sqlite3_stmt = null;
+    if (c.sqlite3_prepare_v2(db,
+        "SELECT value FROM settings WHERE key = 'march_layouts'", -1, &stmt, null) != c.SQLITE_OK)
+        return error.PrepFailed;
+    defer _ = c.sqlite3_finalize(stmt);
+
+    if (c.sqlite3_step(stmt) != c.SQLITE_ROW) return a.dupe(u8, "{}");
+    const val = spanOrEmpty(c.sqlite3_column_text(stmt, 0));
+    if (val.len == 0) return a.dupe(u8, "{}");
+    return a.dupe(u8, val);
+}
+
+pub fn marchLayoutsSave(blob: []const u8) !void {
+    if (blob.len == 0) return;
+    var db: ?*c.sqlite3 = null;
+    if (c.sqlite3_open_v2(APP_DB_PATH, &db,
+        c.SQLITE_OPEN_READWRITE | c.SQLITE_OPEN_FULLMUTEX, null) != c.SQLITE_OK)
+        return error.DbOpenFailed;
+    defer _ = c.sqlite3_close(db);
+
+    var stmt: ?*c.sqlite3_stmt = null;
+    const sql = "INSERT OR REPLACE INTO settings (key, value) VALUES ('march_layouts', ?)";
+    if (c.sqlite3_prepare_v2(db, sql, -1, &stmt, null) != c.SQLITE_OK)
+        return error.PrepFailed;
+    defer _ = c.sqlite3_finalize(stmt);
+
+    _ = c.sqlite3_bind_text(stmt, 1, blob.ptr, @intCast(blob.len), null);
+    if (c.sqlite3_step(stmt) != c.SQLITE_DONE) return error.SaveFailed;
+}
+
+pub fn marchSave(symbol: []const u8, tf: []const u8, from: []const u8, to: []const u8, mode: []const u8, bottom_open: []const u8, layout: []const u8, bottom_height: []const u8) !void {
+    var db: ?*c.sqlite3 = null;
+    if (c.sqlite3_open_v2(APP_DB_PATH, &db,
+        c.SQLITE_OPEN_READWRITE | c.SQLITE_OPEN_FULLMUTEX, null) != c.SQLITE_OK)
+        return error.DbOpenFailed;
+    defer _ = c.sqlite3_close(db);
+
+    var stmt: ?*c.sqlite3_stmt = null;
+    const sql = "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)";
+    if (c.sqlite3_prepare_v2(db, sql, -1, &stmt, null) != c.SQLITE_OK)
+        return error.PrepFailed;
+    defer _ = c.sqlite3_finalize(stmt);
+
+    const pairs = [_]struct { k: [*:0]const u8, v: []const u8 }{
+        .{ .k = "march_symbol", .v = symbol },
+        .{ .k = "march_tf",     .v = tf },
+        .{ .k = "march_from",   .v = from },
+        .{ .k = "march_to",     .v = to },
+        .{ .k = "march_mode",   .v = mode },
+        .{ .k = "march_bottom_open", .v = bottom_open },
+        .{ .k = "march_layout", .v = layout },
+        .{ .k = "march_bottom_height", .v = bottom_height },
+    };
+
+    for (pairs) |p| {
+        if (p.v.len == 0) continue; // skip empty fields (don't clobber stored value)
+        _ = c.sqlite3_reset(stmt);
+        _ = c.sqlite3_bind_text(stmt, 1, p.k, -1, null);
+        _ = c.sqlite3_bind_text(stmt, 2, p.v.ptr, @intCast(p.v.len), null);
+        if (c.sqlite3_step(stmt) != c.SQLITE_DONE) return error.SaveFailed;
+    }
 }

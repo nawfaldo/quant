@@ -1,258 +1,371 @@
-import { useRef, useEffect, useState } from 'react'
-import {
-  createChart, CandlestickSeries, ColorType, CrosshairMode,
-  type UTCTimestamp
-} from 'lightweight-charts'
-import { useApp } from '../context/AppContext'
-import { BACKEND_URL, type Bar, type TF } from '../types'
+import { useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { useApp } from "../context/AppContext";
+import { fetchMt5Accounts } from "../api";
+import { TIMEFRAMES, makeDefaultPanelConfig, type TF } from "../types";
+import AccountsTree from "./AccountsTree";
+import ActivePositionsTable from "./ActivePositionsTable";
+import ChartPanel from "./ChartPanel";
 
-interface Tick {
-  ts: number      // nanoseconds
-  price: number
-  size: number
-  side: 'BUY' | 'SELL'
+const DEFAULT_TF = TIMEFRAMES.find((t) => t.table === "1m") ?? TIMEFRAMES[0];
+
+const LAYOUTS = [
+  {
+    id: "single",
+    label: "Single Panel",
+    icon: (w = 14, h = 14) => (
+      <svg width={w} height={h} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+      </svg>
+    ),
+  },
+  {
+    id: "split-v",
+    label: "Split Vertical",
+    icon: (w = 14, h = 14) => (
+      <svg width={w} height={h} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+        <line x1="12" y1="3" x2="12" y2="21" />
+      </svg>
+    ),
+  },
+  {
+    id: "split-h",
+    label: "Split Horizontal",
+    icon: (w = 14, h = 14) => (
+      <svg width={w} height={h} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+        <line x1="3" y1="12" x2="21" y2="12" />
+      </svg>
+    ),
+  },
+  {
+    id: "grid-4",
+    label: "2x2 Grid",
+    icon: (w = 14, h = 14) => (
+      <svg width={w} height={h} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+        <line x1="12" y1="3" x2="12" y2="21" />
+        <line x1="3" y1="12" x2="21" y2="12" />
+      </svg>
+    ),
+  },
+  {
+    id: "split-3-v",
+    label: "3 Splits Vertical",
+    icon: (w = 14, h = 14) => (
+      <svg width={w} height={h} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+        <line x1="9" y1="3" x2="9" y2="21" />
+        <line x1="15" y1="3" x2="15" y2="21" />
+      </svg>
+    ),
+  },
+  {
+    id: "split-3-h",
+    label: "3 Splits Horizontal",
+    icon: (w = 14, h = 14) => (
+      <svg width={w} height={h} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+        <line x1="3" y1="9" x2="21" y2="9" />
+        <line x1="3" y1="15" x2="21" y2="15" />
+      </svg>
+    ),
+  },
+  {
+    id: "left-col-right-row",
+    label: "Left Column, Right Rows",
+    icon: (w = 14, h = 14) => (
+      <svg width={w} height={h} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+        <line x1="12" y1="3" x2="12" y2="21" />
+        <line x1="12" y1="12" x2="21" y2="12" />
+      </svg>
+    ),
+  },
+  {
+    id: "right-col-left-row",
+    label: "Right Column, Left Rows",
+    icon: (w = 14, h = 14) => (
+      <svg width={w} height={h} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+        <line x1="12" y1="3" x2="12" y2="21" />
+        <line x1="3" y1="12" x2="12" y2="12" />
+      </svg>
+    ),
+  },
+  {
+    id: "top-row-bottom-col",
+    label: "Top Row, Bottom Columns",
+    icon: (w = 14, h = 14) => (
+      <svg width={w} height={h} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+        <line x1="3" y1="12" x2="21" y2="12" />
+        <line x1="12" y1="12" x2="12" y2="21" />
+      </svg>
+    ),
+  },
+  {
+    id: "bottom-row-top-col",
+    label: "Bottom Row, Top Columns",
+    icon: (w = 14, h = 14) => (
+      <svg width={w} height={h} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+        <line x1="3" y1="12" x2="21" y2="12" />
+        <line x1="12" y1="3" x2="12" y2="12" />
+      </svg>
+    ),
+  },
+];
+
+// How each layout maps to a CSS grid: panel count + the grid template. Panels
+// are placed in order into the named areas a / b / c / d.
+interface LayoutDef {
+  count: number;
+  cols: string;
+  rows: string;
+  areas: string;
 }
 
-async function fetchMarchCandles(symbol: string, tf: TF): Promise<Bar[]> {
-  const res = await fetch(`${BACKEND_URL}/api/march/candles/bin?symbol=${symbol}&tf=${tf.table}`)
-  if (!res.ok) throw new Error(`Backend error: ${res.status}`)
-  const buf = await res.arrayBuffer()
-  const view = new DataView(buf)
-  if (view.getUint32(0, true) !== 0x45444C43) throw new Error('Bad response magic')
-  const count = view.getUint32(4, true)
-  const data: Bar[] = new Array(count)
-  let off = 8
-  for (let i = 0; i < count; i++) {
-    data[i] = {
-      time:  view.getUint32(off,      true) as UTCTimestamp,
-      open:  view.getFloat32(off + 4,  true),
-      high:  view.getFloat32(off + 8,  true),
-      low:   view.getFloat32(off + 12, true),
-      close: view.getFloat32(off + 16, true),
-    }
-    off += 20
-  }
-  return data
-}
+const LAYOUT_GRID: Record<string, LayoutDef> = {
+  "single": { count: 1, cols: "1fr", rows: "1fr", areas: '"a"' },
+  "split-v": { count: 2, cols: "1fr 1fr", rows: "1fr", areas: '"a b"' },
+  "split-h": { count: 2, cols: "1fr", rows: "1fr 1fr", areas: '"a" "b"' },
+  "grid-4": { count: 4, cols: "1fr 1fr", rows: "1fr 1fr", areas: '"a b" "c d"' },
+  "split-3-v": { count: 3, cols: "1fr 1fr 1fr", rows: "1fr", areas: '"a b c"' },
+  "split-3-h": { count: 3, cols: "1fr", rows: "1fr 1fr 1fr", areas: '"a" "b" "c"' },
+  "left-col-right-row": { count: 3, cols: "1fr 1fr", rows: "1fr 1fr", areas: '"a b" "a c"' },
+  "right-col-left-row": { count: 3, cols: "1fr 1fr", rows: "1fr 1fr", areas: '"b a" "c a"' },
+  "top-row-bottom-col": { count: 3, cols: "1fr 1fr", rows: "1fr 1fr", areas: '"a a" "b c"' },
+  "bottom-row-top-col": { count: 3, cols: "1fr 1fr", rows: "1fr 1fr", areas: '"b c" "a a"' },
+};
 
-async function fetchMarchTicks(symbol: string, sinceNanos: number | null): Promise<Tick[]> {
-  const query = sinceNanos !== null ? `&since=${sinceNanos}` : ''
-  const res = await fetch(`${BACKEND_URL}/api/march/ticks?symbol=${symbol}${query}`)
-  if (!res.ok) throw new Error(`Backend error: ${res.status}`)
-  return res.json()
-}
-
-const TZ = 'UTC'
-
-const timeFormatter = new Intl.DateTimeFormat('en-US', {
-  timeZone: TZ,
-  year: 'numeric', month: 'short', day: 'numeric',
-  hour: '2-digit', minute: '2-digit', hour12: false
-})
-
-const tickTimeFormatter = new Intl.DateTimeFormat('en-US', {
-  timeZone: TZ,
-  hour: '2-digit', minute: '2-digit', hour12: false
-})
-
-const tickDateFormatter = new Intl.DateTimeFormat('en-US', {
-  timeZone: TZ,
-  year: 'numeric', month: 'short', day: 'numeric'
-})
-
-// Inserts whitespace entries for every missing TF slot so lightweight-charts
-// renders real time gaps instead of compressing bars together.
-function fillGaps(candles: Bar[], tfSecs: number): Array<Bar | { time: UTCTimestamp }> {
-  if (candles.length === 0) return []
-  const map = new Map(candles.map(c => [c.time, c]))
-  const first = candles[0].time
-  const last = candles[candles.length - 1].time
-  const out: Array<Bar | { time: UTCTimestamp }> = []
-  for (let t = first as number; t <= (last as number); t += tfSecs) {
-    out.push(map.get(t as UTCTimestamp) ?? { time: t as UTCTimestamp })
-  }
-  return out
-}
+const AREA_LETTERS = ["a", "b", "c", "d"];
 
 export default function MarchPage() {
-  const containerRef = useRef<HTMLDivElement>(null)
-  const { marchSymbol, marchTf, setMarchStreamStatus } = useApp()
-  const [error, setError] = useState<string | null>(null)
-  const [loading, setLoading] = useState(true)
+  const {
+    marchLayout,
+    setMarchLayout,
+    marchLayouts,
+    updateMarchPanel,
+    setActiveMarchPanel,
+    setIndicatorsOpen,
+    setModalOpen,
+    isBottomOpen,
+    setIsBottomOpen,
+    marchBottomHeight,
+    setMarchBottomHeight,
+    selectedAccountId,
+    setSelectedAccountId,
+  } = useApp();
+
+  const [isPanelPopupOpen, setIsPanelPopupOpen] = useState(false);
+
+  // Keep a valid selected account: default to the first one, and recover the
+  // selection if the chosen account was deleted. (Lives here so it runs once
+  // for the page regardless of how many chart panels are mounted.)
+  const { data: marchAccounts } = useQuery({
+    queryKey: ["mt5Accounts"],
+    queryFn: fetchMt5Accounts,
+    refetchInterval: 10000,
+  });
 
   useEffect(() => {
-    if (!containerRef.current) return
-
-    let active = true
-    let pollTimeoutId: any = null
-    let idleTimerId: any = null
-
-    // Create chart
-    const chart = createChart(containerRef.current, {
-      autoSize: true,
-      ...(({ attributionLogo: false }) as any),
-      layout: {
-        background: { type: ColorType.Solid, color: '#030712' },
-        textColor: '#d1d5db',
-      },
-      grid: {
-        vertLines: { color: '#111827' },
-        horzLines: { color: '#111827' },
-      },
-      crosshair: {
-        mode: CrosshairMode.Normal,
-        vertLine: { color: '#374151' },
-        horzLine: { color: '#374151' },
-      },
-      localization: {
-        timeFormatter: (time: number) => timeFormatter.format(new Date(time * 1000))
-      },
-      timeScale: {
-        borderColor: '#1f2937',
-        timeVisible: true,
-        secondsVisible: false,
-        tickMarkFormatter: (time: number, tickMarkType: number) => {
-          const date = new Date(time * 1000)
-          return tickMarkType >= 3 ? tickTimeFormatter.format(date) : tickDateFormatter.format(date)
-        }
-      },
-      rightPriceScale: { borderColor: '#1f2937' },
-    })
-
-    const series = chart.addSeries(CandlestickSeries, {
-      upColor: '#22c55e', downColor: '#ef4444',
-      borderUpColor: '#22c55e', borderDownColor: '#ef4444',
-      wickUpColor: '#22c55e', wickDownColor: '#ef4444',
-      lastValueVisible: true,
-      priceLineVisible: true,
-    })
-
-    async function initAndPoll() {
-      try {
-        setLoading(true)
-        setError(null)
-        setMarchStreamStatus('loading')
-
-        // 1. Fetch historical candles
-        const candles = await fetchMarchCandles(marchSymbol, marchTf)
-        if (!active) return
-
-        series.setData(fillGaps(candles, marchTf.seconds) as any)
-        chart.timeScale().fitContent()
-
-        // 2. Determine initial state for polling
-        let lastCandle: Bar | null = candles.length > 0 ? { ...candles[candles.length - 1] } : null
-        
-        // Start polling from the start of the last candle to catch any missing ticks
-        let lastTickNanos: number | null = lastCandle ? (lastCandle.time as number) * 1_000_000_000 : null
-
-        setLoading(false)
-        setMarchStreamStatus('idle')
-
-        // Polling function
-        async function poll() {
-          if (!active) return
-          try {
-            const ticks = await fetchMarchTicks(marchSymbol, lastTickNanos)
-            if (!active) return
-
-            if (ticks.length > 0) {
-              // Mark live and schedule revert to idle after 5s of no new data
-              setMarchStreamStatus('live')
-              clearTimeout(idleTimerId)
-              idleTimerId = setTimeout(() => setMarchStreamStatus('idle'), 5000)
-              const tfSecs = marchTf.seconds
-
-              for (const tick of ticks) {
-                // Keep track of the highest tick timestamp received
-                if (lastTickNanos === null || tick.ts > lastTickNanos) {
-                  lastTickNanos = tick.ts
-                }
-
-                const tickSecs = Math.floor(tick.ts / 1_000_000_000)
-                const candleStartSecs = Math.floor(tickSecs / tfSecs) * tfSecs
-
-                if (lastCandle && lastCandle.time === candleStartSecs) {
-                  // Update current candle
-                  lastCandle.close = tick.price
-                  if (tick.price > lastCandle.high) lastCandle.high = tick.price
-                  if (tick.price < lastCandle.low) lastCandle.low = tick.price
-                  series.update(lastCandle)
-                } else {
-                  // Create new candle
-                  const newCandle: Bar = {
-                    time: candleStartSecs as UTCTimestamp,
-                    open: tick.price,
-                    high: tick.price,
-                    low: tick.price,
-                    close: tick.price,
-                  }
-                  series.update(newCandle)
-                  lastCandle = newCandle
-                }
-              }
-            }
-          } catch (err) {
-            console.error('Tick polling error:', err)
-            setMarchStreamStatus('error')
-          }
-
-          // Schedule next poll in 150ms for low-latency real-time stream
-          pollTimeoutId = setTimeout(poll, 150)
-        }
-
-        // Trigger first poll
-        poll()
-
-      } catch (err: any) {
-        if (!active) return
-        setError(err.message || 'Failed to initialize March data')
-        setLoading(false)
-      }
+    if (!marchAccounts) return;
+    if (marchAccounts.length === 0) {
+      if (selectedAccountId !== null) setSelectedAccountId(null);
+      return;
     }
+    if (!marchAccounts.some((a) => a.id === selectedAccountId)) {
+      setSelectedAccountId(marchAccounts[0].id);
+    }
+  }, [marchAccounts, selectedAccountId, setSelectedAccountId]);
 
-    initAndPoll()
-
+  useEffect(() => {
+    const handleClose = () => setIsPanelPopupOpen(false);
+    window.addEventListener("click", handleClose);
+    window.addEventListener("contextmenu", handleClose);
     return () => {
-      active = false
-      if (pollTimeoutId) clearTimeout(pollTimeoutId)
-      if (idleTimerId) clearTimeout(idleTimerId)
-      setMarchStreamStatus('idle')
-      chart.remove()
-    }
-  }, [marchSymbol, marchTf])
+      window.removeEventListener("click", handleClose);
+      window.removeEventListener("contextmenu", handleClose);
+    };
+  }, []);
+
+  const handleMouseDown = (e: React.MouseEvent) => {
+    e.preventDefault();
+    const startY = e.clientY;
+    const startHeight = marchBottomHeight;
+
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      const deltaY = moveEvent.clientY - startY;
+      const newHeight = startHeight - deltaY;
+
+      if (newHeight <= 100) {
+        setIsBottomOpen(false);
+        setMarchBottomHeight(400);
+        window.removeEventListener("mousemove", handleMouseMove);
+        window.removeEventListener("mouseup", handleMouseUp);
+      } else {
+        const maxHeight = window.innerHeight - 100;
+        setMarchBottomHeight(Math.max(100, Math.min(maxHeight, newHeight)));
+      }
+    };
+
+    const handleMouseUp = () => {
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", handleMouseUp);
+    };
+
+    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("mouseup", handleMouseUp);
+  };
+
+  const def = LAYOUT_GRID[marchLayout] ?? LAYOUT_GRID["single"];
+
+  // Each panel's config comes from the active layout's stored slot (persisted
+  // per layout). Missing slots fall back to a default until the user edits them.
+  const panelProps = (i: number) => {
+    const stored = marchLayouts[marchLayout]?.[i] ?? makeDefaultPanelConfig();
+    const tf = TIMEFRAMES.find((t) => t.table === stored.tf) ?? DEFAULT_TF;
+    return {
+      config: {
+        symbol: stored.symbol,
+        tf,
+        mode: stored.mode,
+        fromDate: stored.from,
+        toDate: stored.to,
+        vwap: stored.indicators.vwap,
+      },
+      setSymbol: (s: "nq" | "es") => updateMarchPanel(marchLayout, i, { symbol: s }),
+      setTf: (t: TF) => updateMarchPanel(marchLayout, i, { tf: t.table }),
+      onApplyRange: (from: string, to: string) =>
+        updateMarchPanel(marchLayout, i, { mode: "range", from, to }),
+      onLatest: (from: string) => updateMarchPanel(marchLayout, i, { mode: "latest", from }),
+      onOpenIndicators: () => {
+        setActiveMarchPanel({ layout: marchLayout, index: i });
+        setIndicatorsOpen(true);
+      },
+      onOpenBacktests: () => {
+        setActiveMarchPanel({ layout: marchLayout, index: i });
+        setModalOpen(true);
+      },
+    };
+  };
 
   return (
-    <div className="flex-1 flex flex-col bg-gray-950 min-h-0 relative">
-      {loading && (
-        <div className="absolute inset-0 bg-gray-950/80 backdrop-blur-sm flex items-center justify-center z-10">
-          <div className="text-gray-400 text-sm flex items-center gap-2">
-            <svg className="animate-spin h-4 w-4 text-blue-500" viewBox="0 0 24 24" fill="none">
-              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-            </svg>
-            Loading March Chart...
+    <div className="flex-1 flex flex-col bg-gray-950 min-h-0">
+      {/* Chart panel grid — driven by the selected bottom-bar layout */}
+      <div
+        className="flex-1 min-h-0 min-w-0 bg-gray-800"
+        style={{
+          display: "grid",
+          gridTemplateColumns: def.cols,
+          gridTemplateRows: def.rows,
+          gridTemplateAreas: def.areas,
+          gap: "1px",
+        }}
+      >
+        {Array.from({ length: def.count }).map((_, i) => (
+          <div
+            key={i}
+            className="min-h-0 min-w-0 overflow-hidden"
+            style={{ gridArea: AREA_LETTERS[i] }}
+          >
+            <ChartPanel {...panelProps(i)} />
           </div>
-        </div>
-      )}
-      {error && (
-        <div className="absolute inset-0 bg-gray-950/90 flex flex-col items-center justify-center gap-3 z-10 p-4">
-          <div className="text-red-400 text-sm text-center">
-            {error}
+        ))}
+      </div>
+
+      {/* Bottom section — shared across all panels */}
+      <div
+        className="w-full bg-gray-950 shrink-0 border-t border-gray-900 flex flex-row min-h-0 relative"
+        style={{ height: isBottomOpen ? `${marchBottomHeight}px` : "50px" }}
+      >
+        {isBottomOpen && (
+          <div
+            className="absolute top-0 left-0 right-0 h-1.5 -translate-y-1/2 cursor-ns-resize z-50 select-none hover:bg-blue-500/20 active:bg-blue-500/40 transition-colors"
+            onMouseDown={handleMouseDown}
+          />
+        )}
+        {/* Content — only rendered when open, takes all space except controls */}
+        {isBottomOpen && (
+          <div className="flex flex-row flex-1 min-h-0 min-w-0">
+            <AccountsTree />
+            <ActivePositionsTable />
           </div>
+        )}
+
+        {/* Controls pinned to top-right, always 50px tall */}
+        <div className="absolute top-0 right-0 h-[50px] flex items-center gap-1.5 pr-6 pl-4 z-30">
+          <div className="relative">
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setIsPanelPopupOpen(!isPanelPopupOpen);
+              }}
+              className="p-1.5 text-gray-400 hover:text-white hover:bg-gray-900 rounded transition-colors flex items-center justify-center cursor-pointer border border-transparent"
+              title="Panel Layout Options"
+            >
+              {LAYOUTS.find((l) => l.id === marchLayout)?.icon(14, 14) || (
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+                </svg>
+              )}
+            </button>
+            {isPanelPopupOpen && (
+              <div
+                className="absolute bottom-full right-0 mb-2.5 bg-gray-900/95 backdrop-blur border border-gray-800 rounded-lg shadow-xl p-2 z-50 w-[170px]"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="grid grid-cols-5 gap-1.5">
+                  {LAYOUTS.map((layout) => {
+                    const isActive = marchLayout === layout.id;
+                    return (
+                      <button
+                        key={layout.id}
+                        onClick={() => {
+                          setMarchLayout(layout.id);
+                          setIsPanelPopupOpen(false);
+                        }}
+                        title={layout.label}
+                        className={`w-7 h-7 flex items-center justify-center rounded transition-all duration-150 cursor-pointer ${
+                          isActive
+                            ? "bg-white text-black font-semibold shadow-sm"
+                            : "text-gray-400 hover:text-white hover:bg-gray-800"
+                        }`}
+                      >
+                        {layout.icon(14, 14)}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+
           <button
             onClick={() => {
-              setError(null)
-              // This dummy state change or just calling initAndPoll again handles retry
-              window.location.reload()
+              const nextOpen = !isBottomOpen;
+              setIsBottomOpen(nextOpen);
+              if (nextOpen && marchBottomHeight <= 100) {
+                setMarchBottomHeight(400);
+              }
             }}
-            className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-xs font-medium rounded-md transition-colors"
+            className="p-1.5 text-gray-400 hover:text-white hover:bg-gray-900 rounded transition-colors"
+            title={isBottomOpen ? "Collapse Section" : "Expand Section"}
           >
-            Retry
+            {isBottomOpen ? (
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="6 9 12 15 18 9" />
+              </svg>
+            ) : (
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="18 15 12 9 6 15" />
+              </svg>
+            )}
           </button>
         </div>
-      )}
-      <div ref={containerRef} className="flex-1 min-h-0" />
+      </div>
     </div>
-  )
+  );
 }

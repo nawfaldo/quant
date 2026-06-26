@@ -5,7 +5,7 @@ const data = @import("data.zig");
 // Strategies — copy-pasted from backtest/src/strategies/ without modification.
 const RthVwap = @import("strategies/rth_vwap.zig").RthVwap;
 const OrbBuy = @import("strategies/30m_buy.zig").OrbBuy;
-const BuyHold = @import("strategies/buy_hold.zig").BuyHold;
+const MinLoop = @import("strategies/min_loop.zig").MinLoop;
 
 // ── Signal runner ─────────────────────────────────────────────────────────────
 //
@@ -24,13 +24,13 @@ const BuyHold = @import("strategies/buy_hold.zig").BuyHold;
 const Strategy = union(enum) {
     rth_vwap: RthVwap,
     orb_buy: OrbBuy,
-    buy_hold: BuyHold,
+    min_loop: MinLoop,
 
     fn update(self: *Strategy, bar: engine.Bar, ts: data.Ts) engine.Signal {
         return switch (self.*) {
             .rth_vwap => |*s| s.update(bar, ts),
             .orb_buy => |*s| s.update(bar, ts),
-            .buy_hold => |*s| s.update(bar, ts),
+            .min_loop => |*s| s.update(bar, ts),
         };
     }
 };
@@ -65,8 +65,8 @@ pub fn main(init: std.process.Init) !void {
                 strat = .{ .rth_vwap = .{} };
             } else if (std.mem.eql(u8, name, "orb_buy")) {
                 strat = .{ .orb_buy = .{} };
-            } else if (std.mem.eql(u8, name, "buy_hold")) {
-                strat = .{ .buy_hold = .{} };
+            } else if (std.mem.eql(u8, name, "min_loop")) {
+                strat = .{ .min_loop = .{} };
             } else {
                 try w.print("ERROR unknown strategy: {s}\n", .{name});
                 try w.flush();
@@ -215,7 +215,7 @@ fn parseConfig(strat: *Strategy, config_str: []const u8) void {
                 switch (strat.*) {
                     .rth_vwap => |*s| s.contracts = v,
                     .orb_buy => |*s| s.contracts = v,
-                    .buy_hold => |*s| s.contracts = v,
+                    .min_loop => |*s| s.contracts = v,
                 }
             } else if (std.mem.eql(u8, key, "leverage")) {
                 const v = std.fmt.parseFloat(f64, val_str) catch continue;
@@ -228,14 +228,10 @@ fn parseConfig(strat: *Strategy, config_str: []const u8) void {
                         s.contracts *= v;
                         s.leverage = v;
                     },
-                    .buy_hold => {},
-                }
-            } else if (std.mem.eql(u8, key, "initial_balance")) {
-                const v = std.fmt.parseFloat(f64, val_str) catch continue;
-                switch (strat.*) {
-                    .rth_vwap => |*s| s.initial_balance = v,
-                    .orb_buy => |*s| s.initial_balance = v,
-                    .buy_hold => |*s| s.initial_balance = v,
+                    .min_loop => |*s| {
+                        s.contracts *= v;
+                        s.leverage = v;
+                    },
                 }
             }
         }

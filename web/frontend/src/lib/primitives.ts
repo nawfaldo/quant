@@ -394,3 +394,266 @@ export class OpeningRangePrimitive implements ISeriesPrimitive {
     this._requestUpdate?.()
   }
 }
+
+function drawStandardArrow(ctx: CanvasRenderingContext2D, cx: number, cy: number, h: number, up: boolean) {
+  const hSize = h * 1.2;
+  const headH = h * 1.0;
+  const len = h * 2.2;
+  const stemW = h * 0.4;
+
+  ctx.beginPath();
+  if (up) {
+    ctx.moveTo(cx, cy);
+    ctx.lineTo(cx - hSize, cy + headH);
+    ctx.lineTo(cx - stemW / 2, cy + headH);
+    ctx.lineTo(cx - stemW / 2, cy + len);
+    ctx.lineTo(cx + stemW / 2, cy + len);
+    ctx.lineTo(cx + stemW / 2, cy + headH);
+    ctx.lineTo(cx + hSize, cy + headH);
+  } else {
+    ctx.moveTo(cx, cy);
+    ctx.lineTo(cx - hSize, cy - headH);
+    ctx.lineTo(cx - stemW / 2, cy - headH);
+    ctx.lineTo(cx - stemW / 2, cy - len);
+    ctx.lineTo(cx + stemW / 2, cy - len);
+    ctx.lineTo(cx + stemW / 2, cy - headH);
+    ctx.lineTo(cx + hSize, cy - headH);
+  }
+  ctx.closePath();
+  ctx.fill();
+}
+
+class ActivePositionsRenderer implements IPrimitivePaneRenderer {
+  primitive: ActivePositionsPrimitive
+  series: ISeriesApi<'Candlestick'> | null
+  chart: IChartApiBase<Time> | null
+
+  constructor(
+    primitive: ActivePositionsPrimitive,
+    series: ISeriesApi<'Candlestick'> | null,
+    chart: IChartApiBase<Time> | null,
+  ) {
+    this.primitive = primitive
+    this.series    = series
+    this.chart     = chart
+  }
+
+  draw(target: CanvasRenderingTarget2D) {
+    const p = this.primitive
+    const s = this.series, ch = this.chart
+    if (!s || !ch || !p.positions || p.positions.length === 0) return
+
+    const ts = ch.timeScale()
+    const range = ts.getVisibleRange()
+    if (!range) return
+    const from = range.from as number
+    const to   = range.to   as number
+
+    target.useBitmapCoordinateSpace(({ context: ctx, horizontalPixelRatio: hpr, verticalPixelRatio: vpr }) => {
+      ctx.save()
+      ctx.setLineDash([])
+      const h = 4 * hpr
+
+      ctx.font = `${10 * vpr}px sans-serif`
+      ctx.textAlign = 'center'
+
+      for (const pos of p.positions) {
+        if (!pos.time || pos.time < from || pos.time > to) continue
+
+        const x = ts.timeToCoordinate(pos.time as UTCTimestamp)
+        const y = s.priceToCoordinate(pos.price)
+        if (x === null || y === null) continue
+
+        const cx = x * hpr, cy = y * vpr
+        
+        // Draw the standard arrow pointing to the exact price
+        ctx.fillStyle = '#ffffff'
+        drawStandardArrow(ctx, cx, cy, h, pos.isLong)
+
+        // Draw the text (e.g. "Buy 0.01 +$10") at the exact price
+        const sideWord = pos.isLong ? 'Buy' : 'Sell'
+        const gainSign = pos.profit >= 0 ? '+' : '-'
+        const absProfitStr = Math.abs(pos.profit).toFixed(2).replace(/\.00$/, '')
+        const formattedProfit = `${gainSign}$${absProfitStr}`
+        const text = `${sideWord} ${pos.volume.toFixed(2)} ${formattedProfit}`
+        
+        // Draw text slightly above/below the triangle depending on type
+        ctx.fillStyle = '#d1d5db'
+        if (pos.isLong) {
+          ctx.textBaseline = 'bottom'
+          ctx.fillText(text, cx, cy - h - 2 * vpr)
+        } else {
+          ctx.textBaseline = 'top'
+          ctx.fillText(text, cx, cy + h + 2 * vpr)
+        }
+      }
+      ctx.restore()
+    })
+  }
+}
+
+class ActivePositionsView implements IPrimitivePaneView {
+  primitive: ActivePositionsPrimitive
+  constructor(primitive: ActivePositionsPrimitive) { this.primitive = primitive }
+  renderer(): IPrimitivePaneRenderer {
+    return new ActivePositionsRenderer(
+      this.primitive,
+      this.primitive.getSeries(),
+      this.primitive.getChart(),
+    )
+  }
+  zOrder() { return 'normal' as const }
+}
+
+export interface ActivePosInfo {
+  time: number
+  price: number
+  volume: number
+  profit: number
+  isLong: boolean
+  strategy: string
+}
+
+export class ActivePositionsPrimitive implements ISeriesPrimitive {
+  private _series: ISeriesApi<'Candlestick'> | null = null
+  private _chart: IChartApiBase<Time> | null = null
+  private _requestUpdate: (() => void) | null = null
+  private _view = new ActivePositionsView(this)
+
+  positions: ActivePosInfo[] = []
+
+  attached(p: SeriesAttachedParameter) {
+    this._series = p.series as ISeriesApi<'Candlestick'>
+    this._chart  = p.chart
+    this._requestUpdate = p.requestUpdate
+  }
+  detached() { this._series = null; this._chart = null }
+  updateAllViews() {}
+  paneViews() { return [this._view] }
+
+  getSeries() { return this._series }
+  getChart()  { return this._chart }
+
+  setPositions(positions: ActivePosInfo[]) {
+    this.positions = positions
+    this._requestUpdate?.()
+  }
+}
+
+class HistoricalTradesRenderer implements IPrimitivePaneRenderer {
+  primitive: HistoricalTradesPrimitive
+  series: ISeriesApi<'Candlestick'> | null
+  chart: IChartApiBase<Time> | null
+
+  constructor(
+    primitive: HistoricalTradesPrimitive,
+    series: ISeriesApi<'Candlestick'> | null,
+    chart: IChartApiBase<Time> | null,
+  ) {
+    this.primitive = primitive
+    this.series    = series
+    this.chart     = chart
+  }
+
+  draw(target: CanvasRenderingTarget2D) {
+    const p = this.primitive
+    const s = this.series, ch = this.chart
+    if (!s || !ch || !p.trades || p.trades.length === 0) return
+
+    const ts = ch.timeScale()
+    const range = ts.getVisibleRange()
+    if (!range) return
+    const from = range.from as number
+    const to   = range.to   as number
+
+    target.useBitmapCoordinateSpace(({ context: ctx, horizontalPixelRatio: hpr, verticalPixelRatio: vpr }) => {
+      // 1. Draw dashed connection lines
+      ctx.save()
+      ctx.lineWidth = 1.5 * hpr
+      ctx.setLineDash([4 * hpr, 4 * hpr])
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.45)'
+      ctx.beginPath()
+      for (const t of p.trades) {
+        if (t.et > to || t.xt < from) continue
+        const x1 = ts.timeToCoordinate(t.et as UTCTimestamp)
+        const x2 = ts.timeToCoordinate(t.xt as UTCTimestamp)
+        const y1 = s.priceToCoordinate(t.ep)
+        const y2 = s.priceToCoordinate(t.xp)
+        if (x1 === null || x2 === null || y1 === null || y2 === null) continue
+        ctx.moveTo(x1 * hpr, y1 * vpr)
+        ctx.lineTo(x2 * hpr, y2 * vpr)
+      }
+      ctx.stroke()
+      ctx.restore()
+
+      // 2. Draw standard entry and exit arrows (white)
+      ctx.save()
+      ctx.setLineDash([])
+      ctx.fillStyle = '#ffffff'
+      const h = 4 * hpr
+      for (const t of p.trades) {
+        if (t.et > to || t.xt < from) continue
+        const x1 = ts.timeToCoordinate(t.et as UTCTimestamp)
+        const x2 = ts.timeToCoordinate(t.xt as UTCTimestamp)
+        const y1 = s.priceToCoordinate(t.ep)
+        const y2 = s.priceToCoordinate(t.xp)
+        if (x1 === null || x2 === null || y1 === null || y2 === null) continue
+
+        // Entry arrow (up for long, down for short)
+        drawStandardArrow(ctx, x1 * hpr, y1 * vpr, h, t.isLong)
+
+        // Exit arrow (down for long, up for short)
+        drawStandardArrow(ctx, x2 * hpr, y2 * vpr, h, !t.isLong)
+      }
+      ctx.restore()
+    })
+  }
+}
+
+class HistoricalTradesView implements IPrimitivePaneView {
+  primitive: HistoricalTradesPrimitive
+  constructor(primitive: HistoricalTradesPrimitive) { this.primitive = primitive }
+  renderer(): IPrimitivePaneRenderer {
+    return new HistoricalTradesRenderer(
+      this.primitive,
+      this.primitive.getSeries(),
+      this.primitive.getChart(),
+    )
+  }
+  zOrder() { return 'normal' as const }
+}
+
+export interface HistoricalTradeInfo {
+  et: number
+  xt: number
+  ep: number
+  xp: number
+  isLong: boolean
+  strategy: string
+}
+
+export class HistoricalTradesPrimitive implements ISeriesPrimitive {
+  private _series: ISeriesApi<'Candlestick'> | null = null
+  private _chart: IChartApiBase<Time> | null = null
+  private _requestUpdate: (() => void) | null = null
+  private _view = new HistoricalTradesView(this)
+
+  trades: HistoricalTradeInfo[] = []
+
+  attached(p: SeriesAttachedParameter) {
+    this._series = p.series as ISeriesApi<'Candlestick'>
+    this._chart  = p.chart
+    this._requestUpdate = p.requestUpdate
+  }
+  detached() { this._series = null; this._chart = null }
+  updateAllViews() {}
+  paneViews() { return [this._view] }
+
+  getSeries() { return this._series }
+  getChart()  { return this._chart }
+
+  setTrades(trades: HistoricalTradeInfo[]) {
+    this.trades = trades
+    this._requestUpdate?.()
+  }
+}

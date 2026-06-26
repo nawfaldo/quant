@@ -3,6 +3,9 @@ const engine = @import("../engine.zig");
 const data = @import("../data.zig");
 const sizing = @import("../sizings/vol_target.zig");
 
+// All tunable parameters live in rth_vwap_config.zig — edit there, not here.
+const cfg = @import("rth_vwap_config.zig").config;
+
 // ── RTH VWAP Flip (Long/Short) ───────────────────────────────────────────────
 //
 // Rules:
@@ -40,14 +43,13 @@ pub const RthVwap = struct {
         .volume = true,
     };
 
-    initial_balance: f64 = 10_000.0,
-    contracts: f64 = 1.0,
-    leverage: f64 = 1.0,
+    contracts: f64 = cfg.contracts,
+    leverage: f64 = cfg.leverage,
 
     // Position sizing. `vol` holds the volatility-target params/state and is
     // only consulted when sizing_mode == .vol_target.
-    sizing_mode: sizing.Mode = .none,
-    vol: sizing.VolTarget = .{},
+    sizing_mode: sizing.Mode = cfg.sizing_mode,
+    vol: sizing.VolTarget = cfg.vol,
 
     current_day: [10]u8 = .{0} ** 10,
     // Session VWAP accumulators (reset each day at the first RTH bar).
@@ -58,9 +60,9 @@ pub const RthVwap = struct {
     base_contracts: f64 = 0.0,
     base_set: bool = false,
 
-    const RTH_OPEN: u16 = 9 * 60 + 30; // first RTH bar timestamp (09:30)
-    const EXIT_TIME: u16 = 15 * 60 + 59; // emit .close at 15:59 → fills at 16:00 open
-    const RTH_CLOSE: u16 = 16 * 60; // 16:00, exclusive end of the trading window
+    const RTH_OPEN: u16 = cfg.rth_open; // first RTH bar timestamp (09:30)
+    const EXIT_TIME: u16 = cfg.exit_time; // emit .close at 15:59 → fills at 16:00 open
+    const RTH_CLOSE: u16 = cfg.rth_close; // 16:00, exclusive end of the trading window
 
     pub fn update(self: *RthVwap, bar: engine.Bar, ts: data.Ts) engine.Signal {
         // Snapshot the configured size once. The CLI/tuner set `contracts` to

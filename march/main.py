@@ -1,9 +1,14 @@
 """March Trading Bot — main entry point (API-based architecture).
 
 Flow:
-  1. Connect to MetaTrader 5.
-  2. Start Python API server (port 5001) in the foreground.
-  3. Listen to Zig execution commands (/execute).
+  1. Initialize the MetaTrader 5 terminal connection.
+  2. Start the Python API server (port 5001).
+  3. Receive Zig execution commands (/execute); each names the strategy that
+     fired, which is routed to the MT5 accounts running it (from march.db) and
+     executed on each account's configured symbol.
+
+MT5 accounts and per-strategy symbols are managed from the web UI and stored in
+march.db — there is no .env configuration anymore.
 """
 
 import uvicorn
@@ -17,26 +22,17 @@ log = get_logger("main")
 def main() -> None:
     log.info("=" * 60)
     log.info("March Trading Bot starting (API execution receiver mode)")
-    log.info(f"  MT5 server:  {config.mt5_server}")
-    log.info(f"  Symbol:      {config.symbol}")
-    log.info(f"  Volume:      {config.volume}")
+    log.info(f"  Accounts:    from march.db (per-strategy symbols)")
+    log.info(f"  Volume:      per-strategy (from march/zig config)")
     log.info(f"  Dry run:     {config.dry_run}")
     log.info("=" * 60)
 
-    # Connect to MT5.
+    # Initialize the MT5 terminal. Account login happens per /execute, driven by
+    # which accounts in march.db run the signalling strategy.
     mt5 = MT5Client()
-    if not mt5.connect(config.mt5_login, config.mt5_password, config.mt5_server):
-        log.error("Cannot connect to MT5. Exiting.")
+    if not mt5.connect():
+        log.error("Cannot initialize MT5. Exiting.")
         return
-
-    symbol_info = mt5.symbol_info(config.symbol)
-    if symbol_info is None:
-        log.error(f"Symbol '{config.symbol}' not found. Check broker symbol name.")
-        mt5.disconnect()
-        return
-    if not symbol_info.visible:
-        mt5.symbol_select(config.symbol, True)
-        log.info(f"Added {config.symbol} to Market Watch")
 
     # Set the shared MT5 client for the FastAPI app.
     api_server._mt5 = mt5

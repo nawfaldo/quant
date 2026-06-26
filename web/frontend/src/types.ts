@@ -2,7 +2,7 @@ import type { CandlestickData, UTCTimestamp } from 'lightweight-charts'
 
 export const BACKEND_URL = 'http://localhost:8080'
 
-export type Bar = CandlestickData<UTCTimestamp>
+export type Bar = CandlestickData<UTCTimestamp> & { volume?: number }
 
 export interface Backtest {
   id: number
@@ -96,6 +96,46 @@ export interface Settings {
   from_date: string
   to_date: string
   default_timeframe: string
+}
+
+export interface MarchSettings {
+  symbol: 'nq' | 'es'
+  tf: string
+  from: string
+  to: string
+  mode: 'latest' | 'range'
+  bottomOpen: string | boolean
+  layout?: string
+  bottomHeight?: string | number
+}
+
+// One chart panel's persisted config. Stored per layout (see MarchLayouts) so
+// each layout remembers its own panels' symbol / timeframe / date / indicator.
+export interface LayoutPanelConfig {
+  symbol: 'nq' | 'es'
+  tf: string            // matches a TIMEFRAMES[].table
+  mode: 'latest' | 'range'
+  from: string
+  to: string
+  indicators: Indicators
+}
+
+// Keyed by layout id (e.g. 'single', 'split-v'); the array is that layout's panels.
+export type MarchLayouts = Record<string, LayoutPanelConfig[]>
+
+export function makeDefaultPanelConfig(): LayoutPanelConfig {
+  const today = new Date().toISOString().slice(0, 10)
+  const d = new Date()
+  d.setDate(d.getDate() - 7)
+  const recentFrom = d.toISOString().slice(0, 10)
+  return {
+    symbol: 'nq',
+    tf: '1m',
+    mode: 'latest',
+    from: recentFrom,
+    to: today,
+    indicators: { vwap: false, openingRange: false },
+  }
 }
 
 export const TIMEFRAMES = [

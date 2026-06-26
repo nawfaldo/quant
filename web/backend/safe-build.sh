@@ -57,7 +57,7 @@ trap restart_qdb EXIT
 echo ">> Free RAM before build: $(free_mb) MB"
 echo ">> Building..."
 # shellcheck disable=SC2086
-zig build $BUILD_FLAGS
+/home/jawirgaming66/zig/zig build $BUILD_FLAGS
 echo ">> Build done. Free RAM: $(free_mb) MB"
 
 if [[ "$MODE" != "run" ]]; then
@@ -83,13 +83,24 @@ fi
 echo ">> Starting backend on :8080 (Ctrl-C to stop)..."
 trap - EXIT
 
-# In WSL, 127.0.0.1 is the WSL loopback, not the Windows host.
-# Route QuestDB traffic to the Windows gateway IP instead.
+# Reaching QuestDB (which runs on Windows) from WSL depends on the networking
+# mode set in .wslconfig:
+#   - mirrored mode: localhost reaches Windows services directly, and the
+#     default gateway points at the *physical* LAN router (wrong target).
+#   - NAT mode (default): localhost is the WSL loopback; Windows is the gateway.
+# Auto-detect by probing :9000 on localhost first, then the gateway.
 if [[ "$IS_WSL" == "1" ]]; then
-  WIN_HOST=$(ip route show default 2>/dev/null | awk '/default via/{print $3; exit}')
-  if [[ -n "$WIN_HOST" ]]; then
-    export QUESTDB_HOST="$WIN_HOST"
-    echo ">> WSL: using Windows host $WIN_HOST for QuestDB"
+  probe() { curl -sf -m 1 "http://$1:9000/exec?query=SELECT%201" >/dev/null 2>&1; }
+  GW=$(ip route show default 2>/dev/null | awk '/default via/{print $3; exit}')
+  if probe 127.0.0.1; then
+    echo ">> WSL: QuestDB reachable on localhost (mirrored networking)"
+    # leave QUESTDB_HOST unset → backend defaults to 127.0.0.1
+  elif [[ -n "$GW" ]] && probe "$GW"; then
+    export QUESTDB_HOST="$GW"
+    echo ">> WSL: using Windows host $GW for QuestDB (NAT networking)"
+  else
+    echo ">> WSL: WARNING — QuestDB not reachable on 127.0.0.1 or gateway $GW."
+    echo ">>       Check QuestDB is running and the Windows Firewall allows port 9000."
   fi
 fi
 

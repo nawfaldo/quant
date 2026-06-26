@@ -1,18 +1,13 @@
 const std = @import("std");
-const zap = @import("zap");
+const http = @import("http.zig");
 const cache = @import("cache.zig");
 const db = @import("db.zig");
 const settings = @import("settings.zig");
+const march = @import("march/api.zig");
 
 const alloc = std.heap.page_allocator;
 
-fn cors(req: zap.Request) void {
-    req.setHeader("Access-Control-Allow-Origin", "*") catch {};
-    req.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS") catch {};
-    req.setHeader("Access-Control-Allow-Headers", "Content-Type") catch {};
-}
-
-fn sendJson(req: zap.Request, body: []const u8) !void {
+fn sendJson(req: *http.Ctx, body: []const u8) !void {
     try req.setContentType(.JSON);
     try req.sendBody(body);
 }
@@ -55,9 +50,8 @@ fn jsonField(body: []const u8, key: []const u8) []const u8 {
     return body[p..end];
 }
 
-pub fn onRequest(req: zap.Request) !void {
+pub fn onRequest(req: *http.Ctx) !void {
     const path = req.path orelse "/";
-    cors(req);
 
     if (std.mem.eql(u8, req.method orelse "", "OPTIONS")) {
         try req.sendBody("");
@@ -87,7 +81,7 @@ pub fn onRequest(req: zap.Request) !void {
             try req.sendJson("{\"error\":\"unknown symbol\"}");
             return;
         }
-        const maybe = cache.fetchTf(alloc, tf, q_symbol, from, to) catch |err| {
+        const maybe = cache.fetchTf(req.io, alloc, tf, q_symbol, from, to) catch |err| {
             std.debug.print("candles fetch error: {}\n", .{err});
             req.setStatusNumeric(503);
             try req.sendJson("{\"error\":\"fetch failed\"}");
@@ -105,7 +99,7 @@ pub fn onRequest(req: zap.Request) !void {
     }
 
     if (std.mem.eql(u8, path, "/api/vwap/bin")) {
-        const body = cache.fetchVwap(alloc) catch |err| {
+        const body = cache.fetchVwap(req.io, alloc) catch |err| {
             std.debug.print("vwap fetch error: {}\n", .{err});
             req.setStatusNumeric(503);
             try req.sendJson("{\"error\":\"fetch failed\"}");
@@ -136,6 +130,68 @@ pub fn onRequest(req: zap.Request) !void {
         } else {
             const body = settings.get(alloc) catch |err| {
                 std.debug.print("settings get error: {}\n", .{err});
+                req.setStatusNumeric(500);
+                try req.sendJson("{\"error\":\"read failed\"}");
+                return;
+            };
+            defer alloc.free(body);
+            try sendJson(req, body);
+        }
+        return;
+    }
+
+    if (std.mem.eql(u8, path, "/api/march/settings")) {
+        if (std.mem.eql(u8, req.method orelse "", "POST")) {
+            const body = req.body orelse {
+                req.setStatusNumeric(400);
+                try req.sendJson("{\"error\":\"no body\"}");
+                return;
+            };
+            const symbol        = jsonField(body, "symbol");
+            const tf            = jsonField(body, "tf");
+            const from          = jsonField(body, "from");
+            const to            = jsonField(body, "to");
+            const mode          = jsonField(body, "mode");
+            const bottom_open   = jsonField(body, "bottomOpen");
+            const layout        = jsonField(body, "layout");
+            const bottom_height = jsonField(body, "bottomHeight");
+            settings.marchSave(symbol, tf, from, to, mode, bottom_open, layout, bottom_height) catch |err| {
+                std.debug.print("march settings save error: {}\n", .{err});
+                req.setStatusNumeric(500);
+                try req.sendJson("{\"error\":\"save failed\"}");
+                return;
+            };
+            try req.sendJson("{\"ok\":true}");
+        } else {
+            const body = settings.marchGet(alloc) catch |err| {
+                std.debug.print("march settings get error: {}\n", .{err});
+                req.setStatusNumeric(500);
+                try req.sendJson("{\"error\":\"read failed\"}");
+                return;
+            };
+            defer alloc.free(body);
+            try sendJson(req, body);
+        }
+        return;
+    }
+
+    if (std.mem.eql(u8, path, "/api/march/layouts")) {
+        if (std.mem.eql(u8, req.method orelse "", "POST")) {
+            const body = req.body orelse {
+                req.setStatusNumeric(400);
+                try req.sendJson("{\"error\":\"no body\"}");
+                return;
+            };
+            settings.marchLayoutsSave(body) catch |err| {
+                std.debug.print("march layouts save error: {}\n", .{err});
+                req.setStatusNumeric(500);
+                try req.sendJson("{\"error\":\"save failed\"}");
+                return;
+            };
+            try req.sendJson("{\"ok\":true}");
+        } else {
+            const body = settings.marchLayoutsGet(alloc) catch |err| {
+                std.debug.print("march layouts get error: {}\n", .{err});
                 req.setStatusNumeric(500);
                 try req.sendJson("{\"error\":\"read failed\"}");
                 return;
@@ -206,6 +262,13 @@ pub fn onRequest(req: zap.Request) !void {
         const q_symbol = queryParam(query, "symbol") orelse "nq";
         const tf = queryParam(query, "tf") orelse "1m";
 
+        // Optional ISO date bounds. `from` alone (open-ended) backs the live
+        // "Latest" mode; `from`+`to` backs a static historical range.
+        const q_from = queryParam(query, "from") orelse "";
+        const q_to   = queryParam(query, "to")   orelse "";
+        const from = if (isIsoDate(q_from)) q_from else "";
+        const to   = if (isIsoDate(q_to))   q_to   else "";
+
         var valid_symbol = false;
         if (std.mem.eql(u8, q_symbol, "nq") or std.mem.eql(u8, q_symbol, "es")) {
             valid_symbol = true;
@@ -217,7 +280,7 @@ pub fn onRequest(req: zap.Request) !void {
             return;
         }
 
-        const body = cache.fetchMarchCandles(alloc, q_symbol, tf) catch |err| {
+        const body = cache.fetchMarchCandles(req.io, alloc, q_symbol, tf, from, to) catch |err| {
             std.debug.print("march candles fetch error: {}\n", .{err});
             req.setStatusNumeric(503);
             try req.sendJson("{\"error\":\"fetch failed\"}");
@@ -250,7 +313,7 @@ pub fn onRequest(req: zap.Request) !void {
             since = std.fmt.parseInt(i64, s, 10) catch null;
         }
 
-        const body = cache.fetchMarchTicks(alloc, q_symbol, since) catch |err| {
+        const body = cache.fetchMarchTicks(req.io, alloc, q_symbol, since) catch |err| {
             std.debug.print("march ticks fetch error: {}\n", .{err});
             req.setStatusNumeric(503);
             try req.sendJson("{\"error\":\"fetch failed\"}");
@@ -264,6 +327,16 @@ pub fn onRequest(req: zap.Request) !void {
     if (std.mem.eql(u8, path, "/health")) {
         try req.sendJson("{\"status\":\"ok\"}");
         return;
+    }
+
+    // Delegate march live-trading routes (strategies, bar, trades, mt5 accounts)
+    // to march/api.zig. Returns true if the path was handled.
+    if (std.mem.startsWith(u8, path, "/api/march/strategies") or
+        std.mem.eql(u8, path, "/api/march/bar") or
+        std.mem.eql(u8, path, "/api/march/trades") or
+        std.mem.startsWith(u8, path, "/api/march/mt5/"))
+    {
+        if (try march.handleRequest(req)) return;
     }
 
     try req.sendJson("{\"message\":\"hello from zig zap backend\"}");

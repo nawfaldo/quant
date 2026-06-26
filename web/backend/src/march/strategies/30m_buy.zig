@@ -3,6 +3,9 @@ const engine = @import("../engine.zig");
 const data = @import("../data.zig");
 const sizing = @import("../sizings/vol_target.zig");
 
+// All tunable parameters live in 30m_buy_config.zig — edit there, not here.
+const cfg = @import("30m_buy_config.zig").config;
+
 // ── Opening-Range Breakout (Long Only) ───────────────────────────────────────
 //
 // Rules:
@@ -43,14 +46,13 @@ pub const OrbBuy = struct {
         .volume = false,
     };
 
-    initial_balance: f64 = 10_000.0,
-    contracts: f64 = 1.0,
-    leverage: f64 = 1.0,
+    contracts: f64 = cfg.contracts,
+    leverage: f64 = cfg.leverage,
 
     // Position sizing. `vol` holds the volatility-target params/state and is
     // only consulted when sizing_mode == .vol_target.
-    sizing_mode: sizing.Mode = .none,
-    vol: sizing.VolTarget = .{},
+    sizing_mode: sizing.Mode = cfg.sizing_mode,
+    vol: sizing.VolTarget = cfg.vol,
 
     current_day: [10]u8 = .{0} ** 10,
     or_high: f64 = 0.0,
@@ -66,11 +68,11 @@ pub const OrbBuy = struct {
     base_contracts: f64 = 0.0,
     base_set: bool = false,
 
-    const RTH_OPEN: u16 = 9 * 60 + 30;
-    const RANGE_DEF_END: u16 = 9 * 60 + 55; // OR built from bars 9:30…9:50 (timestamps < 9:55)
-    const OR_END: u16 = 10 * 60; // breakout bar timestamp = 9:55 (< 10:00)
-    const EXIT_TIME: u16 = 13 * 60 + 55; // emit .close at 13:55 → fills at 14:00 open (1-bar delay)
-    const RTH_CLOSE: u16 = 16 * 60;
+    const RTH_OPEN: u16 = cfg.rth_open;
+    const RANGE_DEF_END: u16 = cfg.range_def_end; // OR built from bars 9:30…9:50 (timestamps < 9:55)
+    const OR_END: u16 = cfg.or_end; // breakout bar timestamp = 9:55 (< 10:00)
+    const EXIT_TIME: u16 = cfg.exit_time; // emit .close at 13:55 → fills at 14:00 open (1-bar delay)
+    const RTH_CLOSE: u16 = cfg.rth_close;
 
     pub fn update(self: *OrbBuy, bar: engine.Bar, ts: data.Ts) engine.Signal {
         // Snapshot the configured size once. The CLI/tuner set `contracts` to
@@ -139,7 +141,7 @@ pub const OrbBuy = struct {
             if (!self.have_entry) {
                 self.have_entry = true;
                 self.entry_price = bar.open;
-                self.tp_price = self.entry_price + (self.entry_price - self.stop_price);
+                self.tp_price = self.entry_price + cfg.rr_multiple * (self.entry_price - self.stop_price);
             }
             if (close5 <= self.stop_price or close5 >= self.tp_price) {
                 self.in_position = false;

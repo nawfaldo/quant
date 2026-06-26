@@ -8,7 +8,7 @@ from pathlib import Path
 from zig_bridge import ZigBridge
 
 binary = str(
-    Path(__file__).parent.parent / "zig" / "zig-out" / "bin" / "signal_runner.exe"
+    Path(__file__).parent.parent / "web" / "backend" / "zig-out" / "bin" / "signal_runner.exe"
 )
 
 bridge = ZigBridge(binary)

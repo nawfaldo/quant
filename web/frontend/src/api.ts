@@ -1,4 +1,4 @@
-import { BACKEND_URL, type Bar, type Backtest, type Trade, type VwapPoint, type TF, type Settings, type MonteCarloData } from './types'
+import { BACKEND_URL, type Bar, type Backtest, type Trade, type VwapPoint, type TF, type Settings, type MarchSettings, type MarchLayouts, type MonteCarloData } from './types'
 import type { UTCTimestamp } from 'lightweight-charts'
 
 const MAGIC       = 0x45444C43
@@ -73,6 +73,34 @@ export async function saveSettings(from_date: string, to_date: string): Promise<
   })
 }
 
+export async function fetchMarchSettings(): Promise<MarchSettings> {
+  const res = await fetch(`${BACKEND_URL}/api/march/settings`)
+  if (!res.ok) throw new Error(`Backend error: ${res.status}`)
+  return res.json()
+}
+
+export async function saveMarchSettings(s: MarchSettings): Promise<void> {
+  await fetch(`${BACKEND_URL}/api/march/settings`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(s),
+  })
+}
+
+export async function fetchMarchLayouts(): Promise<MarchLayouts> {
+  const res = await fetch(`${BACKEND_URL}/api/march/layouts`)
+  if (!res.ok) throw new Error(`Backend error: ${res.status}`)
+  return res.json()
+}
+
+export async function saveMarchLayouts(m: MarchLayouts): Promise<void> {
+  await fetch(`${BACKEND_URL}/api/march/layouts`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(m),
+  })
+}
+
 const MC_MAGIC = 0x4D435054
 const MC_HEADER_BYTES = 48
 
@@ -136,3 +164,176 @@ export async function fetchTrades(id: number): Promise<Trade[]> {
   }
   return data
 }
+
+// ── March strategy API (served on main web port 8080 via /api/march/) ────────
+
+export interface MarchStrategy {
+  name: string
+  active: boolean
+}
+
+export async function fetchMarchStrategies(): Promise<MarchStrategy[]> {
+  const res = await fetch(`${BACKEND_URL}/api/march/strategies`)
+  if (!res.ok) throw new Error(`March API error: ${res.status}`)
+  return res.json()
+}
+
+export async function setMarchStrategyOn(name: string): Promise<void> {
+  const res = await fetch(`${BACKEND_URL}/api/march/strategies/${name}/on`, { method: 'PUT' })
+  if (!res.ok) throw new Error(`March API error: ${res.status}`)
+}
+
+export async function setMarchStrategyOff(name: string): Promise<void> {
+  const res = await fetch(`${BACKEND_URL}/api/march/strategies/${name}/off`, { method: 'PUT' })
+  if (!res.ok) throw new Error(`March API error: ${res.status}`)
+}
+
+// The Python MT5 execution server (port 5001). Only the live account-status
+// check is read directly from the browser; everything else goes through Zig.
+const MARCH_PY_URL = 'http://localhost:5001'
+
+export type AccountStatusKind = 'ready' | 'incomplete' | 'error' | 'offline'
+
+export interface AccountStatus {
+  account_id: number
+  login: string | number
+  status: AccountStatusKind
+  detail: string
+  balance?: number
+  equity?: number
+  currency?: string
+}
+
+// Live MT5 connection health per account, polled by the accounts tree. Throws
+// if the Python server is unreachable (callers render that as "unavailable").
+export async function fetchAccountStatuses(): Promise<AccountStatus[]> {
+  const res = await fetch(`${MARCH_PY_URL}/accounts/status`)
+  if (!res.ok) throw new Error(`March Python API error: ${res.status}`)
+  return res.json()
+}
+
+export interface ActivePosition {
+  account: string | number
+  account_name: string
+  ticket: number
+  type: 'long' | 'short'
+  symbol: string
+  volume: number
+  profit: number
+  open_price: number
+  strategy?: string
+  zig_entry_price?: number
+  zig_entry_time?: number
+}
+
+export async function fetchActivePositions(): Promise<ActivePosition[]> {
+  const res = await fetch(`${MARCH_PY_URL}/positions`)
+  if (!res.ok) throw new Error(`March Python API error: ${res.status}`)
+  return res.json()
+}
+
+// ── MT5 accounts (stored in march.db) ────────────────────────────────────────
+
+export interface Mt5Account {
+  id: number
+  name: string
+  login: string
+  server: string
+}
+
+export interface AccountStrategy {
+  id: number
+  strategy: string
+  symbol: string
+  active: boolean
+}
+
+export async function fetchMt5Accounts(): Promise<Mt5Account[]> {
+  const res = await fetch(`${BACKEND_URL}/api/march/mt5/accounts`)
+  if (!res.ok) throw new Error(`March API error: ${res.status}`)
+  return res.json()
+}
+
+export async function addMt5Account(account: {
+  name: string
+  login: string
+  password: string
+  server: string
+}): Promise<number> {
+  const res = await fetch(`${BACKEND_URL}/api/march/mt5/accounts`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(account),
+  })
+  if (!res.ok) throw new Error(`March API error: ${res.status}`)
+  const data = await res.json()
+  return data.id as number
+}
+
+export async function deleteMt5Account(id: number): Promise<void> {
+  const res = await fetch(`${BACKEND_URL}/api/march/mt5/accounts/${id}`, { method: 'DELETE' })
+  if (!res.ok) throw new Error(`March API error: ${res.status}`)
+}
+
+export async function fetchAccountStrategies(accountId: number): Promise<AccountStrategy[]> {
+  const res = await fetch(`${BACKEND_URL}/api/march/mt5/accounts/${accountId}/strategies`)
+  if (!res.ok) throw new Error(`March API error: ${res.status}`)
+  return res.json()
+}
+
+export async function addAccountStrategy(
+  accountId: number,
+  data: { strategy: string; symbol: string },
+): Promise<void> {
+  const res = await fetch(`${BACKEND_URL}/api/march/mt5/accounts/${accountId}/strategies`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  })
+  if (!res.ok) throw new Error(`March API error: ${res.status}`)
+}
+
+export async function deleteAccountStrategy(accountId: number, strategyId: number): Promise<void> {
+  const res = await fetch(`${BACKEND_URL}/api/march/mt5/accounts/${accountId}/strategies/${strategyId}`, {
+    method: 'DELETE',
+  })
+  if (!res.ok) throw new Error(`March API error: ${res.status}`)
+}
+
+export async function setAccountStrategyActive(
+  accountId: number,
+  strategyId: number,
+  active: boolean,
+): Promise<void> {
+  const res = await fetch(
+    `${BACKEND_URL}/api/march/mt5/accounts/${accountId}/strategies/${strategyId}/${active ? 'on' : 'off'}`,
+    { method: 'PUT' },
+  )
+  if (!res.ok) throw new Error(`March API error: ${res.status}`)
+}
+
+// Known strategy names that can be attached to an account. Mirrors the Zig
+// registry (StrategyTag in web/backend/src/march/api.zig).
+export const KNOWN_MARCH_STRATEGIES = ['rth_vwap', 'orb_buy', 'min_loop'] as const
+
+export interface LiveTrade {
+  id: number
+  strategy_name: string
+  side: 'long' | 'short'
+  contract: number
+  zig_entry_price: number
+  zig_close_price: number
+  mt5_entry_price: number
+  mt5_close_price: number
+  zig_open_time: string
+  zig_close_time: string
+  mt5_open_time: string
+  mt5_close_time: string
+}
+
+export async function fetchLiveTradeHistory(): Promise<LiveTrade[]> {
+  const res = await fetch(`${BACKEND_URL}/api/march/trades`)
+  if (!res.ok) throw new Error(`March API error: ${res.status}`)
+  return res.json()
+}
+
