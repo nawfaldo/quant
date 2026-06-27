@@ -70,18 +70,18 @@ function BacktestRow({ backtest, visible, loading, onToggle }: {
   return (
     <div className="flex items-center justify-between gap-3 px-1 py-2 rounded-lg">
       <span className="text-xs text-gray-300 truncate">{backtest.strategy} <span className="text-gray-600">#{backtest.id}</span></span>
-        {loading ? (
-          <SpinnerIcon />
-        ) : (
-          <button
-            onClick={onToggle}
-            className={`w-8 h-4 rounded-full transition-colors flex-shrink-0 relative focus:outline-none ${visible ? 'bg-blue-500' : 'bg-gray-700'}`}
-          >
-            <span
-              className={`absolute left-0 top-0.5 w-3 h-3 rounded-full bg-white transition-transform ${visible ? 'translate-x-4' : 'translate-x-0.5'}`}
-            />
-          </button>
-        )}
+      {loading ? (
+        <SpinnerIcon />
+      ) : (
+        <button
+          onClick={onToggle}
+          className={`w-8 h-4 rounded-full transition-colors flex-shrink-0 relative focus:outline-none ${visible ? 'bg-blue-500' : 'bg-gray-700'}`}
+        >
+          <span
+            className={`absolute left-0 top-0.5 w-3 h-3 rounded-full bg-white transition-transform ${visible ? 'translate-x-4' : 'translate-x-0.5'}`}
+          />
+        </button>
+      )}
     </div>
   )
 }

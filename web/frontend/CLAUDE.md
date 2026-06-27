@@ -1,6 +1,6 @@
 # Frontend
 
-React + TypeScript + Vite + Bun + Tailwind CSS single-page app. Full-screen dark-themed candlestick chart of NQ futures (1-minute bars) with backtest trade overlays, VWAP indicator, and equity curve analysis.
+React + TypeScript + Vite + Bun + Tailwind CSS single-page app. Two routes: `/` is the live March trading chart, `/stats` is backtests analysis.
 
 ## Stack
 
@@ -12,7 +12,7 @@ React + TypeScript + Vite + Bun + Tailwind CSS single-page app. Full-screen dark
 | Styling | Tailwind CSS v4 (via `@tailwindcss/vite` plugin) |
 | Data fetching / caching | TanStack React Query v5 (`@tanstack/react-query`) |
 | Chart | lightweight-charts v5 |
-| Backend | Zig zap server on `http://localhost:8080` |
+| Backend | Zig server on `http://localhost:8080` |
 
 ## Commands
 
@@ -28,99 +28,88 @@ bun run preview    # serve the production bundle locally
 ```
 frontend/src/
 ├── main.tsx                    # React root + QueryClientProvider
-├── App.tsx                     # top-level state, layout, query orchestration
-├── api.ts                      # fetch helpers (binary decoders: candles, vwap, trades)
-├── types.ts                    # shared types: Bar, Backtest, Trade, VwapPoint, Indicators, TF
+├── App.tsx                     # top-level state, layout, context provider
+├── api.ts                      # fetch helpers (binary decoders: trades; JSON: backtests, march settings)
+├── types.ts                    # shared types: Bar, Backtest, Trade, Indicators, TF, MarchLayouts, etc.
 ├── style.css
+├── context/
+│   └── AppContext.tsx          # shared React context (march settings, indicator toggles, account state)
 ├── components/
-│   ├── Chart.tsx               # lightweight-charts candlestick + VWAP line + trade overlay
-│   ├── TimeframeBar.tsx        # TF toggle buttons (1m / 15m / 1h / 1D)
-│   ├── BacktestsModal.tsx      # backtest list: eye-toggle (chart overlay) + equity curve button
-│   ├── EquityCurveModal.tsx    # full-screen SVG equity curve with crosshair + DD shading
-│   ├── IndicatorsModal.tsx     # indicators toggles (VWAP)
-│   └── icons.tsx               # EyeIcon, EyeSlashIcon, LineChartIcon, SpinnerIcon
-├── lib/
-│   └── primitives.ts           # TradeLinesPrimitive — custom canvas renderer for trade lines
-└── utils/
-    └── candles.ts              # resample() and barsForChart() — client-side OHLC resampling
+│   ├── ChartPanel.tsx          # main chart: live tick stream + historical candles + 24h VWAP + trade overlay
+│   ├── MarchPage.tsx           # / route: multi-panel layout grid (single, split-v, split-h, 2×2, bottom-row-*)
+│   ├── StatsPage.tsx           # /stats route: backtest list + analysis / equity curve / monte-carlo tabs
+│   ├── Header.tsx              # per-panel date range + symbol + TF controls
+│   ├── AccountsTree.tsx        # MT5 account/strategy tree with live status
+│   ├── ActivePositionsTable.tsx # live open positions (polled every 2s)
+│   ├── IndicatorsModal.tsx     # VWAP toggle (per panel)
+│   ├── AccountModal.tsx        # add MT5 account dialog
+│   ├── StrategyModal.tsx       # add/configure strategy dialog
+│   ├── StrategyControls.tsx    # inline strategy on/off controls
+│   ├── AccountSelect.tsx       # account picker
+│   ├── EquityChart.tsx         # lightweight-charts area chart for equity curve (used in StatsPage/StatsModal)
+│   ├── MonteCarloChart.tsx     # monte-carlo fan chart (SVG)
+│   ├── StatsModal.tsx          # per-backtest stats popup
+│   ├── Sidebar.tsx             # left nav (/ and /stats links)
+│   └── icons.tsx               # SVG icon components
+└── lib/
+    └── primitives.ts           # ActivePositionsPrimitive, HistoricalTradesPrimitive, OpeningRangePrimitive
 ```
 
 ## State & data flow
 
+Global state lives in `AppContext` (provided by `App.tsx`). Each `ChartPanel` manages its own local state: chart lifecycle, VWAP accumulators, live tick WebSocket, and per-panel query for `fetchMarchCandles`.
+
 ```
 Zig backend (port 8080)
-  GET /api/candles/bin  →  fetchCandles()   →  useQuery(['candles'])   →  bars[]
-  GET /api/vwap/bin     →  fetchVwap()      →  useQuery(['vwap'])      →  vwapData[]
-  GET /api/backtests    →  fetchBacktests() →  useQuery(['backtests']) (enabled when modal open)
-  GET /api/trades/:id   →  fetchTrades(id)  →  useQueries(['trades',id]) per visible backtest
+  GET /api/march/candles/bin  →  fetchMarchCandles()  →  per-panel useEffect (historical + VWAP seed)
+  GET /api/march/ticks        →  WebSocket bm_nq_ticks → applyTicks() (live stream)
+  GET /api/backtests          →  fetchBacktests()     →  StatsPage
+  GET /api/trades/:id         →  fetchTrades(id)      →  EquityChart / StatsPage
+  GET /api/march/settings     →  fetchMarchSettings() →  App.tsx (persisted per-session state)
+  GET /api/march/layouts      →  fetchMarchLayouts()  →  App.tsx (per-panel configs)
 ```
 
-All query state lives in `App.tsx`. Components receive data as props.
+Context fields (AppContext):
+- `modalOpen` / `setModalOpen` — BacktestsModal open state
+- `visibleIds` / `loadingIds` / `allTrades` / `toggleId` — backtest trade overlay state (fetched via `useQueries` in App.tsx, displayed via `TradeLinesPrimitive` in ChartPanel)
+- `indicatorsOpen` / `setIndicatorsOpen` — VWAP indicator modal
+- `marchSymbol`, `marchTf`, `marchMode`, `marchFromDate`, `marchToDate` — persisted to app.db
+- `marchLayout`, `marchLayouts`, `updateMarchPanel`, `activeMarchPanel` — multi-panel layout config
+- `marchBottomHeight`, `isBottomOpen` — bottom panel resize state
+- `selectedAccountId`, `marchAccountModalOpen`, `marchStrategyModalOpen` — account/strategy modals
+- `visibleTradeStrategies`, `toggleTradeStrategy` — live trade overlay filter
+- `selectedBacktestId`, `activeTab` — StatsPage selection
 
-- `activeTf` — currently selected timeframe
-- `visibleIds` — Set of backtest IDs whose trades are overlaid on the chart
-- `allTrades` — flat list of Trade objects from all visible backtests
-- `loadingIds` — Set of backtest IDs currently fetching
-- `indicators` — `{ vwap: boolean, openingRange: boolean }` toggle state
+## ChartPanel (`ChartPanel.tsx`)
 
-## Chart (`Chart.tsx`)
+Each panel is fully self-contained. Runs its own data pipeline:
 
-Uses lightweight-charts with `CrosshairMode.Normal` (no snap to series values).
+1. **Historical load**: `fetchMarchCandles` → sets candlestick series, seeds 24h VWAP accumulators
+2. **Live stream**: WebSocket `ws://localhost:8765` (Bookmap addon) → `applyTicks()` → updates OHLCV + VWAP tick-by-tick
+3. **VWAP**: 24h VWAP with **two re-anchors per ET day**: midnight (00:00) and RTH open (09:30). This gives two continuous VWAP sessions per day (overnight 00:00–09:30 and RTH+evening 09:30–24:00). The line breaks at each anchor so it never connects across a reset.
+4. **Primitives**: `ActivePositionsPrimitive` (live positions), `HistoricalTradesPrimitive` (live trade history), `TradeLinesPrimitive` (backtest trade overlays from `allTrades`), `OpeningRangePrimitive` (09:30–10:00 OR box for orb_buy strategy)
 
-- **Init effect** (`[]`): creates chart + candlestick series + VWAP line series
-- **Candle effect** (`[bars, activeTf]`): resamples and sets candle data
-- **VWAP effect** (`[vwapData, activeTf]`): filters zero values (non-RTH bars), resamples to active TF bucket, sets line data
-- **Indicators effect** (`[indicators]`): toggles VWAP series visibility
-- **Trades effect** (`[allTrades]`): attaches/detaches `TradeLinesPrimitive`
+The VWAP accumulator logic is mirrored in both the historical render and the live `applyTicks` path — they use the same midnight + 09:30 anchor rule so the line is continuous across the historical→live boundary.
 
-The chart container uses `flex-1 min-w-0` — do NOT add `h-full`, the flex parent controls height.
+## Primitives (`lib/primitives.ts`)
+
+- **`ActivePositionsPrimitive`**: canvas overlay showing live MT5 open positions as price lines with P&L labels
+- **`HistoricalTradesPrimitive`**: canvas overlay of completed march trades (entry/exit arrows + P&L)
+- **`OpeningRangePrimitive`**: red box for days where the 09:55 ORB breakout triggered. Mirrors `strategies/30m_buy.zig` exactly — **do not change independently**:
+  - Range bars: 09:30–09:50 (first five 5m candles). `OR_high` = max close (breakout reference)
+  - Box extents: body high/low across all six bars including 09:55
+  - Trigger: 09:55 bar close > OR_high
+  - Timestamps are fake-UTC ET; always use `timeZone: 'UTC'`
 
 ## Binary wire formats (parsed in `api.ts`)
-
-### Candles (`/api/candles/bin`)
-- 8-byte header: `u32 magic (0x45444C43)` | `u32 count`
-- 20 bytes/row: `u32 time, f32 open, f32 high, f32 low, f32 close`
-
-### VWAP (`/api/vwap/bin`)
-- 8-byte header: `u32 magic (0x50415756)` | `u32 count`
-- 8 bytes/row: `u32 time, f32 value` — `value=0` means non-RTH bar (skip when rendering)
-- Only RTH VWAP; ETH removed. Computed in backend from OHLCV, not stored in DB.
 
 ### Trades (`/api/trades/:id`)
 - 8-byte header: `u32 magic (0x54524445)` | `u32 count`
 - 25 bytes/row: `u8 side (0=long,1=short), u32 et, u32 xt, f32 ep, f32 xp, f32 pnl, u32 qty`
 
-## Trade overlay & indicators (`lib/primitives.ts`)
-
-`TradeLinesPrimitive` is a custom lightweight-charts plugin that renders on a canvas overlay:
-- Draws entry→exit dashed lines + arrow markers + PnL text for every trade
-- Packs trades into typed arrays sorted by entry time
-- On each redraw, binary-searches the visible time range and culls to `MAX_VISIBLE_LINES`
-- `MAX_TEXT_LABELS` gates PnL text rendering for performance
-
-`OpeningRangePrimitive` draws a red box for days where the 09:55 breakout triggered. Its logic mirrors the Zig strategy exactly — **do not change this independently of `strategies/30m_buy.zig`**:
-- **Range bars**: 09:30–09:50 (first five 5m candles). `OR_high` = max close (breakout reference).
-- **Box extents**: body high/low (`max/min(open, close)`, no wicks) across all **six** bars including 09:55, so the breakout candle's body closes flush with the box top/bottom.
-- **Trigger**: 09:55 bar. Box is shown only when `close(09:55) > OR_high`.
-- **Breakout marker**: placed on the 09:55 bar. The entry candle (10:00 open) sits one bar to the right, **outside** the box.
-- Timestamps are fake-UTC ET; always use `timeZone: 'UTC'` when formatting.
-
-## Equity curve modal (`EquityCurveModal.tsx`)
-
-Full-screen modal with a pure SVG chart (no lightweight-charts). Opened from the line-chart icon in `BacktestsModal`.
-
-- **Data**: reuses `fetchTrades(id)` (already cached by React Query); computes running balance from `initial_bal + Σpnl` sorted by exit time
-- **SVG**: renders at actual container pixel size via `ResizeObserver` — no viewBox scaling, so full-screen = more data resolution
-- **X axis**: date labels (`Jan '23`, etc.) evenly spaced across the time range
-- **Y axis**: balance with auto-scaled nice round tick steps
-- **Crosshair**: snaps to nearest point on mouse move; shows date + balance labels pinned to axes
-- **Drawdown shading**: all periods where balance dropped ≥ 10% from peak are shaded red with `-%` label at top
-
-## Modals
-
-- **BacktestsModal** (`z-50`) — lists backtests; each row has an equity-curve button (line chart icon) and eye-toggle for trade overlay
-- **EquityCurveModal** (`z-[60]`) — full-screen, renders on top of BacktestsModal
-- **IndicatorsModal** — VWAP toggle
+### March candles (`/api/march/candles/bin`)
+- 8-byte header: `u32 magic (0x45444C43)` | `u32 count`
+- 24 bytes/row: `u32 time, f32 open, f32 high, f32 low, f32 close, f32 volume`
 
 ## Timezone model
 
@@ -128,9 +117,8 @@ All timestamps from the backend are **New York (ET) wall-clock times stored as f
 
 Always format timestamps with `timeZone: 'UTC'` or UTC date methods (`getUTCHours`, `getUTCDate`, etc.):
 
-- `Chart.tsx` — `TZ = 'UTC'` for all `Intl.DateTimeFormat` formatters
+- `ChartPanel.tsx` — `TZ = 'UTC'` for all `Intl.DateTimeFormat` formatters
 - `primitives.ts` — `OpeningRangePrimitive.setBars` uses `timeZone: 'UTC'` to detect 09:30–10:00 OR window
-- `EquityCurveModal.tsx` — already uses `getUTCMonth` / `getUTCDate` / `getUTCFullYear` ✓
 
 ## Environment
 

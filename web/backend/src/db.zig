@@ -2,29 +2,52 @@ const std = @import("std");
 const builtin = @import("builtin");
 const c = @cImport(@cInclude("sqlite3.h"));
 
-const DB_PATH = switch (builtin.os.tag) {
+// ── Database paths ─────────────────────────────────────────────────────────────
+// backtest.db  — written by the external backtest binary; opened read-only here.
+// app.db       — owned by the web backend process; holds settings + march tables.
+
+const BACKTEST_DB_PATH = switch (builtin.os.tag) {
     .macos   => "/Users/nawfaldo/Bunker/Quant/backtest/backtest.db",
     .windows => "C:/Users/JawirGaming66/Quant/backtest/backtest.db",
     else     => "/mnt/c/Users/JawirGaming66/Quant/backtest/backtest.db",
 };
 
-// Trades binary wire format:
-//   header: u32 magic ("TRDE" little-endian) | u32 row_count
-//   rows  : row_count * { u8 side (0=long,1=short), u32 et, u32 xt,
-//                         f32 ep, f32 xp, f32 pnl, u32 qty }  (25 B each, little-endian)
-pub const TRADE_MAGIC: u32 = 0x54524445;
-pub const TRADE_ROW_BYTES: usize = 25;
+const APP_DB_PATH = switch (builtin.os.tag) {
+    .macos   => "/Users/nawfaldo/Bunker/Quant/web/backend/app.db",
+    .windows => "C:/Users/JawirGaming66/Quant/web/backend/app.db",
+    else     => "/mnt/c/Users/JawirGaming66/Quant/web/backend/app.db",
+};
+
+// ── Shared helpers ─────────────────────────────────────────────────────────────
 
 fn spanOrEmpty(ptr: ?[*:0]const u8) []const u8 {
     return if (ptr) |p| std.mem.span(p) else "";
 }
 
+fn bindText(stmt: ?*c.sqlite3_stmt, idx: c_int, s: []const u8) void {
+    _ = c.sqlite3_bind_text(stmt, idx, s.ptr, @intCast(s.len), c.SQLITE_STATIC);
+}
+
+fn copyCol(stmt: ?*c.sqlite3_stmt, col: c_int, buf: []u8) usize {
+    const ptr = c.sqlite3_column_text(stmt, col);
+    if (ptr == null) return 0;
+    const blen: usize = @intCast(c.sqlite3_column_bytes(stmt, col));
+    const n = @min(blen, buf.len);
+    @memcpy(buf[0..n], ptr[0..n]);
+    return n;
+}
+
+// ── Backtest DB (backtest.db, read-only) ───────────────────────────────────────
+
+pub const TRADE_MAGIC: u32 = 0x54524445;
+pub const TRADE_ROW_BYTES: usize = 25;
+
 pub fn getBacktests(a: std.mem.Allocator) ![]const u8 {
     var db: ?*c.sqlite3 = null;
-    if (c.sqlite3_open_v2(DB_PATH, &db, c.SQLITE_OPEN_READONLY | c.SQLITE_OPEN_FULLMUTEX, null) != c.SQLITE_OK)
+    if (c.sqlite3_open_v2(BACKTEST_DB_PATH, &db, c.SQLITE_OPEN_READONLY | c.SQLITE_OPEN_FULLMUTEX, null) != c.SQLITE_OK)
         return error.DbOpenFailed;
     defer _ = c.sqlite3_close(db);
-    _ = c.sqlite3_busy_timeout(db, 3000); // wait up to 3 s if the writer holds a lock
+    _ = c.sqlite3_busy_timeout(db, 3000);
 
     var stmt: ?*c.sqlite3_stmt = null;
     const sql = "SELECT id, strategy, run_at, first_ts, last_ts, total_days, initial_bal, final_bal, net_growth, max_drawdown, num_trades, symbol, avg_drawdown, sharpe, total_win, total_loss, win_rate, win_count, profit_factor, expectancy, max_lose_streak, avg_size, min_size, max_size, avg_weekly, avg_monthly, avg_weekly_pct, avg_monthly_pct, instrument, max_drawdown_dollars, max_drawdown_peak_date, max_drawdown_trough_date, avg_drawdown_dollars, max_intraday_drawdown, max_intraday_drawdown_dollars, max_intraday_drawdown_date, avg_intraday_drawdown, avg_intraday_drawdown_dollars, max_daily_loss, max_daily_loss_date, avg_daily_loss FROM backtests ORDER BY run_at DESC";
@@ -103,7 +126,7 @@ pub fn getBacktests(a: std.mem.Allocator) ![]const u8 {
 
 pub fn getTradesBin(a: std.mem.Allocator, backtest_id: i64) ![]const u8 {
     var db: ?*c.sqlite3 = null;
-    if (c.sqlite3_open_v2(DB_PATH, &db, c.SQLITE_OPEN_READONLY | c.SQLITE_OPEN_FULLMUTEX, null) != c.SQLITE_OK)
+    if (c.sqlite3_open_v2(BACKTEST_DB_PATH, &db, c.SQLITE_OPEN_READONLY | c.SQLITE_OPEN_FULLMUTEX, null) != c.SQLITE_OK)
         return error.DbOpenFailed;
     defer _ = c.sqlite3_close(db);
     _ = c.sqlite3_busy_timeout(db, 3000);
@@ -124,7 +147,7 @@ pub fn getTradesBin(a: std.mem.Allocator, backtest_id: i64) ![]const u8 {
 
     var out: std.ArrayList(u8) = .empty;
     errdefer out.deinit(a);
-    try out.appendNTimes(a, 0, 8); // header placeholder, filled in after the loop
+    try out.appendNTimes(a, 0, 8);
 
     var count: u32 = 0;
     while (c.sqlite3_step(stmt) == c.SQLITE_ROW) {
@@ -152,29 +175,14 @@ pub fn getTradesBin(a: std.mem.Allocator, backtest_id: i64) ![]const u8 {
 
     std.mem.writeInt(u32, out.items[0..4], TRADE_MAGIC, .little);
     std.mem.writeInt(u32, out.items[4..8], count, .little);
-
     return out.toOwnedSlice(a);
 }
 
-pub const MC_MAGIC: u32 = 0x4D435054; // "MCPT"
+pub const MC_MAGIC: u32 = 0x4D435054;
 
-// Returns binary: 48-byte header + num_paths*steps*f32 equity values.
-// Header layout (all little-endian):
-//   [0..4]  magic     u32
-//   [4..8]  num_paths u32   (all curves in binary)
-//   [8..12] steps     u32
-//   [12..16] initial_balance f32
-//   [16..20] final_p5  f32
-//   [20..24] final_p25 f32
-//   [24..28] final_p50 f32
-//   [28..32] final_p75 f32
-//   [32..36] final_p95 f32
-//   [36..40] p_profit  f32
-//   [40..44] p_ruin    f32
-//   [44..48] sims      u32  (total simulations run)
 pub fn getMonteCarloBin(a: std.mem.Allocator, backtest_id: i64) ![]const u8 {
     var db_ptr: ?*c.sqlite3 = null;
-    if (c.sqlite3_open_v2(DB_PATH, &db_ptr, c.SQLITE_OPEN_READONLY | c.SQLITE_OPEN_FULLMUTEX, null) != c.SQLITE_OK)
+    if (c.sqlite3_open_v2(BACKTEST_DB_PATH, &db_ptr, c.SQLITE_OPEN_READONLY | c.SQLITE_OPEN_FULLMUTEX, null) != c.SQLITE_OK)
         return error.DbOpenFailed;
     defer _ = c.sqlite3_close(db_ptr);
     _ = c.sqlite3_busy_timeout(db_ptr, 3000);
@@ -220,8 +228,6 @@ pub fn getMonteCarloBin(a: std.mem.Allocator, backtest_id: i64) ![]const u8 {
     }
     if (steps == 0) return error.NotFound;
 
-    // Fetch actual trade-count values at each checkpoint (path 0 is the reference).
-    // These are written after the header so the frontend can map step index → trade count.
     var step_values: std.ArrayList(u8) = .empty;
     defer step_values.deinit(a);
     {
@@ -258,7 +264,6 @@ pub fn getMonteCarloBin(a: std.mem.Allocator, backtest_id: i64) ![]const u8 {
 
     const num_paths: u32 = path_rows / steps;
 
-    // Binary layout: 48-byte header | steps*u32 step_values | num_paths*steps*f32 equity
     var out: std.ArrayList(u8) = .empty;
     errdefer out.deinit(a);
     try out.appendNTimes(a, 0, 48);
@@ -281,12 +286,11 @@ pub fn getMonteCarloBin(a: std.mem.Allocator, backtest_id: i64) ![]const u8 {
 
 pub fn getTrades(a: std.mem.Allocator, backtest_id: i64) ![]const u8 {
     var db: ?*c.sqlite3 = null;
-    if (c.sqlite3_open_v2(DB_PATH, &db, c.SQLITE_OPEN_READONLY, null) != c.SQLITE_OK)
+    if (c.sqlite3_open_v2(BACKTEST_DB_PATH, &db, c.SQLITE_OPEN_READONLY, null) != c.SQLITE_OK)
         return error.DbOpenFailed;
     defer _ = c.sqlite3_close(db);
 
     var stmt: ?*c.sqlite3_stmt = null;
-    // strftime('%s', ...) lets SQLite do the UTC→unix-seconds conversion
     const sql =
         "SELECT side," ++
         "  CAST(strftime('%s', entry_ts) AS INTEGER)," ++
@@ -319,4 +323,349 @@ pub fn getTrades(a: std.mem.Allocator, backtest_id: i64) ![]const u8 {
     }
     try out.appendSlice(a, "]");
     return out.toOwnedSlice(a);
+}
+
+// ── March live-trading DB (app.db) ────────────────────────────────────────────
+// Tables: strategies, mt5_accounts, mt5_account_strategies, live_trades.
+// Shares app.db with settings.zig (WAL mode, safe for concurrent access).
+
+const MARCH_SCHEMA =
+    \\CREATE TABLE IF NOT EXISTS strategies (
+    \\  name       TEXT PRIMARY KEY,
+    \\  active     INTEGER NOT NULL DEFAULT 0,
+    \\  updated_at TEXT    NOT NULL DEFAULT ''
+    \\);
+    \\CREATE TABLE IF NOT EXISTS mt5_accounts (
+    \\  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    \\  name       TEXT    NOT NULL DEFAULT '',
+    \\  login      TEXT    NOT NULL DEFAULT '',
+    \\  password   TEXT    NOT NULL DEFAULT '',
+    \\  server     TEXT    NOT NULL DEFAULT '',
+    \\  created_at TEXT    NOT NULL DEFAULT ''
+    \\);
+    \\CREATE TABLE IF NOT EXISTS mt5_account_strategies (
+    \\  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    \\  account_id INTEGER NOT NULL,
+    \\  strategy   TEXT    NOT NULL,
+    \\  symbol     TEXT    NOT NULL DEFAULT '',
+    \\  active     INTEGER NOT NULL DEFAULT 0,
+    \\  created_at TEXT    NOT NULL DEFAULT ''
+    \\);
+    \\CREATE TABLE IF NOT EXISTS live_trades (
+    \\  id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+    \\  strategy_name           TEXT    NOT NULL,
+    \\  side                    TEXT    NOT NULL DEFAULT 'long',
+    \\  contract                REAL    NOT NULL,
+    \\  zig_entry_price         REAL    NOT NULL DEFAULT 0.0,
+    \\  zig_close_price         REAL    NOT NULL DEFAULT 0.0,
+    \\  mt5_entry_price         REAL    NOT NULL DEFAULT 0.0,
+    \\  mt5_entry_price_spread  REAL    NOT NULL DEFAULT 0.0,
+    \\  mt5_close_price         REAL    NOT NULL DEFAULT 0.0,
+    \\  zig_open_time           TEXT    NOT NULL DEFAULT '',
+    \\  mt5_open_time           TEXT    NOT NULL DEFAULT '',
+    \\  zig_close_time          TEXT    NOT NULL DEFAULT '',
+    \\  mt5_close_time          TEXT    NOT NULL DEFAULT '',
+    \\  created_at              TEXT    NOT NULL DEFAULT ''
+    \\);
+;
+
+const KNOWN_STRATEGIES = [_][]const u8{ "rth_vwap", "orb_buy", "min_loop" };
+
+pub fn open() !?*c.sqlite3 {
+    var db: ?*c.sqlite3 = null;
+    if (c.sqlite3_open(APP_DB_PATH, &db) != c.SQLITE_OK) return error.DbOpen;
+    _ = c.sqlite3_exec(db, "PRAGMA journal_mode=WAL;", null, null, null);
+    if (c.sqlite3_exec(db, MARCH_SCHEMA, null, null, null) != c.SQLITE_OK) {
+        _ = c.sqlite3_close(db);
+        return error.DbSchema;
+    }
+    // Migrations for DBs created before certain columns existed (harmless if already present).
+    _ = c.sqlite3_exec(db, "ALTER TABLE mt5_account_strategies ADD COLUMN active INTEGER NOT NULL DEFAULT 0;", null, null, null);
+    // Seed known strategies (INSERT OR IGNORE preserves existing active state).
+    for (KNOWN_STRATEGIES) |name| {
+        var buf: [256]u8 = undefined;
+        const sql = std.fmt.bufPrintZ(&buf,
+            "INSERT OR IGNORE INTO strategies (name, active, updated_at) VALUES ('{s}', 0, '');",
+            .{name}) catch continue;
+        _ = c.sqlite3_exec(db, sql.ptr, null, null, null);
+    }
+    return db;
+}
+
+pub fn close(db: ?*c.sqlite3) void {
+    _ = c.sqlite3_close(db);
+}
+
+// ── Strategies ────────────────────────────────────────────────────────────────
+
+pub const Strategy = struct {
+    name: [64]u8 = [_]u8{0} ** 64,
+    name_len: usize = 0,
+    active: bool = false,
+};
+
+pub fn listStrategies(db: ?*c.sqlite3, out: []Strategy) usize {
+    var stmt: ?*c.sqlite3_stmt = null;
+    if (c.sqlite3_prepare_v2(db, "SELECT name, active FROM strategies ORDER BY name;", -1, &stmt, null) != c.SQLITE_OK) return 0;
+    defer _ = c.sqlite3_finalize(stmt);
+
+    var count: usize = 0;
+    while (c.sqlite3_step(stmt) == c.SQLITE_ROW and count < out.len) {
+        var s = &out[count];
+        s.name_len = copyCol(stmt, 0, &s.name);
+        s.active = c.sqlite3_column_int(stmt, 1) != 0;
+        count += 1;
+    }
+    return count;
+}
+
+pub fn setActive(db: ?*c.sqlite3, name: []const u8, active: bool) bool {
+    var stmt: ?*c.sqlite3_stmt = null;
+    if (c.sqlite3_prepare_v2(db, "UPDATE strategies SET active = ?, updated_at = datetime('now') WHERE name = ?;", -1, &stmt, null) != c.SQLITE_OK) return false;
+    defer _ = c.sqlite3_finalize(stmt);
+
+    _ = c.sqlite3_bind_int(stmt, 1, if (active) 1 else 0);
+    bindText(stmt, 2, name);
+    return c.sqlite3_step(stmt) == c.SQLITE_DONE;
+}
+
+// ── Live trades ────────────────────────────────────────────────────────────────
+
+pub fn logTradeOpen(db: ?*c.sqlite3, strategy_name: []const u8, side: []const u8, contract: f64, zig_entry_price: f64, zig_open_time: []const u8) i64 {
+    var stmt: ?*c.sqlite3_stmt = null;
+    if (c.sqlite3_prepare_v2(db, "INSERT INTO live_trades (strategy_name, side, contract, zig_entry_price, zig_open_time, created_at) VALUES (?, ?, ?, ?, ?, datetime('now'));", -1, &stmt, null) != c.SQLITE_OK) return -1;
+    defer _ = c.sqlite3_finalize(stmt);
+
+    bindText(stmt, 1, strategy_name);
+    bindText(stmt, 2, side);
+    _ = c.sqlite3_bind_double(stmt, 3, contract);
+    _ = c.sqlite3_bind_double(stmt, 4, zig_entry_price);
+    bindText(stmt, 5, zig_open_time);
+
+    if (c.sqlite3_step(stmt) != c.SQLITE_DONE) return -1;
+    return c.sqlite3_last_insert_rowid(db);
+}
+
+pub fn logTradeClose(db: ?*c.sqlite3, strategy_name: []const u8, zig_close_price: f64, zig_close_time: []const u8) i64 {
+    var sel: ?*c.sqlite3_stmt = null;
+    if (c.sqlite3_prepare_v2(db, "SELECT id FROM live_trades WHERE strategy_name = ? AND zig_close_time = '' ORDER BY id DESC LIMIT 1;", -1, &sel, null) != c.SQLITE_OK) return -1;
+    defer _ = c.sqlite3_finalize(sel);
+
+    bindText(sel, 1, strategy_name);
+    if (c.sqlite3_step(sel) != c.SQLITE_ROW) return -1;
+    const id = c.sqlite3_column_int64(sel, 0);
+
+    var upd: ?*c.sqlite3_stmt = null;
+    if (c.sqlite3_prepare_v2(db, "UPDATE live_trades SET zig_close_price = ?, zig_close_time = ? WHERE id = ?;", -1, &upd, null) != c.SQLITE_OK) return -1;
+    defer _ = c.sqlite3_finalize(upd);
+
+    _ = c.sqlite3_bind_double(upd, 1, zig_close_price);
+    bindText(upd, 2, zig_close_time);
+    _ = c.sqlite3_bind_int64(upd, 3, id);
+    if (c.sqlite3_step(upd) != c.SQLITE_DONE) return -1;
+    return id;
+}
+
+pub const LiveTrade = struct {
+    id: i64,
+    strategy_name: [64]u8 = [_]u8{0} ** 64,
+    strategy_name_len: usize = 0,
+    side: [16]u8 = [_]u8{0} ** 16,
+    side_len: usize = 0,
+    contract: f64,
+    zig_entry_price: f64,
+    zig_close_price: f64,
+    mt5_entry_price: f64,
+    mt5_close_price: f64,
+    zig_open_time: [64]u8 = [_]u8{0} ** 64,
+    zig_open_time_len: usize = 0,
+    zig_close_time: [64]u8 = [_]u8{0} ** 64,
+    zig_close_time_len: usize = 0,
+    mt5_open_time: [64]u8 = [_]u8{0} ** 64,
+    mt5_open_time_len: usize = 0,
+    mt5_close_time: [64]u8 = [_]u8{0} ** 64,
+    mt5_close_time_len: usize = 0,
+};
+
+pub fn listTrades(db: ?*c.sqlite3, out: []LiveTrade) usize {
+    var stmt: ?*c.sqlite3_stmt = null;
+    if (c.sqlite3_prepare_v2(db, "SELECT id, strategy_name, side, contract, zig_entry_price, zig_close_price, mt5_entry_price, mt5_close_price, zig_open_time, zig_close_time, mt5_open_time, mt5_close_time FROM live_trades ORDER BY id DESC LIMIT 200;", -1, &stmt, null) != c.SQLITE_OK) return 0;
+    defer _ = c.sqlite3_finalize(stmt);
+
+    var count: usize = 0;
+    while (c.sqlite3_step(stmt) == c.SQLITE_ROW and count < out.len) {
+        var t = &out[count];
+        t.id = c.sqlite3_column_int64(stmt, 0);
+        t.strategy_name_len = copyCol(stmt, 1, &t.strategy_name);
+        t.side_len = copyCol(stmt, 2, &t.side);
+        t.contract = c.sqlite3_column_double(stmt, 3);
+        t.zig_entry_price = c.sqlite3_column_double(stmt, 4);
+        t.zig_close_price = c.sqlite3_column_double(stmt, 5);
+        t.mt5_entry_price = c.sqlite3_column_double(stmt, 6);
+        t.mt5_close_price = c.sqlite3_column_double(stmt, 7);
+        t.zig_open_time_len = copyCol(stmt, 8, &t.zig_open_time);
+        t.zig_close_time_len = copyCol(stmt, 9, &t.zig_close_time);
+        t.mt5_open_time_len = copyCol(stmt, 10, &t.mt5_open_time);
+        t.mt5_close_time_len = copyCol(stmt, 11, &t.mt5_close_time);
+        count += 1;
+    }
+    return count;
+}
+
+// ── MT5 accounts ───────────────────────────────────────────────────────────────
+
+pub const Mt5Account = struct {
+    id: i64 = 0,
+    name: [64]u8 = [_]u8{0} ** 64,
+    name_len: usize = 0,
+    login: [32]u8 = [_]u8{0} ** 32,
+    login_len: usize = 0,
+    server: [64]u8 = [_]u8{0} ** 64,
+    server_len: usize = 0,
+};
+
+pub fn addMt5Account(db: ?*c.sqlite3, name: []const u8, login: []const u8, password: []const u8, server: []const u8) i64 {
+    var stmt: ?*c.sqlite3_stmt = null;
+    if (c.sqlite3_prepare_v2(db, "INSERT INTO mt5_accounts (name, login, password, server, created_at) VALUES (?, ?, ?, ?, datetime('now'));", -1, &stmt, null) != c.SQLITE_OK) return -1;
+    defer _ = c.sqlite3_finalize(stmt);
+
+    bindText(stmt, 1, name);
+    bindText(stmt, 2, login);
+    bindText(stmt, 3, password);
+    bindText(stmt, 4, server);
+    if (c.sqlite3_step(stmt) != c.SQLITE_DONE) return -1;
+    return c.sqlite3_last_insert_rowid(db);
+}
+
+pub fn listMt5Accounts(db: ?*c.sqlite3, out: []Mt5Account) usize {
+    var stmt: ?*c.sqlite3_stmt = null;
+    if (c.sqlite3_prepare_v2(db, "SELECT id, name, login, server FROM mt5_accounts ORDER BY id;", -1, &stmt, null) != c.SQLITE_OK) return 0;
+    defer _ = c.sqlite3_finalize(stmt);
+
+    var count: usize = 0;
+    while (c.sqlite3_step(stmt) == c.SQLITE_ROW and count < out.len) {
+        var a = &out[count];
+        a.id = c.sqlite3_column_int64(stmt, 0);
+        a.name_len = copyCol(stmt, 1, &a.name);
+        a.login_len = copyCol(stmt, 2, &a.login);
+        a.server_len = copyCol(stmt, 3, &a.server);
+        count += 1;
+    }
+    return count;
+}
+
+pub fn deleteMt5Account(db: ?*c.sqlite3, id: i64) bool {
+    _ = c.sqlite3_exec(db, "BEGIN;", null, null, null);
+    var ok = true;
+
+    var s1: ?*c.sqlite3_stmt = null;
+    if (c.sqlite3_prepare_v2(db, "DELETE FROM mt5_account_strategies WHERE account_id = ?;", -1, &s1, null) == c.SQLITE_OK) {
+        _ = c.sqlite3_bind_int64(s1, 1, id);
+        if (c.sqlite3_step(s1) != c.SQLITE_DONE) ok = false;
+        _ = c.sqlite3_finalize(s1);
+    } else ok = false;
+
+    var s2: ?*c.sqlite3_stmt = null;
+    if (c.sqlite3_prepare_v2(db, "DELETE FROM mt5_accounts WHERE id = ?;", -1, &s2, null) == c.SQLITE_OK) {
+        _ = c.sqlite3_bind_int64(s2, 1, id);
+        if (c.sqlite3_step(s2) != c.SQLITE_DONE) ok = false;
+        _ = c.sqlite3_finalize(s2);
+    } else ok = false;
+
+    _ = c.sqlite3_exec(db, if (ok) "COMMIT;" else "ROLLBACK;", null, null, null);
+    return ok;
+}
+
+// ── Per-account strategies ─────────────────────────────────────────────────────
+
+pub const AccountStrategy = struct {
+    id: i64 = 0,
+    strategy: [64]u8 = [_]u8{0} ** 64,
+    strategy_len: usize = 0,
+    symbol: [32]u8 = [_]u8{0} ** 32,
+    symbol_len: usize = 0,
+    active: bool = false,
+};
+
+pub fn addAccountStrategy(db: ?*c.sqlite3, account_id: i64, strategy: []const u8, symbol: []const u8) i64 {
+    var stmt: ?*c.sqlite3_stmt = null;
+    if (c.sqlite3_prepare_v2(db, "INSERT INTO mt5_account_strategies (account_id, strategy, symbol, created_at) VALUES (?, ?, ?, datetime('now'));", -1, &stmt, null) != c.SQLITE_OK) return -1;
+    defer _ = c.sqlite3_finalize(stmt);
+
+    _ = c.sqlite3_bind_int64(stmt, 1, account_id);
+    bindText(stmt, 2, strategy);
+    bindText(stmt, 3, symbol);
+    if (c.sqlite3_step(stmt) != c.SQLITE_DONE) return -1;
+    return c.sqlite3_last_insert_rowid(db);
+}
+
+pub fn listAccountStrategies(db: ?*c.sqlite3, account_id: i64, out: []AccountStrategy) usize {
+    var stmt: ?*c.sqlite3_stmt = null;
+    if (c.sqlite3_prepare_v2(db, "SELECT id, strategy, symbol, active FROM mt5_account_strategies WHERE account_id = ? ORDER BY id;", -1, &stmt, null) != c.SQLITE_OK) return 0;
+    defer _ = c.sqlite3_finalize(stmt);
+
+    _ = c.sqlite3_bind_int64(stmt, 1, account_id);
+
+    var count: usize = 0;
+    while (c.sqlite3_step(stmt) == c.SQLITE_ROW and count < out.len) {
+        var s = &out[count];
+        s.id = c.sqlite3_column_int64(stmt, 0);
+        s.strategy_len = copyCol(stmt, 1, &s.strategy);
+        s.symbol_len = copyCol(stmt, 2, &s.symbol);
+        s.active = c.sqlite3_column_int(stmt, 3) != 0;
+        count += 1;
+    }
+    return count;
+}
+
+pub fn deleteAccountStrategy(db: ?*c.sqlite3, id: i64) bool {
+    var stmt: ?*c.sqlite3_stmt = null;
+    if (c.sqlite3_prepare_v2(db, "DELETE FROM mt5_account_strategies WHERE id = ?;", -1, &stmt, null) != c.SQLITE_OK) return false;
+    defer _ = c.sqlite3_finalize(stmt);
+
+    _ = c.sqlite3_bind_int64(stmt, 1, id);
+    return c.sqlite3_step(stmt) == c.SQLITE_DONE;
+}
+
+pub fn setAccountStrategyActive(db: ?*c.sqlite3, id: i64, active: bool) bool {
+    var stmt: ?*c.sqlite3_stmt = null;
+    if (c.sqlite3_prepare_v2(db, "UPDATE mt5_account_strategies SET active = ? WHERE id = ?;", -1, &stmt, null) != c.SQLITE_OK) return false;
+    defer _ = c.sqlite3_finalize(stmt);
+
+    _ = c.sqlite3_bind_int(stmt, 1, if (active) 1 else 0);
+    _ = c.sqlite3_bind_int64(stmt, 2, id);
+    return c.sqlite3_step(stmt) == c.SQLITE_DONE;
+}
+
+pub fn accountStrategyName(db: ?*c.sqlite3, id: i64, buf: []u8) ?usize {
+    var stmt: ?*c.sqlite3_stmt = null;
+    if (c.sqlite3_prepare_v2(db, "SELECT strategy FROM mt5_account_strategies WHERE id = ?;", -1, &stmt, null) != c.SQLITE_OK) return null;
+    defer _ = c.sqlite3_finalize(stmt);
+
+    _ = c.sqlite3_bind_int64(stmt, 1, id);
+    if (c.sqlite3_step(stmt) != c.SQLITE_ROW) return null;
+    return copyCol(stmt, 0, buf);
+}
+
+pub fn anyActiveForStrategy(db: ?*c.sqlite3, strategy: []const u8) bool {
+    var stmt: ?*c.sqlite3_stmt = null;
+    if (c.sqlite3_prepare_v2(db, "SELECT 1 FROM mt5_account_strategies WHERE strategy = ? AND active = 1 LIMIT 1;", -1, &stmt, null) != c.SQLITE_OK) return false;
+    defer _ = c.sqlite3_finalize(stmt);
+
+    bindText(stmt, 1, strategy);
+    return c.sqlite3_step(stmt) == c.SQLITE_ROW;
+}
+
+pub fn listActiveStrategyNames(db: ?*c.sqlite3, out: [][64]u8) usize {
+    var stmt: ?*c.sqlite3_stmt = null;
+    if (c.sqlite3_prepare_v2(db, "SELECT DISTINCT strategy FROM mt5_account_strategies WHERE active = 1;", -1, &stmt, null) != c.SQLITE_OK) return 0;
+    defer _ = c.sqlite3_finalize(stmt);
+
+    var count: usize = 0;
+    while (c.sqlite3_step(stmt) == c.SQLITE_ROW and count < out.len) {
+        out[count] = [_]u8{0} ** 64;
+        _ = copyCol(stmt, 0, &out[count]);
+        count += 1;
+    }
+    return count;
 }

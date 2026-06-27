@@ -11,9 +11,9 @@ from pathlib import Path
 from dataclasses import dataclass
 from typing import Any
 
-# The march server (inside web/backend) opens march.db at web/backend/march.db.
-# This file lives in march/, so the DB is at ../web/backend/march.db.
-DB_PATH = Path(__file__).resolve().parent.parent / "web" / "backend" / "march.db"
+# The march server (inside web/backend) merged all tables into app.db.
+# This file lives in march/, so the DB is at ../web/backend/app.db.
+DB_PATH = Path(__file__).resolve().parent.parent / "web" / "backend" / "app.db"
 
 
 @dataclass
@@ -94,8 +94,8 @@ def update_open_times(trade_id: int, mt5_open_time: str, mt5_entry_price: float,
     try:
         conn.execute(
             """
-            UPDATE trades 
-            SET mt5_open_time = ?, mt5_entry_price = ?, mt5_entry_price_spread = ? 
+            UPDATE live_trades
+            SET mt5_open_time = ?, mt5_entry_price = ?, mt5_entry_price_spread = ?
             WHERE id = ?
             """,
             (mt5_open_time, mt5_entry_price, mt5_entry_price_spread, trade_id),
@@ -113,8 +113,8 @@ def update_close_times(trade_id: int, mt5_close_time: str, mt5_close_price: floa
     try:
         conn.execute(
             """
-            UPDATE trades 
-            SET mt5_close_time = ?, mt5_close_price = ? 
+            UPDATE live_trades
+            SET mt5_close_time = ?, mt5_close_price = ?
             WHERE id = ?
             """,
             (mt5_close_time, mt5_close_price, trade_id),
@@ -160,7 +160,7 @@ def get_open_trades() -> dict[str, dict[str, Any]]:
         rows = conn.execute(
             """
             SELECT strategy_name, zig_entry_price, zig_open_time
-            FROM trades
+            FROM live_trades
             WHERE zig_close_time = ''
             ORDER BY id DESC
             """

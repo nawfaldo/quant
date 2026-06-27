@@ -1,7 +1,7 @@
-import { useState, useMemo, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import { useQuery, useQueries } from '@tanstack/react-query'
-import { TIMEFRAMES, makeDefaultPanelConfig, type TF, type Indicators, type SymbolId, type MarchLayouts, type LayoutPanelConfig } from './types'
-import { fetchCandles, fetchTrades, fetchVwap, fetchSettings, saveSettings, fetchMarchSettings, saveMarchSettings, fetchMarchLayouts, saveMarchLayouts } from './api'
+import { TIMEFRAMES, makeDefaultPanelConfig, type TF, type MarchLayouts, type LayoutPanelConfig } from './types'
+import { fetchTrades, fetchMarchSettings, saveMarchSettings, fetchMarchLayouts, saveMarchLayouts } from './api'
 
 import BacktestsModal from './components/BacktestsModal'
 import IndicatorsModal from './components/IndicatorsModal'
@@ -19,10 +19,6 @@ import {
   Outlet,
 } from '@tanstack/react-router'
 
-function dateToTs(dateStr: string): number {
-  return Math.floor(new Date(dateStr).getTime() / 1000)
-}
-
 // Pre-load default; the persisted default_timeframe from app.db overrides this
 // once settings load (see the settings effect below).
 const DEFAULT_TF = TIMEFRAMES.find(t => t.table === '5m') ?? TIMEFRAMES[0]
@@ -31,16 +27,17 @@ const DEFAULT_TF = TIMEFRAMES.find(t => t.table === '5m') ?? TIMEFRAMES[0]
 
 function RootRouteComponent() {
   const {
-    setIndicatorsOpen, setModalOpen,
-    modalOpen, visibleIds, loadingIds, toggleId,
+    modalOpen, setModalOpen,
+    setIndicatorsOpen,
     indicatorsOpen,
-    candleError,
+    visibleIds, loadingIds, toggleId,
+    marchSymbol,
     marchAccountModalOpen, setMarchAccountModalOpen, setSelectedAccountId,
     selectedAccountId, marchStrategyModalOpen, setMarchStrategyModalOpen,
     marchLayouts, activeMarchPanel, updateMarchPanel,
   } = useApp()
 
-  // The Indicators / Backtests modals act on whichever chart panel opened them.
+  // The Indicators modal acts on whichever chart panel opened it.
   const activeCfg: LayoutPanelConfig =
     (activeMarchPanel && marchLayouts[activeMarchPanel.layout]?.[activeMarchPanel.index]) ||
     makeDefaultPanelConfig()
@@ -51,22 +48,8 @@ function RootRouteComponent() {
 
       <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
         <Outlet />
-
-        {candleError && (
-          <div className="text-sm text-red-400 text-center py-4">
-            Failed to load data: {(candleError as Error).message}
-          </div>
-        )}
       </div>
 
-      <BacktestsModal
-        open={modalOpen}
-        onClose={() => setModalOpen(false)}
-        visibleIds={visibleIds}
-        loadingIds={loadingIds}
-        onToggle={toggleId}
-        activeSymbol={activeCfg.symbol}
-      />
       <IndicatorsModal
         open={indicatorsOpen}
         onClose={() => setIndicatorsOpen(false)}
@@ -88,6 +71,14 @@ function RootRouteComponent() {
         open={marchStrategyModalOpen}
         onClose={() => setMarchStrategyModalOpen(false)}
         accountId={selectedAccountId}
+      />
+      <BacktestsModal
+        open={modalOpen}
+        onClose={() => setModalOpen(false)}
+        visibleIds={visibleIds}
+        loadingIds={loadingIds}
+        onToggle={toggleId}
+        activeSymbol={marchSymbol}
       />
     </div>
   )
@@ -140,12 +131,33 @@ declare module '@tanstack/react-router' {
 // --- Main App Component ---
 
 export default function App() {
-  const [activeTf, setActiveTf] = useState<TF>(DEFAULT_TF)
-  const [activeSymbol, setActiveSymbol] = useState<SymbolId>('nq')
   const [modalOpen, setModalOpen] = useState(false)
   const [indicatorsOpen, setIndicatorsOpen] = useState(false)
   const [visibleIds, setVisibleIds] = useState<Set<number>>(new Set())
-  const [indicators, setIndicators] = useState<Indicators>({ vwap: false, openingRange: false })
+
+  function toggleId(id: number) {
+    setVisibleIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const visibleIdsArray = [...visibleIds]
+  const tradeQueries = useQueries({
+    queries: visibleIdsArray.map(id => ({
+      queryKey: ['trades', id] as const,
+      queryFn: () => fetchTrades(id),
+      staleTime: Infinity,
+    }))
+  })
+  const loadingIds = new Set(visibleIdsArray.filter((_, i) => tradeQueries[i]?.isLoading))
+  const allTrades = useMemo(
+    () => tradeQueries.flatMap(q => q.data ?? []),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [tradeQueries.map(q => q.dataUpdatedAt).join(',')]
+  )
   const [selectedBacktestId, setSelectedBacktestId] = useState<number | null>(null)
   const [activeTab, setActiveTab] = useState<'analysis' | 'equity' | 'monte-carlo'>('analysis')
   const [marchSymbol, setMarchSymbol] = useState<'nq' | 'es'>('nq')
@@ -242,9 +254,7 @@ export default function App() {
     })
   }, [marchSymbol, marchTf, marchFromDate, marchToDate, marchMode, isBottomOpen, marchLayout, marchBottomHeight])
 
-  // Load persisted per-layout panel configs once; persist any change back. The
-  // `marchLayoutsLoaded` ref gates the save effect so the initial empty {} default
-  // doesn't overwrite stored values before the fetch resolves.
+  // Load persisted per-layout panel configs once; persist any change back.
   const marchLayoutsLoaded = useRef(false)
   const { data: savedMarchLayouts } = useQuery({
     queryKey: ['marchLayouts'],
@@ -280,101 +290,11 @@ export default function App() {
     })
   }
 
-  // Default until the DB responds; overwritten once by the settings query effect below.
-  const [fromDate, setFromDate] = useState('2026-01-01')
-  const [toDate, setToDate] = useState('2026-04-30')
-
-  const fromTs = fromDate ? dateToTs(fromDate) : null
-  // +86399 so the "to" date is inclusive through end of day
-  const toTs = toDate ? dateToTs(toDate) + 86399 : null
-
-  // Load persisted date range from app.db once on mount.
-  const { data: savedSettings } = useQuery({
-    queryKey: ['settings'],
-    queryFn: fetchSettings,
-    staleTime: Infinity,
-  })
-
-  useEffect(() => {
-    if (savedSettings) {
-      setFromDate(savedSettings.from_date)
-      setToDate(savedSettings.to_date)
-      const tf = TIMEFRAMES.find(t => t.table === savedSettings.default_timeframe)
-      if (tf) setActiveTf(tf)
-    }
-  }, [savedSettings])
-
-  // Commit a date range only when the user clicks Apply (Header holds the draft).
-  function handleApplyRange(from: string, to: string) {
-    setFromDate(from)
-    setToDate(to)
-    saveSettings(from, to)
-  }
-
-  const isNq = activeSymbol === 'nq'
-
-  function handleSymbolChange(sym: SymbolId) {
-    setActiveSymbol(sym)
-    setVisibleIds(new Set())
-    if (sym !== 'nq') setIndicators({ vwap: false, openingRange: false })
-  }
-
-  const { data: bars = [], error: candleError } = useQuery({
-    queryKey: ['candles', activeTf.label, activeSymbol, fromDate, toDate],
-    queryFn: () => fetchCandles(activeTf, activeSymbol, fromDate, toDate),
-    staleTime: Infinity,
-  })
-
-  const { data: vwapData = [] } = useQuery({
-    queryKey: ['vwap'],
-    queryFn: fetchVwap,
-    staleTime: Infinity,
-  })
-
-  const visibleIdsArray = [...visibleIds]
-  const tradeQueries = useQueries({
-    queries: visibleIdsArray.map(id => ({
-      queryKey: ['trades', id] as const,
-      queryFn: () => fetchTrades(id),
-      staleTime: Infinity,
-    }))
-  })
-
-  const loadingIds = new Set(
-    visibleIdsArray.filter((_, i) => tradeQueries[i]?.isLoading)
-  )
-
-  const allTrades = useMemo(
-    () => tradeQueries.flatMap(q => q.data ?? []),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [tradeQueries.map(q => q.dataUpdatedAt).join(',')]
-  )
-
-  function toggleId(id: number) {
-    setVisibleIds(prev => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      return next
-    })
-  }
-
-  function toggleIndicator(key: keyof Indicators) {
-    setIndicators(prev => ({ ...prev, [key]: !prev[key] }))
-  }
-
   return (
     <AppContext.Provider value={{
-      activeTf, setActiveTf,
-      activeSymbol, handleSymbolChange,
       modalOpen, setModalOpen,
       indicatorsOpen, setIndicatorsOpen,
-      visibleIds, indicators,
-      fromDate, toDate, handleApplyRange,
-      bars, vwapData, allTrades, loadingIds,
-      toggleId, toggleIndicator, isNq, fromTs, toTs, candleError,
-      selectedBacktestId, setSelectedBacktestId,
-      activeTab, setActiveTab,
+      visibleIds, loadingIds, allTrades, toggleId,
       marchSymbol, setMarchSymbol,
       marchTf, setMarchTf,
       marchStreamStatus, setMarchStreamStatus,
@@ -389,9 +309,10 @@ export default function App() {
       marchBottomHeight, setMarchBottomHeight,
       marchLayouts, updateMarchPanel,
       activeMarchPanel, setActiveMarchPanel,
+      selectedBacktestId, setSelectedBacktestId,
+      activeTab, setActiveTab,
     }}>
       <RouterProvider router={router} />
     </AppContext.Provider>
   )
 }
-

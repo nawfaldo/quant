@@ -122,9 +122,13 @@ fn buildTf(io: std.Io, a: std.mem.Allocator, idx: usize, symbol: []const u8, fro
     return out.toOwnedSlice(a);
 }
 
-// RTH VWAP is computed in code from nq_1m OHLCV (not stored in DB).
-// typical = (high+low+close)/3, vwap = Σ(typical×volume)/Σ(volume),
-// anchored per ET calendar day, reset each session open.
+// 24-hour VWAP computed in code from nq_1m OHLCV (not stored in DB).
+// typical = (high+low+close)/3, vwap = Σ(typical×volume)/Σ(volume).
+// Accumulates across every bar (24h), but re-anchors (resets the accumulator)
+// at TWO points each ET day: midnight (00:00) and RTH open (09:30). That gives
+// two continuous VWAP sessions per day — the overnight session (00:00–09:30)
+// and the RTH+evening session (09:30–24:00). A value of 0 is emitted only when
+// no volume has accumulated yet (start of a session).
 fn buildVwap(io: std.Io, a: std.mem.Allocator) ![]const u8 {
     var rd = try questdb.open(io, a,
         "SELECT cast(timestamp as long) ts, high, low, close, volume FROM nq_1m ORDER BY timestamp ASC",
@@ -138,9 +142,9 @@ fn buildVwap(io: std.Io, a: std.mem.Allocator) ![]const u8 {
     _ = rd.nextLine(); // skip the CSV column-name header row
 
     var cur_day: i64 = -1;
+    var rth_anchored: bool = false; // has the 09:30 re-anchor fired for cur_day yet?
     var cum_pv: f64  = 0;
     var cum_vol: f64 = 0;
-    var has_reset_rth: bool = false;
     var count: u32   = 0;
 
     while (rd.nextLine()) |line| {
@@ -171,33 +175,35 @@ fn buildVwap(io: std.Io, a: std.mem.Allocator) ![]const u8 {
         const et_day: i64  = @divFloor(@as(i64, ts_secs), 86_400);
         const min_of_day: u32 = @intCast(@divFloor(@mod(@as(i64, ts_secs), 86_400), 60));
 
-        // Reset at midnight ET (calendar day change)
+        // Midnight re-anchor — each ET day's overnight session starts fresh.
         if (et_day != cur_day) {
             cur_day = et_day;
             cum_pv  = 0;
             cum_vol = 0;
-            has_reset_rth = false;
+            rth_anchored = false;
         }
 
-        // Reset at RTH open (09:30 ET)
-        if (!has_reset_rth and min_of_day >= RTH_OPEN_MIN) {
+        // RTH-open re-anchor — once per day, at the first bar at/after 09:30 the
+        // accumulator resets so the RTH+evening session is independent of the
+        // overnight session.
+        if (!rth_anchored and min_of_day >= RTH_OPEN_MIN) {
             cum_pv  = 0;
             cum_vol = 0;
-            has_reset_rth = true;
+            rth_anchored = true;
         }
 
+        // Every bar contributes (24h VWAP).
         const typical = (high + low + close) / 3.0;
         cum_pv  += typical * volume;
         cum_vol += volume;
-
-        var rth: f32 = 0;
-        if (cum_vol > 0) rth = @floatCast(cum_pv / cum_vol);
+        var v: f32 = 0;
+        if (cum_vol > 0) v = @floatCast(cum_pv / cum_vol);
 
         try out.ensureUnusedCapacity(a, VWAP_ROW_BYTES);
         const dst = out.items.len;
         out.items.len += VWAP_ROW_BYTES;
-        std.mem.writeInt(u32, out.items[dst..][0..4],      ts_secs,        .little);
-        std.mem.writeInt(u32, out.items[dst + 4 ..][0..4], @bitCast(rth),  .little);
+        std.mem.writeInt(u32, out.items[dst..][0..4],      ts_secs,     .little);
+        std.mem.writeInt(u32, out.items[dst + 4 ..][0..4], @bitCast(v), .little);
         count += 1;
     }
 
@@ -360,8 +366,10 @@ fn buildMarchCandles(io: std.Io, a: std.mem.Allocator, symbol: []const u8, tf: [
 
     if (!rd.complete) return error.IncompleteResponse;
 
-    // Fetch and aggregate any newer ticks from bm_{symbol}_ticks
-    if (last_ts_micros > 0) {
+    // In open-ended (Latest) mode, top up with any ticks newer than the last
+    // nq_1m bar. In bounded range mode (to.len > 0) skip this — we only want
+    // the window the caller asked for, and ticks would extend past the `to` date.
+    if (last_ts_micros > 0 and to.len == 0) {
         const ticks_count = buildMarchTickCandles(io, a, symbol, tf, last_ts_micros * 1000, &out) catch |err| blk: {
             std.debug.print("march tick candles aggregation failed: {}\n", .{err});
             break :blk @as(u32, 0);

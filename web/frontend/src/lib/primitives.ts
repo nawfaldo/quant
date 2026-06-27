@@ -96,8 +96,8 @@ class TradeLinesRenderer implements IPrimitivePaneRenderer {
       // --- entry/exit arrow markers + optional pnl text ---
       ctx.save()
       ctx.setLineDash([])
-      ctx.fillStyle = '#d1d5db'
-      const h = 3 * hpr
+      ctx.fillStyle = '#ffffff'
+      const h = 4 * hpr
       const drawText = visibleCount <= MAX_TEXT_LABELS
       if (drawText) {
         ctx.font = `${10 * vpr}px sans-serif`
@@ -115,8 +115,8 @@ class TradeLinesRenderer implements IPrimitivePaneRenderer {
         const isLong = side[i] === 0
         const ex1 = x1 * hpr, ey1 = y1 * vpr
         const ex2 = x2 * hpr, ey2 = y2 * vpr
-        triangle(ctx, ex1, ey1, h, isLong)   // entry: up for long, down for short
-        triangle(ctx, ex2, ey2, h, !isLong)  // exit: opposite
+        drawStandardArrow(ctx, ex1, ey1, h, isLong)   // entry: up for long, down for short
+        drawStandardArrow(ctx, ex2, ey2, h, !isLong)  // exit: opposite
         if (drawText) {
           const v = pnl[i]
           const gain = v >= 0 ? '+$' + v.toFixed(0) : '-$' + Math.abs(v).toFixed(0)

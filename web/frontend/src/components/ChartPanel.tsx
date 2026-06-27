@@ -12,6 +12,7 @@ import {
   type ActivePosInfo,
   HistoricalTradesPrimitive,
   type HistoricalTradeInfo,
+  TradeLinesPrimitive,
 } from "../lib/primitives";
 import { useQuery } from "@tanstack/react-query";
 import { useApp } from "../context/AppContext";
@@ -65,12 +66,11 @@ interface Tick {
 // same machine as the browser). Bypasses QuestDB + the Zig backend for sub-100ms ticks.
 const MARCH_WS_PORT = 8765;
 
-// Session VWAP window, in minutes since ET midnight — must mirror
-// web/backend/src/march/strategies/rth_vwap_config.zig (rth_open / rth_close). The
-// strategy only accumulates VWAP for bars in [09:30, 16:00); the chart must do
-// the same so the line matches what the strategy actually trades on.
-const RTH_OPEN_MIN = 9 * 60 + 30; // 09:30 ET
-const RTH_CLOSE_MIN = 16 * 60; // 16:00 ET (exclusive)
+// RTH open, in minutes since ET midnight. The 24h VWAP re-anchors here (and at
+// midnight) — see web/backend/src/cache.zig buildVwap for the matching server-side
+// computation used by the main web chart.
+const RTH_OPEN_MIN  = 9 * 60 + 30; // 09:30 ET
+const RTH_CLOSE_MIN = 16 * 60;     // 16:00 ET
 
 async function fetchMarchCandles(
   symbol: string,
@@ -139,12 +139,21 @@ function fillGaps(
   tfSecs: number,
 ): Array<Bar | { time: UTCTimestamp }> {
   if (candles.length === 0) return [];
-  const map = new Map(candles.map((c) => [c.time, c]));
-  const first = candles[0].time;
-  const last = candles[candles.length - 1].time;
   const out: Array<Bar | { time: UTCTimestamp }> = [];
-  for (let t = first as number; t <= (last as number); t += tfSecs) {
-    out.push(map.get(t as UTCTimestamp) ?? { time: t as UTCTimestamp });
+  // Only fill gaps that are smaller than 2 hours to avoid filling weekends, holidays, and night sessions
+  const maxGapToFill = Math.max(7200, 100 * tfSecs);
+
+  out.push(candles[0]);
+  for (let i = 1; i < candles.length; i++) {
+    const prev = candles[i - 1];
+    const curr = candles[i];
+    const gap = (curr.time as number) - (prev.time as number);
+    if (gap > tfSecs && gap <= maxGapToFill) {
+      for (let t = (prev.time as number) + tfSecs; t < (curr.time as number); t += tfSecs) {
+        out.push({ time: t as UTCTimestamp });
+      }
+    }
+    out.push(curr);
   }
   return out;
 }
@@ -161,7 +170,7 @@ export default function ChartPanel({
   const { symbol, tf, mode, fromDate, toDate, vwap } = config;
 
   const containerRef = useRef<HTMLDivElement>(null);
-  const { visibleTradeStrategies } = useApp();
+  const { visibleTradeStrategies, allTrades } = useApp();
   const [streamStatus, setStreamStatus] = useState<
     "loading" | "live" | "idle" | "error"
   >("idle");
@@ -172,6 +181,7 @@ export default function ChartPanel({
   const vwapSeriesRef = useRef<any>(null);
   const activePositionsPlugin = useRef(new ActivePositionsPrimitive());
   const historicalTradesPlugin = useRef(new HistoricalTradesPrimitive());
+  const tradeLinesPrimitive = useRef(new TradeLinesPrimitive());
   const [chartContextMenu, setChartContextMenu] = useState<{ x: number; y: number } | null>(null);
 
   useEffect(() => {
@@ -255,6 +265,7 @@ export default function ChartPanel({
     chartRef.current = chart;
     series.attachPrimitive(activePositionsPlugin.current);
     series.attachPrimitive(historicalTradesPlugin.current);
+    series.attachPrimitive(tradeLinesPrimitive.current);
 
     const vwapSeries = chart.addSeries(LineSeries, {
       color: "#60a5fa",
@@ -271,11 +282,16 @@ export default function ChartPanel({
     // Highest tick timestamp (ns) seen so far; null means "give me the latest".
     let lastTickNanos: number | null = null;
 
-    // Session VWAP state — mirrors rth_vwap.zig: RTH-only (09:30–16:00 ET),
-    // typical price (h+l+c)/3 weighted by bar volume, reset each ET day.
-    // sessionPv/sessionVol cover COMPLETED RTH bars; formingVol is the volume
-    // accumulated in the bar currently being built from live ticks.
+    // 24h VWAP state — typical price (h+l+c)/3 weighted by bar volume, with the
+    // running sums RE-ANCHORED (reset) at THREE points each ET day: midnight,
+    // RTH open (09:30), and RTH close (16:00). This gives three sessions per day:
+    //   overnight (00:00–09:30), RTH (09:30–16:00), after-hours (16:00–00:00).
+    // Without the 16:00 reset, RTH volume dwarfs evening volume and the line
+    // looks flat after close. sessionPv/sessionVol cover COMPLETED bars in the
+    // current session; formingVol is the volume of the bar being built from ticks.
     let curDay: number = -1;
+    let rthAnchored: boolean = false;
+    let rthClosed: boolean = false;
     let sessionPv: number = 0;
     let sessionVol: number = 0;
     let formingVol: number = 0;
@@ -292,17 +308,7 @@ export default function ChartPanel({
           lastTickNanos = tick.ts;
 
         const tsSecs = Math.floor(tick.ts / 1_000_000_000);
-        const etDay = Math.floor(tsSecs / 86400);
-        const minOfDay = Math.floor((tsSecs % 86400) / 60);
         const size = Number.isFinite(tick.size) ? tick.size : 0;
-
-        // New ET day → reset session VWAP accumulators (matches rth_vwap.zig).
-        if (etDay !== curDay) {
-          curDay = etDay;
-          sessionPv = 0;
-          sessionVol = 0;
-          formingVol = 0;
-        }
 
         const candleStartSecs = Math.floor(tsSecs / tfSecs) * tfSecs;
         const lastTime = lastCandle ? (lastCandle.time as number) : -1;
@@ -315,19 +321,40 @@ export default function ChartPanel({
             series.update(lastCandle);
             formingVol += size;
           } else if (candleStartSecs > lastTime) {
-            // A new bar starts: fold the just-completed bar into the session
-            // sums (RTH only, by the completed bar's typical price × its
-            // volume), then begin the new bar's volume tally.
-            if (lastCandle) {
-              const lastMin = Math.floor(
-                ((lastCandle.time as number) % 86400) / 60,
-              );
-              if (lastMin >= RTH_OPEN_MIN && lastMin < RTH_CLOSE_MIN) {
-                const t =
-                  (lastCandle.high + lastCandle.low + lastCandle.close) / 3;
-                sessionPv += t * formingVol;
-                sessionVol += formingVol;
-              }
+            // A new bar starts. Re-anchor (reset the running sums) at midnight and
+            // at RTH open (09:30), keyed on the NEW bar's day/minute so the live
+            // breaks line up exactly with the historical block. If this bar
+            // re-anchored, the just-completed bar belonged to the previous session
+            // and is NOT folded in; otherwise fold it into the session sums.
+            const barDay = Math.floor(candleStartSecs / 86400);
+            const barMin = Math.floor((candleStartSecs % 86400) / 60);
+            let reset = false;
+            if (barDay !== curDay) {
+              curDay = barDay;
+              rthAnchored = false;
+              rthClosed = false;
+              sessionPv = 0;
+              sessionVol = 0;
+              reset = true;
+            }
+            if (!rthAnchored && barMin >= RTH_OPEN_MIN) {
+              rthAnchored = true;
+              rthClosed = false;
+              sessionPv = 0;
+              sessionVol = 0;
+              reset = true;
+            }
+            if (rthAnchored && !rthClosed && barMin >= RTH_CLOSE_MIN) {
+              rthClosed = true;
+              sessionPv = 0;
+              sessionVol = 0;
+              reset = true;
+            }
+            if (lastCandle && !reset) {
+              const t =
+                (lastCandle.high + lastCandle.low + lastCandle.close) / 3;
+              sessionPv += t * formingVol;
+              sessionVol += formingVol;
             }
             formingVol = size;
             const newCandle: Bar = {
@@ -343,15 +370,9 @@ export default function ChartPanel({
             continue; // stale/out-of-order tick
           }
 
-          // VWAP for the forming bar (RTH only) = completed Σ(typical×vol) plus
-          // the forming bar folded in, over the matching volume — exactly the
-          // running value rth_vwap.zig reads after folding the current bar.
-          if (
-            isNq &&
-            minOfDay >= RTH_OPEN_MIN &&
-            minOfDay < RTH_CLOSE_MIN &&
-            lastCandle
-          ) {
+          // VWAP for the forming bar (24h) = completed Σ(typical×vol) in this
+          // session plus the forming bar folded in, over the matching volume.
+          if (isNq && lastCandle) {
             const curTypical =
               (lastCandle.high + lastCandle.low + lastCandle.close) / 3;
             const denom = sessionVol + formingVol;
@@ -439,40 +460,67 @@ export default function ChartPanel({
       if (!active) return;
 
       try {
-        series.setData(fillGaps(candles, tf.seconds) as any);
-        chart.timeScale().fitContent();
+        const filled = fillGaps(candles, tf.seconds);
+        series.setData(filled as any);
+        if (filled.length < 5000) {
+          chart.timeScale().fitContent();
+        }
       } catch (err) {
         console.error("Failed to render historical candles:", err);
       }
 
-      // Historical VWAP — mirror rth_vwap.zig exactly: reset each ET day, and
-      // only accumulate/draw bars inside [09:30, 16:00). typical = (h+l+c)/3
+      // Historical 24h VWAP. Accumulate EVERY bar, but re-anchor (reset the
+      // running sums) at TWO points each ET day: midnight and RTH open (09:30).
+      // This yields two continuous VWAP sessions per day — overnight (00:00–09:30)
+      // and RTH+evening (09:30–24:00). The line is broken with a whitespace at
+      // each re-anchor so it never connects across a reset. typical = (h+l+c)/3
       // weighted by bar volume.
       let hCurDay = -1;
+      let hRthAnchored = false;
+      let hRthClosed = false;
       let hCumPv = 0;
       let hCumVol = 0;
-      const vwapPoints: { time: UTCTimestamp; value: number }[] = [];
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const vwapPoints: any[] = [];
 
       for (const c of candles) {
         const tsSecs = c.time as number;
         const etDay = Math.floor(tsSecs / 86400);
         const minOfDay = Math.floor((tsSecs % 86400) / 60);
 
+        let reset = false;
         if (etDay !== hCurDay) {
           hCurDay = etDay;
+          hRthAnchored = false;
+          hRthClosed = false;
           hCumPv = 0;
           hCumVol = 0;
+          reset = true;
         }
-
-        // RTH only — skip bars outside the trading window (no VWAP there).
-        if (minOfDay < RTH_OPEN_MIN || minOfDay >= RTH_CLOSE_MIN) continue;
+        if (!hRthAnchored && minOfDay >= RTH_OPEN_MIN) {
+          hRthAnchored = true;
+          hRthClosed = false;
+          hCumPv = 0;
+          hCumVol = 0;
+          reset = true;
+        }
+        if (hRthAnchored && !hRthClosed && minOfDay >= RTH_CLOSE_MIN) {
+          hRthClosed = true;
+          hCumPv = 0;
+          hCumVol = 0;
+          reset = true;
+        }
 
         const vol = c.volume ?? 0;
         const typical = ((c.high ?? 0) + (c.low ?? 0) + (c.close ?? 0)) / 3;
         hCumPv += typical * vol;
         hCumVol += vol;
 
-        if (hCumVol > 0) {
+        // At a re-anchor, push a whitespace so the line breaks; the new session's
+        // visible line then starts at its second bar. Otherwise push the value.
+        if (reset) {
+          vwapPoints.push({ time: c.time });
+        } else if (hCumVol > 0) {
           vwapPoints.push({ time: c.time, value: hCumPv / hCumVol });
         }
       }
@@ -482,20 +530,19 @@ export default function ChartPanel({
       // sums and moving its volume into formingVol — otherwise it's counted
       // twice once live ticks land in that same bar.
       curDay = hCurDay;
+      rthAnchored = hRthAnchored;
+      rthClosed = hRthClosed;
       sessionPv = hCumPv;
       sessionVol = hCumVol;
       formingVol = 0;
       if (candles.length > 0) {
         const lastC = candles[candles.length - 1];
-        const lastMin = Math.floor(((lastC.time as number) % 86400) / 60);
-        if (lastMin >= RTH_OPEN_MIN && lastMin < RTH_CLOSE_MIN) {
-          const lastVol = lastC.volume ?? 0;
-          const lastTypical =
-            ((lastC.high ?? 0) + (lastC.low ?? 0) + (lastC.close ?? 0)) / 3;
-          sessionPv -= lastTypical * lastVol;
-          sessionVol -= lastVol;
-          formingVol = lastVol;
-        }
+        const lastVol = lastC.volume ?? 0;
+        const lastTypical =
+          ((lastC.high ?? 0) + (lastC.low ?? 0) + (lastC.close ?? 0)) / 3;
+        sessionPv -= lastTypical * lastVol;
+        sessionVol -= lastVol;
+        formingVol = lastVol;
       }
 
       try {
@@ -510,6 +557,9 @@ export default function ChartPanel({
 
       // Static range mode: render history and stop — no catch-up, no WS.
       if (!isLatest) {
+        if (candles.length === 0) {
+          setError(`No data for ${fromDate} – ${toDate}`);
+        }
         setLoading(false);
         setStreamStatus("idle");
         return;
@@ -665,6 +715,11 @@ export default function ChartPanel({
   }, [liveTrades, visibleTradeStrategies, tf, chartSeries]);
 
   useEffect(() => {
+    if (!chartSeries) return;
+    tradeLinesPrimitive.current.setTrades(allTrades, tf.seconds);
+  }, [allTrades, tf, chartSeries]);
+
+  useEffect(() => {
     vwapSeriesRef.current?.applyOptions({ visible: vwap && symbol === "nq" });
   }, [vwap, symbol, chartSeries]);
 
@@ -730,7 +785,7 @@ export default function ChartPanel({
             e.preventDefault();
             e.stopPropagation();
             const menuWidth = 140;
-            const menuHeight = 72;
+            const menuHeight = 104;
             let x = e.clientX;
             let y = e.clientY;
 
@@ -780,22 +835,11 @@ export default function ChartPanel({
             }}
             className="w-full px-4 py-2 text-left hover:bg-blue-600/20 hover:text-white transition-colors duration-150 cursor-pointer whitespace-nowrap flex items-center gap-2"
           >
-            <svg width="12" height="12" viewBox="0 0 14 16" fill="none">
-              <path
-                d="M1 1h8l4 4v10H1V1z"
-                stroke="currentColor"
-                strokeWidth="1.2"
-                strokeLinejoin="round"
-              />
-              <path
-                d="M9 1v4h4"
-                stroke="currentColor"
-                strokeWidth="1.2"
-                strokeLinejoin="round"
-              />
-              <line x1="3" y1="7" x2="7" y2="7" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" />
-              <line x1="3" y1="9.5" x2="11" y2="9.5" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" />
-              <line x1="3" y1="12" x2="11" y2="12" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" />
+            <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
+              <rect x="1" y="1" width="14" height="14" rx="2" stroke="currentColor" strokeWidth="1.4" />
+              <line x1="4" y1="5.5" x2="12" y2="5.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+              <line x1="4" y1="8" x2="12" y2="8" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+              <line x1="4" y1="10.5" x2="9" y2="10.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
             </svg>
             Backtests
           </button>

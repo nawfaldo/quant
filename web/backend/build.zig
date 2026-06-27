@@ -31,14 +31,12 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .link_libc = true,
     });
-    root_mod.addIncludePath(b.path("src")); // for sqlite3.h (web + march/db.zig)
+    root_mod.addIncludePath(b.path("src")); // for sqlite3.h
     root_mod.linkLibrary(sqlite);
 
     if (target.result.os.tag == .windows) {
-        // std.Io.net's Windows backend needs Winsock; the integrated march
-        // server (src/march/) calls Python over WinHTTP.
+        // std.Io.net's Windows backend needs Winsock; march ws.zig also uses ws2_32.
         root_mod.linkSystemLibrary("ws2_32", .{});
-        root_mod.linkSystemLibrary("winhttp", .{});
     }
 
     const exe = b.addExecutable(.{
@@ -51,7 +49,7 @@ pub fn build(b: *std.Build) void {
     // signal_runner: the stdin/stdout strategy bridge the Python side spawns
     // (used by march/python tests). Cross-platform; no sqlite / winhttp.
     const sr_mod = b.createModule(.{
-        .root_source_file = b.path("src/march/signal_runner.zig"),
+        .root_source_file = b.path("src/signal_runner.zig"),
         .target = target,
         .optimize = optimize,
     });
@@ -65,6 +63,6 @@ pub fn build(b: *std.Build) void {
     run_cmd.step.dependOn(b.getInstallStep());
     if (b.args) |args| run_cmd.addArgs(args);
 
-    const run_step = b.step("run", "Run the backend (web 8080 + march 4000)");
+    const run_step = b.step("run", "Run the backend (port 8080)");
     run_step.dependOn(&run_cmd.step);
 }

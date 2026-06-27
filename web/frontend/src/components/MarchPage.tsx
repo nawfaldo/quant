@@ -245,10 +245,7 @@ export default function MarchPage() {
         setActiveMarchPanel({ layout: marchLayout, index: i });
         setIndicatorsOpen(true);
       },
-      onOpenBacktests: () => {
-        setActiveMarchPanel({ layout: marchLayout, index: i });
-        setModalOpen(true);
-      },
+      onOpenBacktests: () => setModalOpen(true),
     };
   };
 

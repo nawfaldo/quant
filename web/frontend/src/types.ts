@@ -82,20 +82,9 @@ export interface MonteCarloData {
   paths: Float32Array[]
 }
 
-export interface VwapPoint {
-  time: UTCTimestamp
-  value: number
-}
-
 export interface Indicators {
   vwap: boolean
   openingRange: boolean
-}
-
-export interface Settings {
-  from_date: string
-  to_date: string
-  default_timeframe: string
 }
 
 export interface MarchSettings {

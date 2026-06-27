@@ -31,14 +31,19 @@ pub fn init() !void {
         c.SQLITE_OPEN_READWRITE | c.SQLITE_OPEN_CREATE | c.SQLITE_OPEN_FULLMUTEX, null) != c.SQLITE_OK)
         return error.DbOpenFailed;
     defer _ = c.sqlite3_close(db);
+    _ = c.sqlite3_busy_timeout(db, 5000);
 
     if (c.sqlite3_exec(db,
         "CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
         null, null, null) != c.SQLITE_OK) return error.CreateFailed;
 
-    if (c.sqlite3_exec(db,
+    const seed_rc = c.sqlite3_exec(db,
         "INSERT OR IGNORE INTO settings (key, value) VALUES ('from_date', '" ++ DEFAULT_FROM ++ "')",
-        null, null, null) != c.SQLITE_OK) return error.SeedFailed;
+        null, null, null);
+    if (seed_rc != c.SQLITE_OK) {
+        std.debug.print("settings seed failed rc={d}: {s}\n", .{ seed_rc, c.sqlite3_errmsg(db) });
+        return error.SeedFailed;
+    }
 
     if (c.sqlite3_exec(db,
         "INSERT OR IGNORE INTO settings (key, value) VALUES ('to_date', '" ++ DEFAULT_TO ++ "')",

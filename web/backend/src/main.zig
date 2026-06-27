@@ -13,7 +13,7 @@ extern "c" fn getenv(name: [*:0]const u8) ?[*:0]const u8;
 // separate port-4000 server. Still spawned only on Windows because the Bookmap
 // WebSocket (ws.zig/ws2_32) is Windows-only.
 fn marchServe(io: std.Io) void {
-    const march = @import("march/api.zig");
+    const march = @import("march_api.zig");
     march.init(io);
 }
 
