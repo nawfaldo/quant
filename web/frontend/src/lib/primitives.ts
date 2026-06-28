@@ -10,6 +10,7 @@ const MAX_VISIBLE_LINES = 1000
 const TRADE_LOOKBACK    = 500
 const MAX_TEXT_LABELS   = 50   // only draw pnl text when few enough trades are on screen
 
+/*
 function triangle(ctx: CanvasRenderingContext2D, cx: number, cy: number, h: number, up: boolean) {
   ctx.beginPath()
   if (up) {
@@ -24,6 +25,7 @@ function triangle(ctx: CanvasRenderingContext2D, cx: number, cy: number, h: numb
   ctx.closePath()
   ctx.fill()
 }
+*/
 
 class TradeLinesRenderer implements IPrimitivePaneRenderer {
   primitive: TradeLinesPrimitive

@@ -6,6 +6,7 @@ import { fetchTrades, fetchMarchSettings, saveMarchSettings, fetchMarchLayouts, 
 import BacktestsModal from './components/BacktestsModal'
 import IndicatorsModal from './components/IndicatorsModal'
 import StatsPage from './components/StatsPage'
+import BacktestPage from './components/BacktestPage'
 import MarchPage from './components/MarchPage'
 import AccountModal from './components/AccountModal'
 import StrategyModal from './components/StrategyModal'
@@ -100,6 +101,14 @@ function MarchRouteComponent() {
   )
 }
 
+function BacktestRouteComponent() {
+  return (
+    <div className="flex flex-1 overflow-hidden">
+      <BacktestPage />
+    </div>
+  )
+}
+
 // --- Router Definition ---
 
 const rootRoute = createRootRoute({
@@ -118,7 +127,13 @@ const statsRoute = createRoute({
   component: StatsRouteComponent,
 })
 
-const routeTree = rootRoute.addChildren([indexRoute, statsRoute])
+const backtestRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/backtest',
+  component: BacktestRouteComponent,
+})
+
+const routeTree = rootRoute.addChildren([indexRoute, statsRoute, backtestRoute])
 
 const router = createRouter({ routeTree })
 

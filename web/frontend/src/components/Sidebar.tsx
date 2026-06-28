@@ -73,6 +73,31 @@ export default function Sidebar() {
             </div>
           )}
         </Link>
+
+        <Link to="/backtest">
+          {({ isActive }) => (
+            <div
+              className={`w-9 h-9 flex items-center justify-center rounded-lg transition-all duration-200 ${
+                isActive ? "text-white" : "text-gray-500 hover:text-gray-200"
+              }`}
+              title="Backtest"
+            >
+              <svg
+                width="20"
+                height="20"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M12 20h9" />
+                <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
+              </svg>
+            </div>
+          )}
+        </Link>
       </div>
     </div>
   );
