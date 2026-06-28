@@ -45,7 +45,7 @@ fn isExactCommand(input: []const u8) bool {
 
 // ── Strategies ────────────────────────────────────────────────────────────────
 
-const STRATEGIES = [_][]const u8{ "30M_BUY", "BUY_HOLD", "RTH_VWAP" };
+const STRATEGIES = [_][]const u8{ "5M_ORB", "BUY_HOLD", "RTH_VWAP" };
 const STRAT_ORB = 1;
 const STRAT_BUYHOLD = 2;
 const STRAT_VWAP = 3;
@@ -55,20 +55,15 @@ const STRAT_VWAP = 3;
 const SYMBOL_LABELS = [_][]const u8{ "NQ", "GBPUSD", "EURUSD" };
 const SYMBOL_PREFIXES = [_][]const u8{ "nq", "gbpusd", "eurusd" };
 
-// NQ price data can be traded three different ways; the CLI prompts for this
-// only when NQ is selected (all other symbols are always forex). Index matches
-// the menu order in INSTRUMENT_Q.
-const INSTRUMENT_LABELS = [_][]const u8{ "forex", "nq mini", "nq micro" };
-const INSTRUMENTS = [_]engine.Instrument{ .forex, .nq_mini, .nq_micro };
-const INSTRUMENT_Q = "  Instrument?  1. forex  2. nq mini  3. nq micro";
-
-// NQ is the only symbol that offers a choice of instrument; every other symbol
-// is always a forex CFD. Used to gate the extra "Instrument?" question.
+// NQ quotes in the thousands (index points); forex pairs quote ~1.x. Used by
+// indexScale() to pick the price scale for the spread/slippage visualizer. Every
+// symbol — including NQ — is traded as a forex CFD, so this no longer gates any
+// instrument choice.
 fn nqSelected() bool {
     return std.mem.eql(u8, SYMBOL_PREFIXES[g_symbol_idx], "nq");
 }
 
-// Futures instruments use whole "contracts"; forex uses fractional "lots".
+// Every symbol is traded as a forex CFD; `usesContracts()` is always false.
 // Drives the size terminology in the prompts (mirrors engine.usesContracts).
 fn usesContracts() bool {
     return engine.usesContracts();
@@ -80,7 +75,6 @@ const State = enum {
     idle,
     awaiting_strategy,
     awaiting_symbol,
-    awaiting_instrument,
     awaiting_balance,
     awaiting_base_contracts,
     awaiting_leverage,
@@ -101,7 +95,6 @@ const State = enum {
     // /tune flow
     awaiting_tune_strategy,
     awaiting_tune_symbol,
-    awaiting_tune_instrument,
     awaiting_tune_balance,
     awaiting_tune_base_contracts,
     awaiting_tune_leverage,
@@ -662,7 +655,7 @@ fn currentParams(base_size: f64, leverage: f64) db.Params {
     };
 }
 
-// Generic over the strategy type. OrbBuy and RthVwap share the same parameter
+// Generic over the strategy type. Orb and RthVwap share the same parameter
 // surface (initial_balance, contracts, leverage, sizing_mode, vol) and the same
 // /run question flow, so one helper drives both.
 fn runStrategy(comptime S: type, io: std.Io, gpa: std.mem.Allocator, balance: f64, base_contracts: f64, leverage: f64, save_name: []const u8) void {
@@ -742,7 +735,7 @@ fn buildCombinedResult(initial: f64, trades: []engine.Trade, dd: combine.Drawdow
 // instrument. Returns table_len = 0 when the source can't be resolved (e.g. a
 // previously-saved COMBINED run), so its trades book realized PnL only.
 fn combineTimeframe(name: []const u8) ?[]const u8 {
-    if (std.mem.eql(u8, name, "30M_BUY")) return strategy.OrbBuy.timeframe;
+    if (std.mem.eql(u8, name, "5M_ORB")) return strategy.Orb.timeframe;
     if (std.mem.eql(u8, name, "RTH_VWAP")) return strategy.RthVwap.timeframe;
     if (std.mem.eql(u8, name, "BUY_HOLD")) return strategy.BuyHold.timeframe;
     return null;
@@ -755,17 +748,16 @@ fn combineSymbolPrefix(label: []const u8) ?[]const u8 {
     return null;
 }
 
+// Every instrument is now a $1/point forex CFD. Saved rows that predate this
+// change (labelled "nq mini"/"nq micro") are re-run as forex too.
 fn combineMult(instrument: []const u8) f64 {
-    if (std.mem.eql(u8, instrument, "nq mini")) return 20.0;
-    if (std.mem.eql(u8, instrument, "nq micro")) return 2.0;
+    _ = instrument;
     return 1.0;
 }
 
 fn combineInstrument(label: []const u8) ?engine.Instrument {
-    if (std.mem.eql(u8, label, "forex")) return .forex;
-    if (std.mem.eql(u8, label, "nq mini")) return .nq_mini;
-    if (std.mem.eql(u8, label, "nq micro")) return .nq_micro;
-    return null;
+    _ = label;
+    return .forex;
 }
 
 fn combineFindEntry(id: i64) ?db.BacktestEntry {
@@ -815,8 +807,8 @@ fn runOneSource(io: std.Io, gpa: std.mem.Allocator, e: *const db.BacktestEntry, 
     };
 
     const sname = e.strategy[0..e.strategy_len];
-    if (std.mem.eql(u8, sname, "30M_BUY")) {
-        var s = strategy.OrbBuy{
+    if (std.mem.eql(u8, sname, "5M_ORB")) {
+        var s = strategy.Orb{
             .initial_balance = balance,
             .contracts = e.base_size * e.leverage,
             .leverage = e.leverage,
@@ -1118,7 +1110,7 @@ const TuneCtx = struct {
 };
 
 // Generic over the strategy type so the same tuner plumbing drives every
-// tunable strategy (OrbBuy, RthVwap, …). Returns the concrete thread entry.
+// tunable strategy (Orb, RthVwap, …). Returns the concrete thread entry.
 fn tuneThread(comptime S: type) fn (*TuneCtx) void {
     return struct {
         fn run(ctx: *TuneCtx) void {
@@ -1474,34 +1466,7 @@ pub fn run(io: std.Io, gpa: std.mem.Allocator) !void {
                                 g_symbol_idx = idx - 1;
                                 var abuf: [128]u8 = undefined;
                                 const answered = std.fmt.bufPrint(&abuf, "  Symbol?  {d}. {s}", .{ idx, SYMBOL_LABELS[idx - 1] }) catch "  Symbol?";
-                                if (nqSelected()) {
-                                    // NQ data: ask how to model it before sizing.
-                                    flowNext(answered, INSTRUMENT_Q);
-                                    state = .awaiting_instrument;
-                                } else {
-                                    engine.instrument = .forex;
-                                    if (g_strategy_id == STRAT_BUYHOLD) {
-                                        flowNext(answered, "  Initial balance? (enter for 1000) ");
-                                        state = .awaiting_bh_balance;
-                                    } else {
-                                        flowNext(answered, "  Initial balance: $?");
-                                        state = .awaiting_balance;
-                                    }
-                                }
-                            }
-                        }
-                        drawBar(input[0..0]);
-                    },
-                    .awaiting_instrument => {
-                        if (cmd.len > 0) {
-                            const sel = std.fmt.parseInt(usize, cmd, 10) catch 0;
-                            if (sel < 1 or sel > INSTRUMENTS.len) {
-                                flowFail("  Invalid selection.");
-                                state = .idle;
-                            } else {
-                                engine.instrument = INSTRUMENTS[sel - 1];
-                                var abuf: [128]u8 = undefined;
-                                const answered = std.fmt.bufPrint(&abuf, "  Instrument?  {d}. {s}", .{ sel, INSTRUMENT_LABELS[sel - 1] }) catch "  Instrument?";
+                                engine.instrument = .forex;
                                 if (g_strategy_id == STRAT_BUYHOLD) {
                                     flowNext(answered, "  Initial balance? (enter for 1000) ");
                                     state = .awaiting_bh_balance;
@@ -1748,7 +1713,7 @@ pub fn run(io: std.Io, gpa: std.mem.Allocator) !void {
                         if (g_strategy_id == STRAT_VWAP) {
                             runStrategy(strategy.RthVwap, io, gpa, g_balance, g_base_contracts, g_leverage, "RTH_VWAP");
                         } else {
-                            runStrategy(strategy.OrbBuy, io, gpa, g_balance, g_base_contracts, g_leverage, "30M_BUY");
+                            runStrategy(strategy.Orb, io, gpa, g_balance, g_base_contracts, g_leverage, "5M_ORB");
                         }
                         state = .idle;
                         drawBar(input[0..0]);
@@ -1785,28 +1750,7 @@ pub fn run(io: std.Io, gpa: std.mem.Allocator) !void {
                                 g_symbol_idx = idx - 1;
                                 var abuf: [128]u8 = undefined;
                                 const answered = std.fmt.bufPrint(&abuf, "  Symbol?  {d}. {s}", .{ idx, SYMBOL_LABELS[idx - 1] }) catch "  Symbol?";
-                                if (nqSelected()) {
-                                    flowNext(answered, INSTRUMENT_Q);
-                                    state = .awaiting_tune_instrument;
-                                } else {
-                                    engine.instrument = .forex;
-                                    flowNext(answered, "  Initial balance: $?");
-                                    state = .awaiting_tune_balance;
-                                }
-                            }
-                        }
-                        drawBar(input[0..0]);
-                    },
-                    .awaiting_tune_instrument => {
-                        if (cmd.len > 0) {
-                            const sel = std.fmt.parseInt(usize, cmd, 10) catch 0;
-                            if (sel < 1 or sel > INSTRUMENTS.len) {
-                                flowFail("  Invalid selection.");
-                                state = .idle;
-                            } else {
-                                engine.instrument = INSTRUMENTS[sel - 1];
-                                var abuf: [128]u8 = undefined;
-                                const answered = std.fmt.bufPrint(&abuf, "  Instrument?  {d}. {s}", .{ sel, INSTRUMENT_LABELS[sel - 1] }) catch "  Instrument?";
+                                engine.instrument = .forex;
                                 flowNext(answered, "  Initial balance: $?");
                                 state = .awaiting_tune_balance;
                             }
@@ -1990,7 +1934,7 @@ pub fn run(io: std.Io, gpa: std.mem.Allocator) !void {
                         if (g_strategy_id == STRAT_VWAP) {
                             runTune(strategy.RthVwap, io, gpa, grid);
                         } else {
-                            runTune(strategy.OrbBuy, io, gpa, grid);
+                            runTune(strategy.Orb, io, gpa, grid);
                         }
                         state = .idle;
                         drawBar(input[0..0]);
@@ -2152,7 +2096,6 @@ pub fn run(io: std.Io, gpa: std.mem.Allocator) !void {
                     .idle => {},
                     .awaiting_strategy,
                     .awaiting_symbol,
-                    .awaiting_instrument,
                     .awaiting_balance,
                     .awaiting_base_contracts,
                     .awaiting_leverage,
@@ -2171,7 +2114,6 @@ pub fn run(io: std.Io, gpa: std.mem.Allocator) !void {
                     .awaiting_bh_slippage,
                     .awaiting_tune_strategy,
                     .awaiting_tune_symbol,
-                    .awaiting_tune_instrument,
                     .awaiting_tune_balance,
                     .awaiting_tune_base_contracts,
                     .awaiting_tune_leverage,

@@ -5,7 +5,7 @@ const data = @import("data.zig");
 const strategy = @import("strategy.zig");
 const report = @import("report.zig");
 
-// ── OrbBuy parameter tuning (parallel grid search) ───────────────────────────
+// ── Orb parameter tuning (parallel grid search) ───────────────────────────
 
 pub const OrbCombo = struct {
     // Swept dimensions (one cartesian point per combo).
@@ -53,7 +53,7 @@ const OrbShared = struct {
     worker_err: anyerror = error.Unexpected,
 };
 
-// Generic over the strategy type. OrbBuy and RthVwap share the tunable surface
+// Generic over the strategy type. Orb and RthVwap share the tunable surface
 // (base_contracts sweep + fixed leverage/sizing), so one worker drives both.
 fn Worker(comptime S: type) type {
     return struct {

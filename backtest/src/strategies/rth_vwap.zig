@@ -25,7 +25,7 @@ const sizing = @import("../sizings/vol_target.zig");
 //     overnight carry; the next day rebuilds the VWAP from scratch.
 //
 // ── Position sizing ───────────────────────────────────────────────────────────
-//   Identical model to OrbBuy: `sizing_mode` selects fixed lots (.none) or
+//   Identical model to Orb: `sizing_mode` selects fixed lots (.none) or
 //   Harvey et al. (2018) volatility targeting (.vol_target). The size is set on
 //   `self.contracts` just before each entry/flip, because the engine reads
 //   `strat.contracts` at signal time. See sizings/vol_target.zig.

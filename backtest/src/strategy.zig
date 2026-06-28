@@ -1,4 +1,4 @@
-pub const OrbBuy = @import("strategies/30m_buy.zig").OrbBuy;
+pub const Orb = @import("strategies/5m_orb.zig").Orb;
 pub const BuyHold = @import("strategies/buy_hold.zig").BuyHold;
 pub const RthVwap = @import("strategies/rth_vwap.zig").RthVwap;
 

@@ -12,7 +12,7 @@ const SCHEMA =
     \\  run_at           TEXT    NOT NULL,
     \\  strategy         TEXT    NOT NULL,
     \\  symbol           TEXT    NOT NULL DEFAULT 'nq',
-    \\  instrument       TEXT    NOT NULL DEFAULT 'nq mini',
+    \\  instrument       TEXT    NOT NULL DEFAULT 'forex',
     \\  first_ts         TEXT    NOT NULL,
     \\  last_ts          TEXT    NOT NULL,
     \\  total_days       INTEGER NOT NULL,

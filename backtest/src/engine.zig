@@ -17,22 +17,17 @@ pub var to: ?[]const u8 = null; // e.g. "2025-01-01"
 pub var symbol: []const u8 = "nq"; // table prefix, e.g. "nq" or "gbpusd"
 
 // How the selected price series is traded. This is decoupled from `symbol`:
-// NQ price data can be modeled three different ways (the CLI prompts for it when
-// NQ is selected), while every other symbol is always a forex CFD.
-//   .forex    — CFD: $1/point per 1.0 lot, fractional lots, "lot" terminology.
-//   .nq_mini  — E-mini Nasdaq-100 future (NQ): $20/point per contract, whole
-//               contracts, "contract" terminology.
-//   .nq_micro — Micro E-mini Nasdaq-100 future (MNQ): $2/point per contract,
-//               whole contracts, "contract" terminology.
-// Set by the CLI before each run (always `.forex` for non-NQ symbols).
-pub const Instrument = enum { forex, nq_mini, nq_micro };
-pub var instrument: Instrument = .nq_mini;
+// Every symbol — including NQ — is modeled as a forex CFD: $1/point per 1.0
+// lot, fractional lots, "lot" terminology. The enum is kept as a single-member
+// type so the rest of the codebase (Config, combine, db labels) stays intact.
+pub const Instrument = enum { forex };
+pub var instrument: Instrument = .forex;
 
 var g_table_buf: [32]u8 = undefined;
 
 // Warm-up buffer: when `from` is set, the fetch is widened backward by this
 // many CALENDAR days so volatility/indicator state (e.g. the EWMA vol estimate
-// in OrbBuy) is primed before the evaluation window. Bars in the warm-up region
+// in Orb) is primed before the evaluation window. Bars in the warm-up region
 // are fed to `strat.update()` but produce no trades and are excluded from the
 // reported stats. Set to 0 to disable. Has no effect when `from` is null
 // (full-history runs warm up naturally from the first bar).
@@ -64,17 +59,11 @@ const Position = struct {
     contracts: f64,
 };
 
-// Point value per unit of position, per instrument.
-//   .nq_mini  — E-mini Nasdaq-100 future (NQ): $20 per index point per contract.
-//              A 10-point move on 1 contract = $200.
-//   .nq_micro — Micro E-mini (MNQ): $2 per index point per contract (1/10 of NQ).
-//   .forex    — CFD at $1 per point per 1 standard lot. A 10-point move on
-//              0.1 lot = $1.
+// Point value per unit of position. Forex CFD: $1 per point per 1 standard
+// lot. A 10-point move on 0.1 lot = $1.
 fn lotMultOf(inst: Instrument) f64 {
     return switch (inst) {
         .forex => 1.0,
-        .nq_mini => 20.0,
-        .nq_micro => 2.0,
     };
 }
 
@@ -92,10 +81,9 @@ fn usesContractsOf(inst: Instrument) bool {
     return inst != .forex;
 }
 
-// Futures instruments (nq mini/micro) trade in whole contracts; the requested
-// size is rounded to the nearest integer (min 1). Forex CFDs keep fractional
-// lots untouched. Also drives the "contract" vs "lot" terminology in the CLI
-// prompts and the report.
+// Forex CFDs keep fractional lots untouched, so this is always false now. Kept
+// so callers (engine, CLI terminology) need no change; if a whole-contract
+// instrument is ever re-added, flip `usesContractsOf` and this follows.
 pub fn usesContracts() bool {
     return usesContractsOf(instrument);
 }
@@ -109,8 +97,6 @@ fn sizeFor(raw: f64, inst: Instrument) f64 {
 pub fn instrumentName() []const u8 {
     return switch (instrument) {
         .forex => "forex",
-        .nq_mini => "nq mini",
-        .nq_micro => "nq micro",
     };
 }
 
@@ -425,15 +411,14 @@ fn backtest(gpa: std.mem.Allocator, strat: anytype, bars: []const Bar, timestamp
             .flat => continue,
             .close => {
                 if (position) |pos| {
-                    const exit_price: f64 = if (i + 1 < bars.len) bars[i + 1].open else bars[i].close;
-                    const exit_ts: data.Ts = if (i + 1 < bars.len) timestamps[i + 1] else timestamps[i];
-                    const pnl = calcPnl(pos.side, pos.entry_price, exit_price, pos.contracts, cfg.instrument);
+                    const cf = closeFill(strat, bars, timestamps, i);
+                    const pnl = calcPnl(pos.side, pos.entry_price, cf.price, pos.contracts, cfg.instrument);
                     try trades.append(gpa, .{
                         .entry_ts = pos.entry_ts,
-                        .exit_ts = exit_ts,
+                        .exit_ts = cf.ts,
                         .side = pos.side,
                         .entry_price = pos.entry_price,
-                        .exit_price = exit_price,
+                        .exit_price = cf.price,
                         .pnl = pnl,
                         .contracts = pos.contracts,
                     });
@@ -529,6 +514,27 @@ fn backtest(gpa: std.mem.Allocator, strat: anytype, bars: []const Bar, timestamp
         .max_intraday_drawdown_dollars = max_idd_dollars,
         .avg_intraday_drawdown_dollars = if (idd_days > 0) idd_dollars_sum / @as(f64, @floatFromInt(idd_days)) else 0.0,
     };
+}
+
+// Decide the exit fill for a `.close` signal. By DEFAULT the position is closed
+// at the NEXT bar's open (the same 1-bar fill delay used for entries). A strategy
+// may opt into an *exact same-bar* exit price — e.g. an intrabar stop/target that
+// must fill the instant price touches the level, not after the candle closes — by
+// exposing an optional `exit_fill: ?f64` field. When that field is non-null, the
+// position is closed at exactly that price on the CURRENT bar and the field is
+// cleared (so a stale value can't leak into a later close). Strategies without
+// the field are unaffected: the `@hasField` check is comptime, so this branch is
+// elided entirely for them and the next-open path is preserved.
+fn closeFill(strat: anytype, bars: []const Bar, timestamps: []const data.Ts, i: usize) struct { price: f64, ts: data.Ts } {
+    if (comptime @hasField(@TypeOf(strat.*), "exit_fill")) {
+        if (strat.exit_fill) |p| {
+            strat.exit_fill = null;
+            return .{ .price = p, .ts = timestamps[i] };
+        }
+    }
+    const price: f64 = if (i + 1 < bars.len) bars[i + 1].open else bars[i].close;
+    const ts: data.Ts = if (i + 1 < bars.len) timestamps[i + 1] else timestamps[i];
+    return .{ .price = price, .ts = ts };
 }
 
 fn calcPnl(side: Side, entry: f64, exit: f64, lots: f64, inst: Instrument) f64 {
