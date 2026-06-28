@@ -45,10 +45,11 @@ fn isExactCommand(input: []const u8) bool {
 
 // ── Strategies ────────────────────────────────────────────────────────────────
 
-const STRATEGIES = [_][]const u8{ "5M_ORB", "BUY_HOLD", "RTH_VWAP" };
+const STRATEGIES = [_][]const u8{ "5M_ORB", "BUY_HOLD", "RTH_VWAP", "30M_BUY" };
 const STRAT_ORB = 1;
 const STRAT_BUYHOLD = 2;
 const STRAT_VWAP = 3;
+const STRAT_30MBUY = 4;
 
 // ── Symbols ───────────────────────────────────────────────────────────────────
 
@@ -738,6 +739,7 @@ fn combineTimeframe(name: []const u8) ?[]const u8 {
     if (std.mem.eql(u8, name, "5M_ORB")) return strategy.Orb.timeframe;
     if (std.mem.eql(u8, name, "RTH_VWAP")) return strategy.RthVwap.timeframe;
     if (std.mem.eql(u8, name, "BUY_HOLD")) return strategy.BuyHold.timeframe;
+    if (std.mem.eql(u8, name, "30M_BUY")) return strategy.ThirtyMinBuy.timeframe;
     return null;
 }
 
@@ -827,6 +829,15 @@ fn runOneSource(io: std.Io, gpa: std.mem.Allocator, e: *const db.BacktestEntry, 
         return engine.runWith(io, gpa, &s, cfg);
     } else if (std.mem.eql(u8, sname, "BUY_HOLD")) {
         var s = strategy.BuyHold{ .initial_balance = balance, .contracts = e.base_size };
+        return engine.runWith(io, gpa, &s, cfg);
+    } else if (std.mem.eql(u8, sname, "30M_BUY")) {
+        var s = strategy.ThirtyMinBuy{
+            .initial_balance = balance,
+            .contracts = e.base_size * e.leverage,
+            .leverage = e.leverage,
+            .sizing_mode = combineMode(e.sizing_mode),
+            .vol = combineVol(e),
+        };
         return engine.runWith(io, gpa, &s, cfg);
     }
     return error.UnknownStrategy;
@@ -1712,6 +1723,8 @@ pub fn run(io: std.Io, gpa: std.mem.Allocator) !void {
                         engine.symbol = SYMBOL_PREFIXES[g_symbol_idx];
                         if (g_strategy_id == STRAT_VWAP) {
                             runStrategy(strategy.RthVwap, io, gpa, g_balance, g_base_contracts, g_leverage, "RTH_VWAP");
+                        } else if (g_strategy_id == STRAT_30MBUY) {
+                            runStrategy(strategy.ThirtyMinBuy, io, gpa, g_balance, g_base_contracts, g_leverage, "30M_BUY");
                         } else {
                             runStrategy(strategy.Orb, io, gpa, g_balance, g_base_contracts, g_leverage, "5M_ORB");
                         }
@@ -1933,6 +1946,8 @@ pub fn run(io: std.Io, gpa: std.mem.Allocator) !void {
                         };
                         if (g_strategy_id == STRAT_VWAP) {
                             runTune(strategy.RthVwap, io, gpa, grid);
+                        } else if (g_strategy_id == STRAT_30MBUY) {
+                            runTune(strategy.ThirtyMinBuy, io, gpa, grid);
                         } else {
                             runTune(strategy.Orb, io, gpa, grid);
                         }
