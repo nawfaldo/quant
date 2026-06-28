@@ -15,19 +15,14 @@ const sizing = @import("../sizings/vol_target.zig");
 //       close == open → doji → no trade that day.
 //     The signal is emitted on that first bar, so the engine's 1-bar fill delay
 //     opens the position at the OPEN of the SECOND candle (09:35).
-//   • Stop loss is the first candle's extreme:
-//       long  → stop = LOW  of the first candle.
-//       short → stop = HIGH of the first candle.
-//     Fills INTRABAR the instant price touches the level (checked against the
-//     bar's high/low), at the exact stop price — or the bar's open if it gapped
-//     past the stop. No waiting for the candle to close, no 1-bar delay.
-//   • Profit target: 10R from the ACTUAL entry (the 09:35 open):
-//       long  → target = entry + 10 × (entry − stop)
-//       short → target = entry − 10 × (stop − entry)
-//     Also fills intrabar at the exact target (or the open if it gapped past).
-//   • Exit: 10R or end of day, whichever comes first. Flatten at 15:55 →
-//     fills at the 16:00 open (1-bar delay).
-//   • One trade per day. No re-entry after a stop-out, target, or the close.
+//   • Stop loss: 5% of the 14-day ATR (Wilder's smoothing) from the actual
+//     entry price (09:35 open). Fills INTRABAR the instant price touches the
+//     level (checked against the bar's high/low), at the exact stop price — or
+//     the bar's open if it gapped past. No 1-bar delay.
+//   • No take-profit target. Hold until stop or end of day.
+//   • Time exit: flatten at 15:55 → fills at 16:00 open (1-bar delay).
+//   • One trade per day. No re-entry after a stop-out or the close.
+//   • No trade if ATR has fewer than 14 complete days of history.
 //
 // ── Position sizing ───────────────────────────────────────────────────────────
 //   `sizing_mode` selects how each entry is sized:
@@ -60,13 +55,25 @@ pub const Orb = struct {
     have_entry: bool = false,
     entry_price: f64 = 0.0,
     stop_price: f64 = 0.0,
-    tp_price: f64 = 0.0,
-    exit_fill: ?f64 = null, // exact intrabar stop/TP fill price; consumed by the engine
+    stop_dist: f64 = 0.0, // set at signal time, applied to entry price at fill
+    exit_fill: ?f64 = null, // exact intrabar stop fill price; consumed by the engine
 
     base_contracts: f64 = 0.0,
     base_set: bool = false,
 
-    const TP_R_MULT: f64 = 10.0;
+    // 14-day ATR state (Wilder's smoothing over daily OHLC synthesised from 5m bars)
+    prev_close: f64 = 0.0,
+    day_high: f64 = 0.0,
+    day_low: f64 = 0.0,
+    day_close: f64 = 0.0,
+    day_started: bool = false,
+    has_prev_close: bool = false,
+    atr14: f64 = 0.0,
+    atr_days: u8 = 0,
+    atr_init_sum: f64 = 0.0,
+
+    const ATR_PERIOD: u8 = 14;
+    const ATR_STOP_PCT: f64 = 0.05;
     const RTH_OPEN: u16 = 9 * 60 + 30;
     const EXIT_TIME: u16 = 15 * 60 + 55;
     const RTH_CLOSE: u16 = 16 * 60;
@@ -86,6 +93,28 @@ pub const Orb = struct {
         if (self.sizing_mode == .vol_target) self.vol.onBar(bar.close, day_changed);
 
         if (day_changed) {
+            // Finalise the just-ended day into the 14-day ATR (Wilder's smoothing)
+            if (self.day_started and self.has_prev_close) {
+                const tr = @max(
+                    self.day_high - self.day_low,
+                    @max(@abs(self.day_high - self.prev_close), @abs(self.day_low - self.prev_close)),
+                );
+                if (self.atr_days < ATR_PERIOD) {
+                    self.atr_init_sum += tr;
+                    self.atr_days += 1;
+                    if (self.atr_days == ATR_PERIOD) {
+                        self.atr14 = self.atr_init_sum / @as(f64, @floatFromInt(ATR_PERIOD));
+                    }
+                } else {
+                    // Wilder's EMA: atr = (atr * 13 + tr) / 14
+                    self.atr14 = (self.atr14 * 13.0 + tr) / 14.0;
+                }
+            }
+            if (self.day_started) {
+                self.prev_close = self.day_close;
+                self.has_prev_close = true;
+            }
+
             @memcpy(&self.current_day, ts[0..10]);
             self.in_position = false;
             self.is_long = false;
@@ -93,13 +122,20 @@ pub const Orb = struct {
             self.have_entry = false;
             self.entry_price = 0.0;
             self.stop_price = 0.0;
-            self.tp_price = 0.0;
+            self.stop_dist = 0.0;
             self.exit_fill = null;
+
+            self.day_high = bar.high;
+            self.day_low = bar.low;
+            self.day_close = bar.close;
+            self.day_started = true;
+        } else {
+            self.day_high = @max(self.day_high, bar.high);
+            self.day_low = @min(self.day_low, bar.low);
+            self.day_close = bar.close;
         }
 
         if (mins < RTH_OPEN or mins >= RTH_CLOSE) return .flat;
-
-        const close5 = bar.close;
 
         if (mins >= EXIT_TIME) {
             if (self.in_position) {
@@ -113,26 +149,15 @@ pub const Orb = struct {
             if (!self.have_entry) {
                 self.have_entry = true;
                 self.entry_price = bar.open;
-                const risk = @abs(self.entry_price - self.stop_price);
-                self.tp_price = if (self.is_long)
-                    self.entry_price + TP_R_MULT * risk
+                self.stop_price = if (self.is_long)
+                    self.entry_price - self.stop_dist
                 else
-                    self.entry_price - TP_R_MULT * risk;
+                    self.entry_price + self.stop_dist;
             }
-            // Intrabar stop/TP: the level fills the instant price TOUCHES it
-            // (using this bar's high/low), not after the bar closes. The fill is
-            // the exact level — unless the bar gapped past it at the open, in
-            // which case the realistic fill is that worse open price. `exit_fill`
-            // is read by the engine to close on THIS bar (no 1-bar delay). Stop
-            // is checked before target so a bar that spans both books the loss.
+            // Intrabar stop: fills the instant price touches the level
             if (self.is_long) {
                 if (bar.low <= self.stop_price) {
                     self.exit_fill = @min(bar.open, self.stop_price);
-                    self.in_position = false;
-                    return .close;
-                }
-                if (bar.high >= self.tp_price) {
-                    self.exit_fill = @max(bar.open, self.tp_price);
                     self.in_position = false;
                     return .close;
                 }
@@ -142,26 +167,22 @@ pub const Orb = struct {
                     self.in_position = false;
                     return .close;
                 }
-                if (bar.low <= self.tp_price) {
-                    self.exit_fill = @min(bar.open, self.tp_price);
-                    self.in_position = false;
-                    return .close;
-                }
             }
             return .flat;
         }
 
         if (!self.traded_today and mins == RTH_OPEN) {
             self.traded_today = true;
-            if (close5 == bar.open) return .flat;
+            if (bar.close == bar.open) return .flat;
+            if (self.atr_days < ATR_PERIOD) return .flat;
 
             const mult = if (self.sizing_mode == .vol_target) self.vol.multiplier() else 1.0;
             self.contracts = self.base_contracts * mult;
 
-            const go_long = close5 > bar.open;
+            const go_long = bar.close > bar.open;
             self.in_position = true;
             self.is_long = go_long;
-            self.stop_price = if (go_long) bar.low else bar.high;
+            self.stop_dist = ATR_STOP_PCT * self.atr14;
             return if (go_long) .long else .short;
         }
 
