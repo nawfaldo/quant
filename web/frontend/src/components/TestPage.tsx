@@ -1,6 +1,9 @@
 import { useState, useMemo, useEffect, useRef } from "react";
 import EquityChart from "./EquityChart";
 import MonteCarloChart from "./MonteCarloChart";
+import Breakdown from "./Breakdown";
+import WalkForward from "./WalkForward";
+import SensitivityHeatmap from "./SensitivityHeatmap";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { runBacktest, saveRun, combineBacktests, saveCombine, fetchBacktests, runTune, fetchTuneStatus, type RunParams, type TuneResult } from "../api";
 import { useApp } from "../context/AppContext";
@@ -25,7 +28,7 @@ interface TestTab {
   slippage: string;
   hasResult: boolean;
   isSaved: boolean;
-  activeTab: "analysis" | "equity" | "monte-carlo";
+  activeTab: "analysis" | "equity" | "breakdown" | "walk-forward" | "monte-carlo";
   combineBacktestIds: string[];
 }
 
@@ -155,6 +158,7 @@ export default function TestPage() {
 
   const [isLoading, setIsLoading] = useState(false);
   const [tuneProgress, setTuneProgress] = useState<{ progress: number, total: number } | null>(null);
+  const [tuneView, setTuneView] = useState<"rankings" | "sensitivity">("rankings");
 
   const [savingTabs, setSavingTabs] = useState<Record<string, boolean>>({});
 
@@ -1046,26 +1050,49 @@ export default function TestPage() {
                   )}
                 </div>
                 {/* Right Content */}
-                <div className="flex flex-row items-center gap-4">
-                  <div className="flex flex-col gap-1.5">
-                    <span className="text-xs font-semibold tracking-wider text-gray-400 uppercase select-none">
-                      Initial Balance?
-                    </span>
-                    <input
-                      type="text"
-                      value={initialBalance}
-                      onChange={(e) => {
-                        updateActiveTab({
-                          initialBalance: e.target.value,
-                          hasResult: false,
-                          isSaved: false,
-                        });
-                      }}
-                      placeholder="e.g. 100000"
-                      className="bg-gray-900 border border-gray-800/80 text-xs font-medium text-gray-200 rounded-lg px-2.5 py-1.5 outline-none hover:border-gray-700 focus:border-blue-500/80 transition-colors shrink-0 w-48 h-8 font-mono"
-                    />
+                <div className="flex flex-row items-start gap-4">
+                  {/* Left Column: Initial Balance & Leverage */}
+                  <div className="flex flex-col gap-4">
+                    <div className="flex flex-col gap-1.5">
+                      <span className="text-xs font-semibold tracking-wider text-gray-400 uppercase select-none">
+                        Initial Balance?
+                      </span>
+                      <input
+                        type="text"
+                        value={initialBalance}
+                        onChange={(e) => {
+                          updateActiveTab({
+                            initialBalance: e.target.value,
+                            hasResult: false,
+                            isSaved: false,
+                          });
+                        }}
+                        placeholder="e.g. 100000"
+                        className="bg-gray-900 border border-gray-800/80 text-xs font-medium text-gray-200 rounded-lg px-2.5 py-1.5 outline-none hover:border-gray-700 focus:border-blue-500/80 transition-colors shrink-0 w-48 h-8 font-mono"
+                      />
+                    </div>
+
+                    <div className="flex flex-col gap-1.5">
+                      <span className="text-xs font-semibold tracking-wider text-gray-400 uppercase select-none">
+                        Leverage?
+                      </span>
+                      <input
+                        type="text"
+                        value={leverage}
+                        onChange={(e) => {
+                          updateActiveTab({
+                            leverage: e.target.value,
+                            hasResult: false,
+                            isSaved: false,
+                          });
+                        }}
+                        placeholder="e.g. 1 (default)"
+                        className="bg-gray-900 border border-gray-800/80 text-xs font-medium text-gray-200 rounded-lg px-2.5 py-1.5 outline-none hover:border-gray-700 focus:border-blue-500/80 transition-colors shrink-0 w-48 h-8 font-mono"
+                      />
+                    </div>
                   </div>
 
+                  {/* Right Column: Base Lot */}
                   <div className="flex flex-col gap-1.5">
                     <span className="text-xs font-semibold tracking-wider text-gray-400 uppercase select-none">
                       Base Lot?
@@ -1081,25 +1108,6 @@ export default function TestPage() {
                         });
                       }}
                       placeholder="e.g. 1"
-                      className="bg-gray-900 border border-gray-800/80 text-xs font-medium text-gray-200 rounded-lg px-2.5 py-1.5 outline-none hover:border-gray-700 focus:border-blue-500/80 transition-colors shrink-0 w-48 h-8 font-mono"
-                    />
-                  </div>
-
-                  <div className="flex flex-col gap-1.5">
-                    <span className="text-xs font-semibold tracking-wider text-gray-400 uppercase select-none">
-                      Leverage?
-                    </span>
-                    <input
-                      type="text"
-                      value={leverage}
-                      onChange={(e) => {
-                        updateActiveTab({
-                          leverage: e.target.value,
-                          hasResult: false,
-                          isSaved: false,
-                        });
-                      }}
-                      placeholder="e.g. 1 (default)"
                       className="bg-gray-900 border border-gray-800/80 text-xs font-medium text-gray-200 rounded-lg px-2.5 py-1.5 outline-none hover:border-gray-700 focus:border-blue-500/80 transition-colors shrink-0 w-48 h-8 font-mono"
                     />
                   </div>
@@ -1502,9 +1510,34 @@ export default function TestPage() {
 
             return (
               <div className="flex-1 overflow-y-auto no-scrollbar px-8 py-8 flex flex-col gap-8 max-w-5xl mx-auto w-full">
-                {renderTable("Top 10 — Best Growth", activeTuneResult.bestGrowth)}
-                {renderTable("Top 10 — Smallest Drawdown", activeTuneResult.minDrawdown)}
-                {renderTable("Top 10 — Best of Two (Balanced)", activeTuneResult.bestOfTwo)}
+                {/* Rankings / Sensitivity toggle */}
+                <div className="flex items-center gap-0.5 bg-gray-900 rounded-lg p-0.5 border border-gray-800/80 self-start">
+                  {([["rankings", "Rankings"], ["sensitivity", "Sensitivity"]] as const).map(([id, label]) => (
+                    <button
+                      key={id}
+                      onClick={() => setTuneView(id)}
+                      className={`px-3 py-1 transition-all duration-150 text-xs font-medium rounded-md select-none cursor-pointer ${
+                        tuneView === id ? "bg-gray-700 text-white shadow-sm" : "text-gray-500 hover:text-gray-200 hover:bg-gray-800/70"
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+
+                {tuneView === "rankings" ? (
+                  <>
+                    {renderTable("Top 10 — Best Growth", activeTuneResult.bestGrowth)}
+                    {renderTable("Top 10 — Smallest Drawdown", activeTuneResult.minDrawdown)}
+                    {renderTable("Top 10 — Best of Two (Balanced)", activeTuneResult.bestOfTwo)}
+                  </>
+                ) : (
+                  activeTuneResult.grid && activeTuneResult.grid.length > 0 ? (
+                    <SensitivityHeatmap grid={activeTuneResult.grid} hasVol={hasVol} />
+                  ) : (
+                    <div className="text-sm text-gray-500">No grid data — re-run Tune (restart the backend if this persists).</div>
+                  )
+                )}
               </div>
             );
           })()}
@@ -1515,44 +1548,38 @@ export default function TestPage() {
               b.symbol === "nq" ? "Nasdaq 100 E-mini" :
               b.symbol === "gbpusd" ? "GBP/USD Spot" :
               b.symbol === "eurusd" ? "EUR/USD Spot" : b.instrument;
+            // Result sub-tabs. Breakdown (#3 slicing) shows for Run and Combine;
+            // Walk-Forward (#1 OOS consistency) is Run-only. `effectiveTab` guards
+            // against a persisted tab that isn't valid for the current command.
+            const resultTabs: { id: TestTab["activeTab"]; label: string }[] = [
+              { id: "analysis", label: "Analysis" },
+              { id: "equity", label: "Equity" },
+              { id: "breakdown", label: "Breakdown" },
+              ...(selectedCommand === "Run" ? [{ id: "walk-forward" as const, label: "Walk-Forward" }] : []),
+              { id: "monte-carlo", label: "Monte Carlo" },
+            ];
+            const effectiveTab = resultTabs.some((t) => t.id === activeTab) ? activeTab : "analysis";
             return (
             <>
               {/* Floating Tab Selection */}
               <div className="absolute top-6 left-8 z-10 flex items-center gap-0.5 bg-gray-900 rounded-lg p-0.5 border border-gray-800/80 shrink-0 shadow-lg shadow-black/40">
-                <button
-                  onClick={() => updateActiveTab({ activeTab: "analysis" })}
-                  className={`px-2.5 py-1 transition-all duration-150 text-xs font-medium rounded-md select-none cursor-pointer ${
-                    activeTab === "analysis"
-                      ? "bg-gray-700 text-white shadow-sm"
-                      : "text-gray-500 hover:text-gray-200 hover:bg-gray-800/70"
-                  }`}
-                >
-                  Analysis
-                </button>
-                <button
-                  onClick={() => updateActiveTab({ activeTab: "equity" })}
-                  className={`px-2.5 py-1 transition-all duration-150 text-xs font-medium rounded-md select-none cursor-pointer ${
-                    activeTab === "equity"
-                      ? "bg-gray-700 text-white shadow-sm"
-                      : "text-gray-500 hover:text-gray-200 hover:bg-gray-800/70"
-                  }`}
-                >
-                  Equity
-                </button>
-                <button
-                  onClick={() => updateActiveTab({ activeTab: "monte-carlo" })}
-                  className={`px-2.5 py-1 transition-all duration-150 text-xs font-medium rounded-md select-none cursor-pointer ${
-                    activeTab === "monte-carlo"
-                      ? "bg-gray-700 text-white shadow-sm"
-                      : "text-gray-500 hover:text-gray-200 hover:bg-gray-800/70"
-                  }`}
-                >
-                  Monte Carlo
-                </button>
+                {resultTabs.map((t) => (
+                  <button
+                    key={t.id}
+                    onClick={() => updateActiveTab({ activeTab: t.id })}
+                    className={`px-2.5 py-1 transition-all duration-150 text-xs font-medium rounded-md select-none cursor-pointer ${
+                      effectiveTab === t.id
+                        ? "bg-gray-700 text-white shadow-sm"
+                        : "text-gray-500 hover:text-gray-200 hover:bg-gray-800/70"
+                    }`}
+                  >
+                    {t.label}
+                  </button>
+                ))}
               </div>
 
               {/* Tab Contents */}
-              {activeTab === "analysis" && (
+              {effectiveTab === "analysis" && (
                 <div className="flex-1 overflow-y-auto no-scrollbar px-8 pb-8 pt-20">
                   <div className="grid grid-cols-2 gap-6 max-w-5xl mx-auto pb-16">
 
@@ -1647,7 +1674,7 @@ export default function TestPage() {
                 </div>
               )}
 
-              {activeTab === "equity" && (
+              {effectiveTab === "equity" && (
                 <div className="flex-1 overflow-y-auto no-scrollbar px-8 pb-8 pt-20 flex flex-col justify-center">
                   <div className="w-full max-w-5xl mx-auto h-[400px]">
                     {activeResult.trades.length > 0 ? (
@@ -1659,7 +1686,19 @@ export default function TestPage() {
                 </div>
               )}
 
-              {activeTab === "monte-carlo" && (
+              {effectiveTab === "breakdown" && (
+                <div className="flex-1 overflow-y-auto no-scrollbar px-8 pb-8 pt-20">
+                  <Breakdown trades={activeResult.trades} initialBalance={b.initial_bal} />
+                </div>
+              )}
+
+              {effectiveTab === "walk-forward" && (
+                <div className="flex-1 overflow-y-auto no-scrollbar px-8 pb-8 pt-20">
+                  <WalkForward trades={activeResult.trades} initialBalance={b.initial_bal} startDate={fromDate || undefined} />
+                </div>
+              )}
+
+              {effectiveTab === "monte-carlo" && (
                 <div className="flex-1 overflow-y-auto no-scrollbar px-8 pb-8 pt-8 flex flex-col items-center justify-center gap-6">
                   {activeResult.monteCarlo ? (
                     <>

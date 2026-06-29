@@ -460,8 +460,50 @@ fn buildTuneJson(work: []Combo, mode: sizing.Mode) ![]const u8 {
     std.mem.sort(Combo, work, {}, byScoreDesc);
     try appendComboList(&out, "bestOfTwo", work, mode);
 
+    // Full grid (every combo, not just the top 10) → drives the Sensitivity
+    // heatmap on the frontend. Order is irrelevant; each combo carries its own
+    // swept params, so the client pivots them into an X/Y surface.
+    try appendFullGrid(&out, work, mode);
+
     try out.appendSlice(alloc, "}");
     return out.toOwnedSlice(alloc);
+}
+
+// Emit the entire combo array under "grid". Same per-combo shape as
+// appendComboList but with no top-N cap — the frontend needs every cell to draw
+// the parameter-sensitivity surface.
+fn appendFullGrid(out: *std.ArrayList(u8), all: []const Combo, mode: sizing.Mode) !void {
+    try out.appendSlice(alloc, ",\"grid\":[");
+    var buf: [512]u8 = undefined;
+    for (all, 0..) |c, i| {
+        const comma: []const u8 = if (i == 0) "" else ",";
+        if (mode == .vol_target) {
+            const s = try std.fmt.bufPrint(&buf, "{s}{{\"growth\":{d:.4},\"drawdown\":{d:.4},\"score\":{d:.4},\"baseLot\":{d:.4},\"leverage\":{d:.4},\"volTarget\":{d:.4},\"volHalflife\":{d:.4},\"volMaxMult\":{d:.4},\"volMinDays\":{d}}}", .{
+                comma,
+                fin(c.growth),
+                fin(c.drawdown),
+                fin(c.score),
+                fin(c.base_lot),
+                fin(c.leverage),
+                fin(c.vol_target),
+                fin(c.vol_halflife),
+                fin(c.vol_max_mult),
+                c.vol_min_days,
+            });
+            try out.appendSlice(alloc, s);
+        } else {
+            const s = try std.fmt.bufPrint(&buf, "{s}{{\"growth\":{d:.4},\"drawdown\":{d:.4},\"score\":{d:.4},\"baseLot\":{d:.4},\"leverage\":{d:.4}}}", .{
+                comma,
+                fin(c.growth),
+                fin(c.drawdown),
+                fin(c.score),
+                fin(c.base_lot),
+                fin(c.leverage),
+            });
+            try out.appendSlice(alloc, s);
+        }
+    }
+    try out.appendSlice(alloc, "]");
 }
 
 fn appendComboList(out: *std.ArrayList(u8), key: []const u8, sorted: []const Combo, mode: sizing.Mode) !void {

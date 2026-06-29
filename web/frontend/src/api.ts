@@ -297,6 +297,7 @@ export interface TuneResult {
   bestGrowth: TuneCombo[]
   minDrawdown: TuneCombo[]
   bestOfTwo: TuneCombo[]
+  grid?: TuneCombo[]   // every swept combo — powers the Sensitivity heatmap
 }
 
 export interface TuneParams {
