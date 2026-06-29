@@ -59,6 +59,7 @@ fn badBody(req: *http.Ctx) !void {
 const Params = struct {
     balance: f64,
     base_lot: f64,
+    leverage: f64,
     sizing_mode: sizing.Mode,
     vol: sizing.VolTarget,
     cfg: engine.Config,
@@ -112,6 +113,7 @@ fn parse(req: *http.Ctx, body: []const u8) !?Parsed {
         .params = .{
             .balance = jsonNum(body, "initialBalance") orelse 0,
             .base_lot = jsonNum(body, "baseLot") orelse 0,
+            .leverage = jsonNum(body, "leverage") orelse 1.0,
             .sizing_mode = sizing_mode,
             .vol = vol,
             .cfg = .{
@@ -144,13 +146,13 @@ fn saveName(strategy: []const u8) ?[]const u8 {
 }
 
 // Generic over the strategy type — Orb, RthVwap and ThirtyMinBuy share the same
-// parameter surface, exactly like the CLI's `runStrategy`. Leverage is fixed at
-// 1.0 (the Test page has no leverage field), so contracts == base lot.
+// parameter surface, exactly like the CLI's `runStrategy`: contracts = base lot ×
+// leverage (the engine reads strat.contracts at signal time).
 fn runStrategy(comptime S: type, io: std.Io, p: Params) !engine.Result {
     var strat = S{
         .initial_balance = p.balance,
-        .contracts = p.base_lot,
-        .leverage = 1.0,
+        .contracts = p.base_lot * p.leverage,
+        .leverage = p.leverage,
         .sizing_mode = p.sizing_mode,
         .vol = p.vol,
     };

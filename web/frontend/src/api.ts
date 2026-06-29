@@ -103,6 +103,7 @@ export interface RunParams {
   symbol: string
   initialBalance: string
   baseLot: string
+  leverage: string
   sizing: string
   volTarget?: string
   volHalflife?: string
@@ -284,6 +285,7 @@ export interface TuneCombo {
   drawdown: number
   score: number
   baseLot: number
+  leverage: number
   volTarget?: number
   volHalflife?: number
   volMaxMult?: number
@@ -302,6 +304,7 @@ export interface TuneParams {
   symbol: string
   initialBalance: string
   baseLot: string          // comma-separated for grid sweep
+  leverage: string         // comma-separated for grid sweep
   sizing: string
   volTarget?: string       // comma-separated for grid sweep
   volHalflife?: string

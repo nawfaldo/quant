@@ -2,6 +2,7 @@ const std = @import("std");
 const http = @import("http.zig");
 const db = @import("db.zig");
 const engine = @import("bt/engine.zig");
+const data = @import("bt/data.zig");
 const montecarlo = @import("bt/montecarlo.zig");
 
 const alloc = std.heap.page_allocator;
@@ -18,7 +19,7 @@ pub fn handle(req: *http.Ctx) !void {
     const p = (try parse(req, body)) orelse return;
     defer freeIds(p.ids);
 
-    const result = compute(p) catch |err| return fail(req, err);
+    const result = compute(req.io, p) catch |err| return fail(req, err);
     defer alloc.free(result.trades);
 
     const json = buildJson(result, p.initial_balance) catch |err| return fail(req, err);
@@ -34,7 +35,7 @@ pub fn handleSave(req: *http.Ctx) !void {
     const p = (try parse(req, body)) orelse return;
     defer freeIds(p.ids);
 
-    const result = compute(p) catch |err| return fail(req, err);
+    const result = compute(req.io, p) catch |err| return fail(req, err);
     defer alloc.free(result.trades);
 
     const id = persistCombine(result, p.initial_balance) catch |err| return fail(req, err);
@@ -108,134 +109,295 @@ fn parseIds(body: []const u8) ![]i64 {
     return list.toOwnedSlice(alloc);
 }
 
-// ── Portfolio computation ────────────────────────────────────────────────────
-
-const CombineResult = struct {
-    trades: []engine.Trade, // heap-allocated, caller frees
-    initial_balance: f64,
-    strategies: []const u8, // comma-joined, stack buffer
-    first_ts: [16]u8,
-    last_ts: [16]u8,
-    max_drawdown: f64,
-    max_drawdown_dollars: f64,
-    max_drawdown_peak_date: [10]u8,
-    max_drawdown_trough_date: [10]u8,
-    avg_drawdown: f64,
-    avg_drawdown_dollars: f64,
-    max_intraday_drawdown: f64,
-    max_intraday_drawdown_dollars: f64,
-    max_intraday_drawdown_date: [10]u8,
-    avg_intraday_drawdown: f64,
-    avg_intraday_drawdown_dollars: f64,
+const TradeSrc = struct {
+    trades: []const engine.Trade,
+    mult: f64,
+    table_buf: [32]u8 = undefined,
+    table_len: usize = 0,
 };
 
-// Load all sources, scale PnLs to equal-weight allocation, merge, then compute
-// realized drawdown at trade-close resolution.
-fn compute(p: Parsed) !CombineResult {
-    const n = p.ids.len;
-    const alloc_per = p.initial_balance / @as(f64, @floatFromInt(n));
-
-    // Load each source.
-    const sources = try alloc.alloc(db.CombineSource, n);
-    defer {
-        for (sources) |s| {
-            alloc.free(s.strategy);
-            alloc.free(s.trades);
-        }
-        alloc.free(sources);
-    }
-    for (p.ids, 0..) |id, i| {
-        sources[i] = try db.loadCombineSource(alloc, id);
-    }
-
-    // Build merged trade list (scaled + date-filtered).
-    var merged: std.ArrayList(engine.Trade) = .empty;
-    errdefer merged.deinit(alloc);
-
-    for (sources) |src| {
-        const scale = if (src.initial_bal > 0) alloc_per / src.initial_bal else 1.0;
-        for (src.trades) |t| {
-            // Date filter: keep if exit >= from_date AND entry <= to_date.
-            if (p.from_date) |fd| {
-                if (std.mem.order(u8, t.exit_ts[0..10], fd) == .lt) continue;
-            }
-            if (p.to_date) |td| {
-                if (std.mem.order(u8, t.entry_ts[0..10], td) == .gt) continue;
-            }
-            var scaled = t;
-            scaled.pnl *= scale;
-            scaled.contracts *= scale;
-            scaled.entry_price = t.entry_price; // prices don't scale
-            scaled.exit_price  = t.exit_price;
-            try merged.append(alloc, scaled);
-        }
-    }
-
-    // Sort by exit_ts (realized equity order).
-    std.mem.sort(engine.Trade, merged.items, {}, tradeLess);
-
-    const trades = try merged.toOwnedSlice(alloc);
-
-    // first_ts / last_ts from merged trade stream.
-    var first_ts: [16]u8 = [_]u8{'9'} ** 16;
-    var last_ts: [16]u8 = [_]u8{'0'} ** 16;
-    for (trades) |t| {
-        if (std.mem.order(u8, &t.entry_ts, &first_ts) == .lt) first_ts = t.entry_ts;
-        if (std.mem.order(u8, &t.exit_ts,  &last_ts)  == .gt) last_ts  = t.exit_ts;
-    }
-    if (trades.len == 0) {
-        first_ts = [_]u8{' '} ** 16;
-        last_ts  = [_]u8{' '} ** 16;
-    }
-
-    // Realized drawdown (sampled at each trade close).
-    const dd = realizedDrawdown(p.initial_balance, trades);
-
-    return .{
-        .trades = trades,
-        .initial_balance = p.initial_balance,
-        .strategies = "COMBINED",
-        .first_ts = first_ts,
-        .last_ts = last_ts,
-        .max_drawdown = dd.max_drawdown,
-        .max_drawdown_dollars = dd.max_drawdown_dollars,
-        .max_drawdown_peak_date = dd.max_drawdown_peak_date,
-        .max_drawdown_trough_date = dd.max_drawdown_trough_date,
-        .avg_drawdown = dd.avg_drawdown,
-        .avg_drawdown_dollars = dd.avg_drawdown_dollars,
-        .max_intraday_drawdown = 0,
-        .max_intraday_drawdown_dollars = 0,
-        .max_intraday_drawdown_date = [_]u8{' '} ** 10,
-        .avg_intraday_drawdown = 0,
-        .avg_intraday_drawdown_dollars = 0,
-    };
-}
-
-fn tradeLess(_: void, a: engine.Trade, b: engine.Trade) bool {
-    return std.mem.order(u8, &a.exit_ts, &b.exit_ts) == .lt;
-}
-
-// Realized drawdown sampled at each trade close off the cumulative PnL curve.
-const Drawdown = struct {
+pub const Drawdown = struct {
     max_drawdown: f64 = 0,
     avg_drawdown: f64 = 0,
     max_drawdown_peak_date: [10]u8 = [_]u8{' '} ** 10,
     max_drawdown_trough_date: [10]u8 = [_]u8{' '} ** 10,
+    max_intraday_drawdown: f64 = 0,
+    avg_intraday_drawdown: f64 = 0,
+    max_intraday_drawdown_date: [10]u8 = [_]u8{' '} ** 10,
     max_drawdown_dollars: f64 = 0,
     avg_drawdown_dollars: f64 = 0,
+    max_intraday_drawdown_dollars: f64 = 0,
+    avg_intraday_drawdown_dollars: f64 = 0,
 };
 
-fn realizedDrawdown(initial: f64, trades: []const engine.Trade) Drawdown {
-    var equity: f64 = initial;
+const blank_date = [_]u8{' '} ** 10;
+
+const Event = struct {
+    ts: engine.Ts,
+    ds: i64,
+    a: f64,
+    ae: f64,
+    pnl: f64,
+};
+
+fn eventLess(_: void, a: Event, b: Event) bool {
+    return std.mem.order(u8, &a.ts, &b.ts) == .lt;
+}
+
+pub fn markToMarket(io: std.Io, gpa: std.mem.Allocator, initial: f64, srcs: []const TradeSrc) !Drawdown {
+    var tables: std.ArrayList([]const u8) = .empty;
+    defer tables.deinit(gpa);
+    var win_from: std.ArrayList([10]u8) = .empty;
+    defer win_from.deinit(gpa);
+    var win_to: std.ArrayList([10]u8) = .empty;
+    defer win_to.deinit(gpa);
+
+    const ds_of_src = try gpa.alloc(i64, srcs.len);
+    defer gpa.free(ds_of_src);
+
+    for (srcs, 0..) |src, si| {
+        if (src.table_len == 0) {
+            ds_of_src[si] = -1;
+            continue;
+        }
+        const tbl = src.table_buf[0..src.table_len];
+        var idx: i64 = -1;
+        for (tables.items, 0..) |t, ti| {
+            if (std.mem.eql(u8, t, tbl)) {
+                idx = @intCast(ti);
+                break;
+            }
+        }
+        if (idx < 0) {
+            idx = @intCast(tables.items.len);
+            try tables.append(gpa, tbl);
+            try win_from.append(gpa, "9999-99-99".*);
+            try win_to.append(gpa, "0000-00-00".*);
+        }
+        ds_of_src[si] = idx;
+        const di: usize = @intCast(idx);
+        for (src.trades) |t| {
+            if (std.mem.order(u8, t.entry_ts[0..10], &win_from.items[di]) == .lt)
+                @memcpy(win_from.items[di][0..], t.entry_ts[0..10]);
+            if (std.mem.order(u8, t.exit_ts[0..10], &win_to.items[di]) == .gt)
+                @memcpy(win_to.items[di][0..], t.exit_ts[0..10]);
+        }
+    }
+
+    if (tables.items.len == 0) return error.NoData;
+
+    const cols = data.Columns{ .open = true, .high = false, .low = false, .close = true, .volume = false };
+    var datasets = try gpa.alloc(data.Dataset, tables.items.len);
+    var n_ds: usize = 0;
+    defer {
+        for (datasets[0..n_ds]) |d| d.deinit();
+        gpa.free(datasets);
+    }
+    for (tables.items, 0..) |tbl, ti| {
+        var to_buf: [10]u8 = undefined;
+        const to_slice = nextDay(&to_buf, win_to.items[ti]);
+        const src = data.Source{ .table = tbl, .from = win_from.items[ti][0..], .to = to_slice };
+        datasets[ti] = try data.fetch(io, gpa, cols, src);
+        n_ds += 1;
+    }
+
+    var opens: std.ArrayList(Event) = .empty;
+    defer opens.deinit(gpa);
+    var closes: std.ArrayList(Event) = .empty;
+    defer closes.deinit(gpa);
+    for (srcs, 0..) |src, si| {
+        const ds = ds_of_src[si];
+        for (src.trades) |t| {
+            const sign: f64 = if (t.side == .long) 1.0 else -1.0;
+            const a = sign * src.mult * t.contracts;
+            const ae = a * t.entry_price;
+            try opens.append(gpa, .{ .ts = t.entry_ts, .ds = ds, .a = a, .ae = ae, .pnl = 0 });
+            try closes.append(gpa, .{ .ts = t.exit_ts, .ds = ds, .a = a, .ae = ae, .pnl = t.pnl });
+        }
+    }
+    std.mem.sort(Event, opens.items, {}, eventLess);
+    std.mem.sort(Event, closes.items, {}, eventLess);
+
+    const nd = n_ds;
+    const sumA = try gpa.alloc(f64, nd);
+    defer gpa.free(sumA);
+    const sumAE = try gpa.alloc(f64, nd);
+    defer gpa.free(sumAE);
+    const pbar = try gpa.alloc(usize, nd);
+    defer gpa.free(pbar);
+    const last_close = try gpa.alloc(f64, nd);
+    defer gpa.free(last_close);
+    const seen = try gpa.alloc(bool, nd);
+    defer gpa.free(seen);
+    for (0..nd) |d| {
+        sumA[d] = 0;
+        sumAE[d] = 0;
+        pbar[d] = 0;
+        last_close[d] = 0;
+        seen[d] = false;
+    }
+
+    var realized: f64 = 0;
+    var op: usize = 0;
+    var cl: usize = 0;
+
     var peak: f64 = initial;
-    var peak_date: [10]u8 = [_]u8{' '} ** 10;
+    var peak_date: [10]u8 = blank_date;
     var max_dd: f64 = 0;
     var max_dd_dollars: f64 = 0;
     var dd_sum: f64 = 0;
     var dd_dollars_sum: f64 = 0;
     var dd_count: usize = 0;
-    var max_dd_from: [10]u8 = [_]u8{' '} ** 10;
-    var max_dd_to: [10]u8 = [_]u8{' '} ** 10;
+    var max_dd_from: [10]u8 = blank_date;
+    var max_dd_to: [10]u8 = blank_date;
+
+    var day_peak: f64 = initial;
+    var cur_day: [10]u8 = undefined;
+    var day_started = false;
+    var day_max_idd: f64 = 0;
+    var day_max_idd_dollars: f64 = 0;
+    var max_idd: f64 = 0;
+    var max_idd_dollars: f64 = 0;
+    var max_idd_date: [10]u8 = blank_date;
+    var idd_sum: f64 = 0;
+    var idd_dollars_sum: f64 = 0;
+    var idd_days: usize = 0;
+
+    while (true) {
+        var have = false;
+        var t: engine.Ts = undefined;
+        for (0..nd) |d| {
+            if (pbar[d] < datasets[d].timestamps.len) {
+                const c_ts = datasets[d].timestamps[pbar[d]];
+                if (!have or std.mem.order(u8, &c_ts, &t) == .lt) {
+                    t = c_ts;
+                    have = true;
+                }
+            }
+        }
+        if (op < opens.items.len) {
+            const c_ts = opens.items[op].ts;
+            if (!have or std.mem.order(u8, &c_ts, &t) == .lt) {
+                t = c_ts;
+                have = true;
+            }
+        }
+        if (cl < closes.items.len) {
+            const c_ts = closes.items[cl].ts;
+            if (!have or std.mem.order(u8, &c_ts, &t) == .lt) {
+                t = c_ts;
+                have = true;
+            }
+        }
+        if (!have) break;
+
+        while (op < opens.items.len and std.mem.eql(u8, &opens.items[op].ts, &t)) : (op += 1) {
+            const e = opens.items[op];
+            if (e.ds >= 0) {
+                const d: usize = @intCast(e.ds);
+                sumA[d] += e.a;
+                sumAE[d] += e.ae;
+            }
+        }
+        while (cl < closes.items.len and std.mem.eql(u8, &closes.items[cl].ts, &t)) : (cl += 1) {
+            const e = closes.items[cl];
+            realized += e.pnl;
+            if (e.ds >= 0) {
+                const d: usize = @intCast(e.ds);
+                sumA[d] -= e.a;
+                sumAE[d] -= e.ae;
+            }
+        }
+        for (0..nd) |d| {
+            while (pbar[d] < datasets[d].timestamps.len and
+                std.mem.eql(u8, &datasets[d].timestamps[pbar[d]], &t)) : (pbar[d] += 1)
+            {
+                last_close[d] = datasets[d].bars[pbar[d]].close;
+                seen[d] = true;
+            }
+        }
+
+        var mtm = initial + realized;
+        for (0..nd) |d| {
+            if (seen[d]) mtm += last_close[d] * sumA[d] - sumAE[d];
+        }
+
+        if (mtm > peak) {
+            peak = mtm;
+            @memcpy(peak_date[0..], t[0..10]);
+        }
+        const dd_dollars = peak - mtm;
+        const dd = if (peak > 0) dd_dollars / peak * 100.0 else 0.0;
+        if (dd > max_dd) {
+            max_dd = dd;
+            max_dd_dollars = dd_dollars;
+            @memcpy(max_dd_from[0..], peak_date[0..]);
+            @memcpy(max_dd_to[0..], t[0..10]);
+        }
+        dd_sum += dd;
+        dd_dollars_sum += dd_dollars;
+        dd_count += 1;
+
+        const day = t[0..10];
+        if (!day_started or !std.mem.eql(u8, day, cur_day[0..])) {
+            if (day_started) {
+                idd_sum += day_max_idd;
+                idd_dollars_sum += day_max_idd_dollars;
+                idd_days += 1;
+            }
+            @memcpy(cur_day[0..], day);
+            day_peak = mtm;
+            day_max_idd = 0;
+            day_max_idd_dollars = 0;
+            day_started = true;
+        }
+        if (mtm > day_peak) day_peak = mtm;
+        const idd_dollars = day_peak - mtm;
+        const idd = if (day_peak > 0) idd_dollars / day_peak * 100.0 else 0.0;
+        if (idd > day_max_idd) {
+            day_max_idd = idd;
+            day_max_idd_dollars = idd_dollars;
+        }
+        if (idd > max_idd) {
+            max_idd = idd;
+            max_idd_dollars = idd_dollars;
+            @memcpy(max_idd_date[0..], cur_day[0..]);
+        }
+    }
+    if (day_started) {
+        idd_sum += day_max_idd;
+        idd_dollars_sum += day_max_idd_dollars;
+        idd_days += 1;
+    }
+
+    const ddc: f64 = @floatFromInt(dd_count);
+    const iddc: f64 = @floatFromInt(idd_days);
+    return .{
+        .max_drawdown = max_dd,
+        .avg_drawdown = if (dd_count > 0) dd_sum / ddc else 0.0,
+        .max_drawdown_peak_date = max_dd_from,
+        .max_drawdown_trough_date = max_dd_to,
+        .max_intraday_drawdown = max_idd,
+        .avg_intraday_drawdown = if (idd_days > 0) idd_sum / iddc else 0.0,
+        .max_intraday_drawdown_date = max_idd_date,
+        .max_drawdown_dollars = max_dd_dollars,
+        .avg_drawdown_dollars = if (dd_count > 0) dd_dollars_sum / ddc else 0.0,
+        .max_intraday_drawdown_dollars = max_idd_dollars,
+        .avg_intraday_drawdown_dollars = if (idd_days > 0) idd_dollars_sum / iddc else 0.0,
+    };
+}
+
+pub fn realizedDrawdown(initial: f64, trades: []const engine.Trade) Drawdown {
+    var equity: f64 = initial;
+    var peak: f64 = initial;
+    var peak_date: [10]u8 = blank_date;
+    var max_dd: f64 = 0;
+    var max_dd_dollars: f64 = 0;
+    var dd_sum: f64 = 0;
+    var dd_dollars_sum: f64 = 0;
+    var dd_count: usize = 0;
+    var max_dd_from: [10]u8 = blank_date;
+    var max_dd_to: [10]u8 = blank_date;
 
     for (trades) |t| {
         equity += t.pnl;
@@ -263,7 +425,169 @@ fn realizedDrawdown(initial: f64, trades: []const engine.Trade) Drawdown {
         .max_drawdown_trough_date = max_dd_to,
         .max_drawdown_dollars = max_dd_dollars,
         .avg_drawdown_dollars = if (dd_count > 0) dd_dollars_sum / n else 0.0,
+        .max_intraday_drawdown = 0,
+        .max_intraday_drawdown_dollars = 0,
+        .max_intraday_drawdown_date = [_]u8{' '} ** 10,
+        .avg_intraday_drawdown = 0,
+        .avg_intraday_drawdown_dollars = 0,
     };
+}
+
+fn nextDay(buf: *[10]u8, date: [10]u8) []const u8 {
+    const y = std.fmt.parseInt(i64, date[0..4], 10) catch return date[0..];
+    const mo = std.fmt.parseInt(i64, date[5..7], 10) catch return date[0..];
+    const da = std.fmt.parseInt(i64, date[8..10], 10) catch return date[0..];
+    const c = civilFromDays(daysFromCivil(y, mo, da) + 1);
+    return std.fmt.bufPrint(buf, "{d:0>4}-{d:0>2}-{d:0>2}", .{
+        @as(u32, @intCast(c.y)), @as(u32, @intCast(c.m)), @as(u32, @intCast(c.d)),
+    }) catch date[0..];
+}
+
+fn daysFromCivil(y_in: i64, m: i64, d: i64) i64 {
+    const y = if (m <= 2) y_in - 1 else y_in;
+    const era = @divFloor(if (y >= 0) y else y - 399, @as(i64, 400));
+    const yoe = y - era * 400;
+    const mp = if (m > 2) m - 3 else m + 9;
+    const doy = @divFloor(153 * mp + 2, @as(i64, 5)) + d - 1;
+    const doe = yoe * 365 + @divFloor(yoe, 4) - @divFloor(yoe, 100) + doy;
+    return era * 146097 + doe - 719468;
+}
+
+fn civilFromDays(z_in: i64) struct { y: i64, m: i64, d: i64 } {
+    const z = z_in + 719468;
+    const era = @divFloor(if (z >= 0) z else z - 146096, @as(i64, 146097));
+    const doe = z - era * 146097;
+    const yoe = @divFloor(doe - @divFloor(doe, 1460) + @divFloor(doe, 36524) - @divFloor(doe, 146096), @as(i64, 365));
+    const y = yoe + era * 400;
+    const doy = doe - (365 * yoe + @divFloor(yoe, 4) - @divFloor(yoe, 100));
+    const mp = @divFloor(5 * doy + 2, @as(i64, 153));
+    const d = doy - @divFloor(153 * mp + 2, @as(i64, 5)) + 1;
+    const m = if (mp < 10) mp + 3 else mp - 9;
+    return .{ .y = y + @as(i64, if (m <= 2) 1 else 0), .m = m, .d = d };
+}
+
+fn combineTimeframe(name: []const u8) ?[]const u8 {
+    if (std.mem.eql(u8, name, "RTH_VWAP")) return "1m";
+    if (std.mem.eql(u8, name, "BUY_HOLD")) return "1d";
+    if (std.mem.eql(u8, name, "30M_BUY")) return "30m";
+    if (std.mem.eql(u8, name, "5M_ORB")) return "5m";
+    return null;
+}
+
+fn combineSymbolPrefix(label: []const u8) ?[]const u8 {
+    const s = std.mem.trim(u8, label, " ");
+    if (std.ascii.eqlIgnoreCase(s, "NQ") or std.ascii.eqlIgnoreCase(s, "nq") or std.mem.eql(u8, s, "Nasdaq 100 E-mini")) return "nq";
+    if (std.ascii.eqlIgnoreCase(s, "GBPUSD") or std.ascii.eqlIgnoreCase(s, "gbpusd") or std.mem.eql(u8, s, "GBP/USD Spot")) return "gbpusd";
+    if (std.ascii.eqlIgnoreCase(s, "EURUSD") or std.ascii.eqlIgnoreCase(s, "eurusd") or std.mem.eql(u8, s, "EUR/USD Spot")) return "eurusd";
+    return null;
+}
+const CombineResult = struct {
+    trades: []engine.Trade, // heap-allocated, caller frees
+    initial_balance: f64,
+    strategies: []const u8, // comma-joined, stack buffer
+    first_ts: [16]u8,
+    last_ts: [16]u8,
+    max_drawdown: f64,
+    max_drawdown_dollars: f64,
+    max_drawdown_peak_date: [10]u8,
+    max_drawdown_trough_date: [10]u8,
+    avg_drawdown: f64,
+    avg_drawdown_dollars: f64,
+    max_intraday_drawdown: f64,
+    max_intraday_drawdown_dollars: f64,
+    max_intraday_drawdown_date: [10]u8,
+    avg_intraday_drawdown: f64,
+    avg_intraday_drawdown_dollars: f64,
+};
+
+fn compute(io: std.Io, p: Parsed) !CombineResult {
+    const n = p.ids.len;
+
+    const sources = try alloc.alloc(db.CombineSource, n);
+    defer {
+        for (sources) |s| {
+            alloc.free(s.strategy);
+            alloc.free(s.symbol);
+            alloc.free(s.instrument);
+            alloc.free(s.trades);
+        }
+        alloc.free(sources);
+    }
+    for (p.ids, 0..) |id, i| {
+        sources[i] = try db.loadCombineSource(alloc, id);
+    }
+
+    var tsrcs = try alloc.alloc(TradeSrc, n);
+    defer alloc.free(tsrcs);
+
+    var merged: std.ArrayList(engine.Trade) = .empty;
+    errdefer merged.deinit(alloc);
+    for (sources, 0..) |src, i| {
+        const scale = 1.0;
+
+        var src_s = TradeSrc{
+            .trades = src.trades,
+            .mult = scale,
+        };
+        if (combineSymbolPrefix(src.symbol)) |prefix| {
+            if (combineTimeframe(src.strategy)) |tf| {
+                const tbl = std.fmt.bufPrint(&src_s.table_buf, "{s}_{s}", .{ prefix, tf }) catch "";
+                src_s.table_len = tbl.len;
+            }
+        }
+        tsrcs[i] = src_s;
+
+        for (src.trades) |t| {
+            if (p.from_date) |fd| {
+                if (std.mem.order(u8, t.exit_ts[0..10], fd) == .lt) continue;
+            }
+            if (p.to_date) |td| {
+                if (std.mem.order(u8, t.entry_ts[0..10], td) == .gt) continue;
+            }
+            try merged.append(alloc, t);
+        }
+    }
+
+    std.mem.sort(engine.Trade, merged.items, {}, tradeLess);
+    const trades = try merged.toOwnedSlice(alloc);
+
+    var first_ts: [16]u8 = [_]u8{'9'} ** 16;
+    var last_ts: [16]u8 = [_]u8{'0'} ** 16;
+    for (trades) |t| {
+        if (std.mem.order(u8, &t.entry_ts, &first_ts) == .lt) first_ts = t.entry_ts;
+        if (std.mem.order(u8, &t.exit_ts,  &last_ts)  == .gt) last_ts  = t.exit_ts;
+    }
+    if (trades.len == 0) {
+        first_ts = [_]u8{' '} ** 16;
+        last_ts  = [_]u8{' '} ** 16;
+    }
+
+    const dd = markToMarket(io, alloc, p.initial_balance, tsrcs) catch blk: {
+        break :blk realizedDrawdown(p.initial_balance, trades);
+    };
+
+    return .{
+        .trades = trades,
+        .initial_balance = p.initial_balance,
+        .strategies = "COMBINED",
+        .first_ts = first_ts,
+        .last_ts = last_ts,
+        .max_drawdown = dd.max_drawdown,
+        .max_drawdown_dollars = dd.max_drawdown_dollars,
+        .max_drawdown_peak_date = dd.max_drawdown_peak_date,
+        .max_drawdown_trough_date = dd.max_drawdown_trough_date,
+        .avg_drawdown = dd.avg_drawdown,
+        .avg_drawdown_dollars = dd.avg_drawdown_dollars,
+        .max_intraday_drawdown = dd.max_intraday_drawdown,
+        .max_intraday_drawdown_dollars = dd.max_intraday_drawdown_dollars,
+        .max_intraday_drawdown_date = dd.max_intraday_drawdown_date,
+        .avg_intraday_drawdown = dd.avg_intraday_drawdown,
+        .avg_intraday_drawdown_dollars = dd.avg_intraday_drawdown_dollars,
+    };
+}
+
+fn tradeLess(_: void, a: engine.Trade, b: engine.Trade) bool {
+    return std.mem.order(u8, &a.exit_ts, &b.exit_ts) == .lt;
 }
 
 // ── Report + JSON ─────────────────────────────────────────────────────────────
@@ -652,15 +976,6 @@ fn tsToUnix(ts: [16]u8) i64 {
     return daysFromCivil(y, mo, da) * 86400 + hh * 3600 + mm * 60;
 }
 
-fn daysFromCivil(y_in: i64, m: i64, d: i64) i64 {
-    const y = if (m <= 2) y_in - 1 else y_in;
-    const era = @divFloor(if (y >= 0) y else y - 399, @as(i64, 400));
-    const yoe = y - era * 400;
-    const mp = if (m > 2) m - 3 else m + 9;
-    const doy = @divFloor(153 * mp + 2, @as(i64, 5)) + d - 1;
-    const doe = yoe * 365 + @divFloor(yoe, 4) - @divFloor(yoe, 100) + doy;
-    return era * 146097 + doe - 719468;
-}
 
 fn jdn(ts: [16]u8) i64 {
     const y = std.fmt.parseInt(i64, ts[0..4], 10) catch return 0;

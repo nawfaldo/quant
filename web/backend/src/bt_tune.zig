@@ -37,6 +37,7 @@ const ThreadCtx = struct {
     balance: f64,
     sizing_mode: sizing.Mode,
     base_lots: []const f64,
+    leverages: []const f64,
     vol_targets: []const f64,
     vol_halflifes: []const f64,
     vol_max_mults: []const f64,
@@ -50,6 +51,7 @@ const ThreadCtx = struct {
         alloc.free(self.strategy);
         alloc.free(self.symbol);
         alloc.free(self.base_lots);
+        alloc.free(self.leverages);
         alloc.free(self.vol_targets);
         alloc.free(self.vol_halflifes);
         alloc.free(self.vol_max_mults);
@@ -62,6 +64,7 @@ const ThreadCtx = struct {
 
 const Combo = struct {
     base_lot: f64,
+    leverage: f64,
     vol_target: f64,
     vol_halflife: f64,
     vol_max_mult: f64,
@@ -94,6 +97,15 @@ pub fn handle(req: *http.Ctx) !void {
     const base_lots_n = parseFloatList(base_lot_str, &base_lots) orelse {
         req.setStatusNumeric(400);
         try req.sendJson("{\"error\":\"invalid baseLot list\"}");
+        return;
+    };
+
+    // Parse comma-separated leverage list (empty → [1.0], like the CLI default).
+    const leverage_str = jsonStr(body, "leverage");
+    var leverages: [MAX_GRID]f64 = undefined;
+    const leverages_n = parseFloatListOrDefault(leverage_str, &leverages, 1.0) orelse {
+        req.setStatusNumeric(400);
+        try req.sendJson("{\"error\":\"invalid leverage list\"}");
         return;
     };
 
@@ -146,7 +158,7 @@ pub fn handle(req: *http.Ctx) !void {
     const slippage_val = jsonNum(body, "slippage") orelse engine.slippage;
 
     // Build the cartesian product of all swept dimensions.
-    const total = base_lots_n * vol_targets_n * vol_halflifes_n * vol_max_mults_n * vol_min_days_n;
+    const total = base_lots_n * leverages_n * vol_targets_n * vol_halflifes_n * vol_max_mults_n * vol_min_days_n;
     if (total == 0 or total > 10000) {
         req.setStatusNumeric(400);
         try req.sendJson("{\"error\":\"invalid grid size\"}");
@@ -161,6 +173,7 @@ pub fn handle(req: *http.Ctx) !void {
         .balance = balance,
         .sizing_mode = sizing_mode,
         .base_lots = try alloc.dupe(f64, base_lots[0..base_lots_n]),
+        .leverages = try alloc.dupe(f64, leverages[0..leverages_n]),
         .vol_targets = try alloc.dupe(f64, vol_targets[0..vol_targets_n]),
         .vol_halflifes = try alloc.dupe(f64, vol_halflifes[0..vol_halflifes_n]),
         .vol_max_mults = try alloc.dupe(f64, vol_max_mults[0..vol_max_mults_n]),
@@ -198,7 +211,7 @@ fn setAsyncError(err: anyerror) void {
 }
 
 fn runTuneAsync(ctx: *ThreadCtx) void {
-    const total = ctx.base_lots.len * ctx.vol_targets.len * ctx.vol_halflifes.len * ctx.vol_max_mults.len * ctx.vol_min_days.len;
+    const total = ctx.base_lots.len * ctx.leverages.len * ctx.vol_targets.len * ctx.vol_halflifes.len * ctx.vol_max_mults.len * ctx.vol_min_days.len;
     const combos = alloc.alloc(Combo, total) catch {
         g_error_msg = alloc.dupe(u8, "Alloc failed") catch null;
         g_status = .failed;
@@ -209,18 +222,21 @@ fn runTuneAsync(ctx: *ThreadCtx) void {
 
     var k: usize = 0;
     for (ctx.base_lots) |bl| {
-        for (ctx.vol_targets) |vt| {
-            for (ctx.vol_halflifes) |vh| {
-                for (ctx.vol_max_mults) |vm| {
-                    for (ctx.vol_min_days) |vd| {
-                        combos[k] = .{
-                            .base_lot = bl,
-                            .vol_target = vt,
-                            .vol_halflife = vh,
-                            .vol_max_mult = vm,
-                            .vol_min_days = vd,
-                        };
-                        k += 1;
+        for (ctx.leverages) |lev| {
+            for (ctx.vol_targets) |vt| {
+                for (ctx.vol_halflifes) |vh| {
+                    for (ctx.vol_max_mults) |vm| {
+                        for (ctx.vol_min_days) |vd| {
+                            combos[k] = .{
+                                .base_lot = bl,
+                                .leverage = lev,
+                                .vol_target = vt,
+                                .vol_halflife = vh,
+                                .vol_max_mult = vm,
+                                .vol_min_days = vd,
+                            };
+                            k += 1;
+                        }
                     }
                 }
             }
@@ -308,8 +324,8 @@ fn Worker(comptime S: type) type {
                 const c = &sh.combos[i];
                 var strat = S{
                     .initial_balance = sh.balance,
-                    .contracts = c.base_lot,
-                    .leverage = 1.0,
+                    .contracts = c.base_lot * c.leverage,
+                    .leverage = c.leverage,
                     .sizing_mode = sh.sizing_mode,
                     .vol = .{
                         .target = c.vol_target,
@@ -458,12 +474,13 @@ fn appendComboList(out: *std.ArrayList(u8), key: []const u8, sorted: []const Com
     for (sorted[0..n], 0..) |c, i| {
         const comma: []const u8 = if (i == 0) "" else ",";
         if (mode == .vol_target) {
-            const s = try std.fmt.bufPrint(&buf, "{s}{{\"growth\":{d:.4},\"drawdown\":{d:.4},\"score\":{d:.4},\"baseLot\":{d:.4},\"volTarget\":{d:.4},\"volHalflife\":{d:.4},\"volMaxMult\":{d:.4},\"volMinDays\":{d}}}", .{
+            const s = try std.fmt.bufPrint(&buf, "{s}{{\"growth\":{d:.4},\"drawdown\":{d:.4},\"score\":{d:.4},\"baseLot\":{d:.4},\"leverage\":{d:.4},\"volTarget\":{d:.4},\"volHalflife\":{d:.4},\"volMaxMult\":{d:.4},\"volMinDays\":{d}}}", .{
                 comma,
                 fin(c.growth),
                 fin(c.drawdown),
                 fin(c.score),
                 fin(c.base_lot),
+                fin(c.leverage),
                 fin(c.vol_target),
                 fin(c.vol_halflife),
                 fin(c.vol_max_mult),
@@ -471,12 +488,13 @@ fn appendComboList(out: *std.ArrayList(u8), key: []const u8, sorted: []const Com
             });
             try out.appendSlice(alloc, s);
         } else {
-            const s = try std.fmt.bufPrint(&buf, "{s}{{\"growth\":{d:.4},\"drawdown\":{d:.4},\"score\":{d:.4},\"baseLot\":{d:.4}}}", .{
+            const s = try std.fmt.bufPrint(&buf, "{s}{{\"growth\":{d:.4},\"drawdown\":{d:.4},\"score\":{d:.4},\"baseLot\":{d:.4},\"leverage\":{d:.4}}}", .{
                 comma,
                 fin(c.growth),
                 fin(c.drawdown),
                 fin(c.score),
                 fin(c.base_lot),
+                fin(c.leverage),
             });
             try out.appendSlice(alloc, s);
         }

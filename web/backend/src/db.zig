@@ -671,12 +671,14 @@ const engine = @import("bt/engine.zig");
 
 pub const CombineSource = struct {
     initial_bal: f64,
-    strategy: []const u8,  // heap-allocated, caller frees
+    strategy: []const u8,   // heap-allocated, caller frees
+    symbol: []const u8,     // heap-allocated, caller frees
+    instrument: []const u8, // heap-allocated, caller frees
     trades: []engine.Trade, // heap-allocated, caller frees
 };
 
 // Load the initial_bal and full trade list for one saved backtest.
-// The caller must free source.strategy and source.trades with `a`.
+// The caller must free source.strategy, source.symbol, source.instrument, and source.trades with `a`.
 pub fn loadCombineSource(a: std.mem.Allocator, backtest_id: i64) !CombineSource {
     var db_ptr: ?*c.sqlite3 = null;
     if (c.sqlite3_open_v2(APP_DB_PATH, &db_ptr, c.SQLITE_OPEN_READONLY | c.SQLITE_OPEN_FULLMUTEX, null) != c.SQLITE_OK)
@@ -687,15 +689,21 @@ pub fn loadCombineSource(a: std.mem.Allocator, backtest_id: i64) !CombineSource 
     var initial_bal: f64 = 0;
     var strat_buf: [64]u8 = undefined;
     var strat_len: usize = 0;
+    var sym_buf: [32]u8 = undefined;
+    var sym_len: usize = 0;
+    var inst_buf: [32]u8 = undefined;
+    var inst_len: usize = 0;
     {
         var stmt: ?*c.sqlite3_stmt = null;
-        if (c.sqlite3_prepare_v2(db_ptr, "SELECT initial_bal, strategy FROM backtests WHERE id = ?", -1, &stmt, null) != c.SQLITE_OK)
+        if (c.sqlite3_prepare_v2(db_ptr, "SELECT initial_bal, strategy, symbol, instrument FROM backtests WHERE id = ?", -1, &stmt, null) != c.SQLITE_OK)
             return error.PrepFailed;
         defer _ = c.sqlite3_finalize(stmt);
         if (c.sqlite3_bind_int64(stmt, 1, backtest_id) != c.SQLITE_OK) return error.BindFailed;
         if (c.sqlite3_step(stmt) != c.SQLITE_ROW) return error.NotFound;
         initial_bal = c.sqlite3_column_double(stmt, 0);
         strat_len = copyCol(stmt, 1, &strat_buf);
+        sym_len = copyCol(stmt, 2, &sym_buf);
+        inst_len = copyCol(stmt, 3, &inst_buf);
     }
 
     var list: std.ArrayList(engine.Trade) = .empty;
@@ -723,9 +731,13 @@ pub fn loadCombineSource(a: std.mem.Allocator, backtest_id: i64) !CombineSource 
     }
 
     const strategy = try a.dupe(u8, strat_buf[0..strat_len]);
+    const symbol = try a.dupe(u8, sym_buf[0..sym_len]);
+    const instrument = try a.dupe(u8, inst_buf[0..inst_len]);
     return .{
         .initial_bal = initial_bal,
         .strategy    = strategy,
+        .symbol      = symbol,
+        .instrument  = instrument,
         .trades      = try list.toOwnedSlice(a),
     };
 }

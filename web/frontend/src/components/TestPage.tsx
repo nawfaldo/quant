@@ -13,6 +13,7 @@ interface TestTab {
   selectedSymbol: string;
   initialBalance: string;
   baseLot: string;
+  leverage: string;
   sizing: string;
   fromDate: string;
   toDate: string;
@@ -102,6 +103,9 @@ export default function TestPage() {
             if (migrated.volMaxMult === undefined) {
               migrated.volMaxMult = "";
             }
+            if (migrated.leverage === undefined) {
+              migrated.leverage = "";
+            }
             if (migrated.combineBacktestIds === undefined) {
               migrated.combineBacktestIds = [
                 migrated.combineFirstBacktestId || "",
@@ -126,6 +130,7 @@ export default function TestPage() {
         selectedSymbol: "",
         initialBalance: "",
         baseLot: "",
+        leverage: "",
         sizing: "",
         fromDate: "",
         toDate: "",
@@ -180,6 +185,7 @@ export default function TestPage() {
     selectedSymbol,
     initialBalance,
     baseLot,
+    leverage,
     sizing,
     fromDate,
     toDate,
@@ -252,6 +258,7 @@ export default function TestPage() {
       selectedSymbol: "",
       initialBalance: "",
       baseLot: "",
+      leverage: "",
       sizing: "",
       fromDate: "",
       toDate: "",
@@ -340,6 +347,7 @@ export default function TestPage() {
     symbol: selectedSymbol,
     initialBalance,
     baseLot,
+    leverage,
     sizing,
     volTarget,
     volHalflife,
@@ -401,12 +409,13 @@ export default function TestPage() {
         return trimmed.split(/[\s,]+/).filter(Boolean).length;
       };
       const baseLotsN = parseListLen(baseLot);
+      const leveragesN = parseListLen(leverage);
       const hasVol = sizing === "Vol Target";
       const volTargetsN = hasVol ? parseListLen(volTarget, 1) : 1;
       const volHalflifesN = hasVol ? parseListLen(volHalflife, 1) : 1;
       const volMaxMultsN = hasVol ? parseListLen(volMaxMult, 1) : 1;
       const volMinDaysN = hasVol ? parseListLen(volMinDays, 1) : 1;
-      const estimatedTotal = baseLotsN * volTargetsN * volHalflifesN * volMaxMultsN * volMinDaysN;
+      const estimatedTotal = baseLotsN * leveragesN * volTargetsN * volHalflifesN * volMaxMultsN * volMinDaysN;
 
       setTuneProgress({ progress: 0, total: estimatedTotal });
 
@@ -418,6 +427,7 @@ export default function TestPage() {
           symbol: selectedSymbol,
           initialBalance,
           baseLot,
+          leverage,
           sizing,
           volTarget,
           volHalflife,
@@ -648,6 +658,7 @@ export default function TestPage() {
                       selectedSymbol: "",
                       initialBalance: "",
                       baseLot: "",
+                      leverage: "",
                       sizing: "",
                       volTarget: "",
                       volHalflife: "",
@@ -941,6 +952,7 @@ export default function TestPage() {
                         selectedSymbol: "",
                         initialBalance: "",
                         baseLot: "",
+                        leverage: "",
                         sizing: "",
                         volTarget: "",
                         volHalflife: "",
@@ -993,6 +1005,7 @@ export default function TestPage() {
                         selectedSymbol: symVal,
                         initialBalance: "",
                         baseLot: "",
+                        leverage: "",
                         sizing: "",
                         volTarget: "",
                         volHalflife: "",
@@ -1068,6 +1081,25 @@ export default function TestPage() {
                         });
                       }}
                       placeholder="e.g. 1"
+                      className="bg-gray-900 border border-gray-800/80 text-xs font-medium text-gray-200 rounded-lg px-2.5 py-1.5 outline-none hover:border-gray-700 focus:border-blue-500/80 transition-colors shrink-0 w-48 h-8 font-mono"
+                    />
+                  </div>
+
+                  <div className="flex flex-col gap-1.5">
+                    <span className="text-xs font-semibold tracking-wider text-gray-400 uppercase select-none">
+                      Leverage?
+                    </span>
+                    <input
+                      type="text"
+                      value={leverage}
+                      onChange={(e) => {
+                        updateActiveTab({
+                          leverage: e.target.value,
+                          hasResult: false,
+                          isSaved: false,
+                        });
+                      }}
+                      placeholder="e.g. 1 (default)"
                       className="bg-gray-900 border border-gray-800/80 text-xs font-medium text-gray-200 rounded-lg px-2.5 py-1.5 outline-none hover:border-gray-700 focus:border-blue-500/80 transition-colors shrink-0 w-48 h-8 font-mono"
                     />
                   </div>
@@ -1432,6 +1464,7 @@ export default function TestPage() {
                         <th className="pb-2 font-semibold pr-4">Max DD</th>
                         <th className="pb-2 font-semibold pr-4">Score</th>
                         <th className="pb-2 font-semibold pr-4">Base Lot</th>
+                        <th className="pb-2 font-semibold pr-4">Leverage</th>
                         {hasVol && (
                           <>
                             <th className="pb-2 font-semibold pr-4">Vol Target</th>
@@ -1450,6 +1483,7 @@ export default function TestPage() {
                           <td className="py-2 pr-4 text-red-400">{fmtPct(c.drawdown)}</td>
                           <td className="py-2 pr-4 text-blue-400 font-medium">{c.score.toFixed(3)}</td>
                           <td className="py-2 pr-4 text-gray-350">{c.baseLot.toFixed(2)}</td>
+                          <td className="py-2 pr-4 text-gray-350">{(c.leverage ?? 1).toFixed(2)}</td>
                           {hasVol && (
                             <>
                               <td className="py-2 pr-4 text-gray-350">{(c.volTarget ?? 0).toFixed(2)}</td>
