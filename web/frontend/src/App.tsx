@@ -1,12 +1,12 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
 import { useQuery, useQueries } from '@tanstack/react-query'
 import { TIMEFRAMES, makeDefaultPanelConfig, type TF, type MarchLayouts, type LayoutPanelConfig } from './types'
-import { fetchTrades, fetchMarchSettings, saveMarchSettings, fetchMarchLayouts, saveMarchLayouts } from './api'
+import { fetchTrades, fetchMarchSettings, saveMarchSettings, fetchMarchLayouts, saveMarchLayouts, type RunResult, type TuneResult } from './api'
 
 import BacktestsModal from './components/BacktestsModal'
 import IndicatorsModal from './components/IndicatorsModal'
 import StatsPage from './components/StatsPage'
-import BacktestPage from './components/BacktestPage'
+import TestPage from './components/TestPage'
 import MarchPage from './components/MarchPage'
 import AccountModal from './components/AccountModal'
 import StrategyModal from './components/StrategyModal'
@@ -101,10 +101,10 @@ function MarchRouteComponent() {
   )
 }
 
-function BacktestRouteComponent() {
+function TestRouteComponent() {
   return (
-    <div className="flex flex-1 overflow-hidden">
-      <BacktestPage />
+    <div className="flex flex-1 overflow-hidden min-h-0">
+      <TestPage />
     </div>
   )
 }
@@ -127,13 +127,13 @@ const statsRoute = createRoute({
   component: StatsRouteComponent,
 })
 
-const backtestRoute = createRoute({
+const testRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: '/backtest',
-  component: BacktestRouteComponent,
+  path: '/test',
+  component: TestRouteComponent,
 })
 
-const routeTree = rootRoute.addChildren([indexRoute, statsRoute, backtestRoute])
+const routeTree = rootRoute.addChildren([indexRoute, statsRoute, testRoute])
 
 const router = createRouter({ routeTree })
 
@@ -288,6 +288,10 @@ export default function App() {
     saveMarchLayouts(marchLayouts)
   }, [marchLayouts])
 
+  const [testResults, setTestResults] = useState<Record<string, RunResult>>({})
+  const [testErrors, setTestErrors] = useState<Record<string, string>>({})
+  const [tuneResults, setTuneResults] = useState<Record<string, TuneResult>>({})
+
   const [selectedAccountId, setSelectedAccountId] = useState<number | null>(null)
   const [marchAccountModalOpen, setMarchAccountModalOpen] = useState(false)
   const [marchStrategyModalOpen, setMarchStrategyModalOpen] = useState(false)
@@ -326,6 +330,9 @@ export default function App() {
       activeMarchPanel, setActiveMarchPanel,
       selectedBacktestId, setSelectedBacktestId,
       activeTab, setActiveTab,
+      testResults, setTestResults,
+      testErrors, setTestErrors,
+      tuneResults, setTuneResults,
     }}>
       <RouterProvider router={router} />
     </AppContext.Provider>

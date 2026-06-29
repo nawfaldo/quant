@@ -79,6 +79,11 @@ export interface MonteCarloData {
   p95: number
   pProfit: number
   pRuin: number
+  ddP5: number
+  ddP25: number
+  ddP50: number
+  ddP75: number
+  ddP95: number
   paths: Float32Array[]
 }
 

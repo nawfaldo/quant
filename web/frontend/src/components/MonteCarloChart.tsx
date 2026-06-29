@@ -7,9 +7,6 @@ function fmt$(v: number) {
   return '$' + Math.round(v).toLocaleString()
 }
 
-function pctLabel(v: number) {
-  return (v * 100).toFixed(1) + '%'
-}
 
 export default function MonteCarloChart({ data }: { data: MonteCarloData }) {
   const containerRef = useRef<HTMLDivElement>(null)
@@ -52,7 +49,7 @@ export default function MonteCarloChart({ data }: { data: MonteCarloData }) {
       if (!ctx) return
       ctx.scale(dpr, dpr)
 
-      const { paths, steps, stepValues, initialBalance, sims, pProfit, pRuin } = data
+      const { paths, steps, stepValues, initialBalance } = data
 
       // Y range across all paths
       let yMin = Infinity, yMax = -Infinity
@@ -219,23 +216,6 @@ export default function MonteCarloChart({ data }: { data: MonteCarloData }) {
         }
       }
 
-      // Stats text (top-left corner)
-      const sx = PAD.left + 10
-      let sy = PAD.top + 14
-      ctx.textAlign = 'left'
-
-      ctx.font = '10px monospace'
-      ctx.fillStyle = 'rgba(107,114,128,0.9)'
-      ctx.fillText(`${sims} sims · ${tradeMax.toLocaleString()} trades`, sx, sy)
-      sy += 18
-
-      ctx.font = '11px monospace'
-      ctx.fillStyle = pProfit >= 0.5 ? 'rgba(16,185,129,0.9)' : 'rgba(239,68,68,0.9)'
-      ctx.fillText(`P(profit) ${pctLabel(pProfit)}`, sx, sy)
-      sy += 16
-
-      ctx.fillStyle = pRuin > 0.05 ? 'rgba(239,68,68,0.9)' : 'rgba(107,114,128,0.85)'
-      ctx.fillText(`P(ruin)   ${pctLabel(pRuin)}`, sx, sy)
     }
 
     draw()

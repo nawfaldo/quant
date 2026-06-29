@@ -74,13 +74,13 @@ export default function Sidebar() {
           )}
         </Link>
 
-        <Link to="/backtest">
+        <Link to="/test">
           {({ isActive }) => (
             <div
               className={`w-9 h-9 flex items-center justify-center rounded-lg transition-all duration-200 ${
                 isActive ? "text-white" : "text-gray-500 hover:text-gray-200"
               }`}
-              title="Backtest"
+              title="Test"
             >
               <svg
                 width="20"

@@ -5,6 +5,7 @@ import type { Trade } from '../types'
 interface Props {
   trades: Trade[]
   initialBalance: number
+  startDate?: string // "YYYY-MM-DD" — anchor the chart origin here if earlier than first trade
 }
 
 const TZ = 'UTC'
@@ -18,7 +19,7 @@ const dateFormatter = new Intl.DateTimeFormat('en-US', {
   hour12: false,
 })
 
-export default function EquityChart({ trades, initialBalance }: Props) {
+export default function EquityChart({ trades, initialBalance, startDate }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApiBase<UTCTimestamp> | null>(null)
 
@@ -28,8 +29,8 @@ export default function EquityChart({ trades, initialBalance }: Props) {
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const chart = createChart(el, {
-      autoSize: true,
-      ...(({ attributionLogo: false }) as any),
+      width: el.clientWidth,
+      height: el.clientHeight,
       layout: {
         background: { type: ColorType.Solid, color: 'transparent' },
         textColor: '#9ca3af',
@@ -49,6 +50,10 @@ export default function EquityChart({ trades, initialBalance }: Props) {
         borderColor: '#1f2937',
         timeVisible: true,
         secondsVisible: false,
+        // With ~2000 daily points the default minBarSpacing (0.5px) is wider than
+        // the container can hold, so fitContent() clamps and only shows the most
+        // recent slice. A tiny minBarSpacing lets the full history compress to fit.
+        minBarSpacing: 0.001,
       },
       rightPriceScale: {
         borderColor: '#1f2937',
@@ -65,11 +70,6 @@ export default function EquityChart({ trades, initialBalance }: Props) {
       lastValueVisible: true,
     })
 
-    // Build equity curve aggregated to daily resolution.
-    // With 33k+ trades, per-trade resolution exceeds lightweight-charts' minBarSpacing
-    // and fitContent can only show the last ~7% of the data — the initial balance
-    // at the start of history is unreachable. Daily resolution (~1 point/day) fits
-    // the entire history on screen.
     const sorted = [...trades].sort((a, b) => a.xt - b.xt)
 
     let balance = initialBalance
@@ -84,9 +84,13 @@ export default function EquityChart({ trades, initialBalance }: Props) {
     const points: { time: number; value: number }[] = []
 
     if (sorted.length > 0) {
-      // Anchor: initial balance on the day before the first trade.
       const firstDay = Math.floor(sorted[0].et / 86400) * 86400
-      points.push({ time: firstDay - 86400, value: initialBalance })
+      let anchorDay = firstDay - 86400
+      if (startDate) {
+        const parsed = Date.parse(startDate + 'T00:00:00Z') / 1000
+        if (!isNaN(parsed) && parsed < anchorDay) anchorDay = parsed
+      }
+      points.push({ time: anchorDay, value: initialBalance })
     }
 
     for (const [day, val] of [...dailyBalance.entries()].sort((a, b) => a[0] - b[0])) {
@@ -94,14 +98,44 @@ export default function EquityChart({ trades, initialBalance }: Props) {
     }
 
     areaSeries.setData(points.map(p => ({ time: p.time as UTCTimestamp, value: p.value })))
-    chart.timeScale().fitContent()
 
     chartRef.current = chart as IChartApiBase<UTCTimestamp>
 
+    const firstTime = points.length > 0 ? points[0].time : null
+    const lastTime = points.length > 0 ? points[points.length - 1].time : null
+
+    const fitRange = () => {
+      if (firstTime !== null && lastTime !== null && firstTime !== lastTime) {
+        chart.timeScale().setVisibleRange({
+          from: firstTime as UTCTimestamp,
+          to: lastTime as UTCTimestamp,
+        })
+      } else {
+        chart.timeScale().fitContent()
+      }
+    }
+
+    // Single ResizeObserver owns both sizing and the initial range fit.
+    // This avoids the race between our observer and lightweight-charts' internal
+    // autoSize observer — by not using autoSize at all.
+    let fitted = false
+    const ro = new ResizeObserver(() => {
+      const w = el.clientWidth
+      const h = el.clientHeight
+      if (w === 0 || h === 0) return
+      chart.resize(w, h)
+      if (!fitted) {
+        fitted = true
+        fitRange()
+      }
+    })
+    ro.observe(el)
+
     return () => {
+      ro.disconnect()
       chart.remove()
     }
-  }, [trades, initialBalance])
+  }, [trades, initialBalance, startDate])
 
   return <div ref={containerRef} className="w-full h-full" />
 }

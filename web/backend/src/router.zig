@@ -4,6 +4,9 @@ const cache = @import("cache.zig");
 const db = @import("db.zig");
 const settings = @import("settings.zig");
 const march = @import("march_api.zig");
+const bt_run = @import("bt_run.zig");
+const bt_combine = @import("bt_combine.zig");
+const bt_tune = @import("bt_tune.zig");
 
 const alloc = std.heap.page_allocator;
 
@@ -202,6 +205,72 @@ pub fn onRequest(req: *http.Ctx) !void {
         return;
     }
 
+    // Run a backtest on demand (the Test page). POST { strategy, symbol, … }.
+    if (std.mem.eql(u8, path, "/api/run")) {
+        if (!std.mem.eql(u8, req.method orelse "", "POST")) {
+            req.setStatusNumeric(405);
+            try req.sendJson("{\"error\":\"use POST\"}");
+            return;
+        }
+        try bt_run.handle(req);
+        return;
+    }
+
+    // Save an on-demand run into app.db. POST with the same params as /api/run.
+    if (std.mem.eql(u8, path, "/api/run/save")) {
+        if (!std.mem.eql(u8, req.method orelse "", "POST")) {
+            req.setStatusNumeric(405);
+            try req.sendJson("{\"error\":\"use POST\"}");
+            return;
+        }
+        try bt_run.handleSave(req);
+        return;
+    }
+
+    // Combine several saved backtests into one portfolio result.
+    if (std.mem.eql(u8, path, "/api/combine")) {
+        if (!std.mem.eql(u8, req.method orelse "", "POST")) {
+            req.setStatusNumeric(405);
+            try req.sendJson("{\"error\":\"use POST\"}");
+            return;
+        }
+        try bt_combine.handle(req);
+        return;
+    }
+
+    if (std.mem.eql(u8, path, "/api/combine/save")) {
+        if (!std.mem.eql(u8, req.method orelse "", "POST")) {
+            req.setStatusNumeric(405);
+            try req.sendJson("{\"error\":\"use POST\"}");
+            return;
+        }
+        try bt_combine.handleSave(req);
+        return;
+    }
+
+    // Tune (grid-search) position-sizing parameters. POST with the same base
+    // fields as /api/run, but baseLot and vol params can be comma-separated
+    // lists for sweep.
+    if (std.mem.eql(u8, path, "/api/tune")) {
+        if (!std.mem.eql(u8, req.method orelse "", "POST")) {
+            req.setStatusNumeric(405);
+            try req.sendJson("{\"error\":\"use POST\"}");
+            return;
+        }
+        try bt_tune.handle(req);
+        return;
+    }
+
+    if (std.mem.eql(u8, path, "/api/tune/status")) {
+        if (!std.mem.eql(u8, req.method orelse "", "GET")) {
+            req.setStatusNumeric(405);
+            try req.sendJson("{\"error\":\"use GET\"}");
+            return;
+        }
+        try bt_tune.handleStatus(req);
+        return;
+    }
+
     if (std.mem.eql(u8, path, "/api/backtests")) {
         const body = db.getBacktests(alloc) catch |err| {
             std.debug.print("db error: {}\n", .{err});
@@ -213,6 +282,29 @@ pub fn onRequest(req: *http.Ctx) !void {
         try sendJson(req, body);
         return;
     }
+
+    if (std.mem.startsWith(u8, path, "/api/backtests/")) {
+        if (!std.mem.eql(u8, req.method orelse "", "DELETE")) {
+            req.setStatusNumeric(405);
+            try req.sendJson("{\"error\":\"use DELETE\"}");
+            return;
+        }
+        const id_str = path["/api/backtests/".len..];
+        const backtest_id = std.fmt.parseInt(i64, id_str, 10) catch {
+            req.setStatusNumeric(400);
+            try req.sendJson("{\"error\":\"invalid id\"}");
+            return;
+        };
+        db.deleteBacktest(backtest_id) catch |err| {
+            std.debug.print("delete db error: {}\n", .{err});
+            req.setStatusNumeric(500);
+            try req.sendJson("{\"error\":\"delete db failed\"}");
+            return;
+        };
+        try req.sendJson("{\"status\":\"ok\"}");
+        return;
+    }
+
 
     if (std.mem.startsWith(u8, path, "/api/trades/")) {
         const id_str      = path["/api/trades/".len..];

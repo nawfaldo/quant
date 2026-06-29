@@ -3,6 +3,7 @@ const builtin = @import("builtin");
 const http = @import("http.zig");
 const router = @import("router.zig");
 const settings = @import("settings.zig");
+const db = @import("db.zig");
 
 const DEFAULT_PORT: u16 = 8080;
 
@@ -23,6 +24,7 @@ pub fn main(init: std.process.Init) !void {
     const io = init.io;
 
     try settings.init();
+    try db.initBacktestSchema();
 
     // Optional PORT override (defaults to 8080).
     var port: u16 = DEFAULT_PORT;

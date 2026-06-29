@@ -1,5 +1,6 @@
-import { createContext, useContext } from 'react'
+import React, { createContext, useContext } from 'react'
 import type { TF, Trade, MarchLayouts, LayoutPanelConfig } from '../types'
+import type { RunResult, TuneResult } from '../api'
 
 export interface AppContextType {
   modalOpen: boolean
@@ -43,6 +44,12 @@ export interface AppContextType {
   setSelectedBacktestId: (id: number | null) => void
   activeTab: 'analysis' | 'equity' | 'monte-carlo'
   setActiveTab: (tab: 'analysis' | 'equity' | 'monte-carlo') => void
+  testResults: Record<string, RunResult>
+  setTestResults: React.Dispatch<React.SetStateAction<Record<string, RunResult>>>
+  testErrors: Record<string, string>
+  setTestErrors: React.Dispatch<React.SetStateAction<Record<string, string>>>
+  tuneResults: Record<string, TuneResult>
+  setTuneResults: React.Dispatch<React.SetStateAction<Record<string, TuneResult>>>
 }
 
 export const AppContext = createContext<AppContextType | null>(null)
