@@ -3,6 +3,9 @@ const http = @import("http.zig");
 const engine = @import("bt/engine.zig");
 const data = @import("bt/data.zig");
 const sizing = @import("bt/sizings/vol_target.zig");
+const bt_run = @import("bt_run.zig");
+const report = @import("tune_report.zig");
+const scoring = @import("tune_score.zig");
 
 const RthVwap = @import("bt/strategies/rth_vwap.zig").RthVwap;
 const ThirtyMinBuy = @import("bt/strategies/30m_buy.zig").ThirtyMinBuy;
@@ -29,6 +32,50 @@ pub var g_progress: std.atomic.Value(usize) = .init(0);
 pub var g_total: usize = 0;
 pub var g_result_json: ?[]const u8 = null;
 pub var g_error_msg: ?[]const u8 = null;
+
+// ── Experiment-platform state (progress timing + post-run artifacts) ─────────
+// All written once at completion (or read live for progress); nothing here feeds
+// the engine. Held until the next /api/tune overwrites them.
+pub var g_start_ms: i64 = 0; // monotonic ms at job start (for elapsed/throughput/ETA)
+pub var g_end_ms: i64 = 0; // monotonic ms at completion
+pub var g_io: ?std.Io = null; // io handle, used to read the monotonic clock on status polls
+pub var g_combos: ?[]Combo = null; // full result grid, kept alive for ranking/export endpoints
+pub var g_meta: report.Meta = .{ .strategy = "", .symbol = "", .initial_balance = 0, .total = 0, .elapsed_ms = 0 };
+pub var g_summary_json: ?[]const u8 = null;
+pub var g_csv: ?[]const u8 = null;
+pub var g_markdown: ?[]const u8 = null;
+pub var g_heatmap_json: ?[]const u8 = null;
+
+fn nowMs(io: std.Io) i64 {
+    return std.Io.Clock.awake.now(io).toMilliseconds();
+}
+
+// Free any artifacts from a previous run before starting a new one.
+fn resetArtifacts() void {
+    if (g_combos) |c| {
+        alloc.free(c);
+        g_combos = null;
+    }
+    if (g_summary_json) |s| {
+        alloc.free(s);
+        g_summary_json = null;
+    }
+    if (g_csv) |s| {
+        alloc.free(s);
+        g_csv = null;
+    }
+    if (g_markdown) |s| {
+        alloc.free(s);
+        g_markdown = null;
+    }
+    if (g_heatmap_json) |s| {
+        alloc.free(s);
+        g_heatmap_json = null;
+    }
+    if (g_meta.strategy.len > 0) alloc.free(g_meta.strategy);
+    if (g_meta.symbol.len > 0) alloc.free(g_meta.symbol);
+    g_meta = .{ .strategy = "", .symbol = "", .initial_balance = 0, .total = 0, .elapsed_ms = 0 };
+}
 
 const ThreadCtx = struct {
     io: std.Io,
@@ -62,17 +109,11 @@ const ThreadCtx = struct {
     }
 };
 
-const Combo = struct {
-    base_lot: f64,
-    leverage: f64,
-    vol_target: f64,
-    vol_halflife: f64,
-    vol_max_mult: f64,
-    vol_min_days: u32,
-    growth: f64 = 0,
-    drawdown: f64 = 0,
-    score: f64 = 0,
-};
+// The combo type (swept params + realized metrics) now lives in tune_report.zig
+// so the reporting/serialization code and the worker share one definition. The
+// worker fills the metric fields; the report module reads them. Engine and
+// worker-pool mechanics are unchanged.
+const Combo = report.Combo;
 
 pub fn handle(req: *http.Ctx) !void {
     const body = req.body orelse {
@@ -193,6 +234,17 @@ pub fn handle(req: *http.Ctx) !void {
         alloc.free(em);
         g_error_msg = null;
     }
+    resetArtifacts();
+    g_io = req.io;
+    g_start_ms = nowMs(req.io);
+    g_end_ms = 0;
+    g_meta = .{
+        .strategy = alloc.dupe(u8, strategy) catch "",
+        .symbol = alloc.dupe(u8, prefix) catch "",
+        .initial_balance = balance,
+        .total = total,
+        .elapsed_ms = 0,
+    };
     g_progress.store(0, .release);
     g_total = total;
     g_status = .running;
@@ -278,7 +330,10 @@ fn runTuneAsync(ctx: *ThreadCtx) void {
         return;
     }
 
-    computeScores(combos);
+    // Configurable score (see tune_score.zig) — replaces the old growth-only
+    // rank composite. Each combo's score is now an explicit formula over its
+    // metrics, so every ranking/summary/export agrees on one number.
+    applyScores(combos);
 
     const work = alloc.alloc(Combo, total) catch {
         g_error_msg = alloc.dupe(u8, "Alloc failed") catch null;
@@ -296,9 +351,40 @@ fn runTuneAsync(ctx: *ThreadCtx) void {
         return;
     };
 
+    // ── Experiment artifacts ──────────────────────────────────────────────────
+    // Keep the full grid alive for the ranking/export endpoints, stamp elapsed
+    // time, then pre-build the summary/CSV/Markdown/heatmap once. All best-effort:
+    // a failure here still yields a completed job with the core result JSON.
+    g_end_ms = nowMs(ctx.io);
+    g_meta.elapsed_ms = g_end_ms - g_start_ms;
+
+    g_combos = alloc.dupe(Combo, combos) catch null;
+    if (g_combos) |gc| {
+        g_summary_json = report.buildSummary(alloc, gc) catch null;
+        g_csv = report.buildCsv(alloc, gc, g_meta) catch null;
+        g_markdown = report.buildMarkdown(alloc, gc, g_meta) catch null;
+        g_heatmap_json = report.buildHeatmap(alloc, gc) catch null;
+    }
+
     g_result_json = json;
     g_status = .completed;
     ctx.deinit();
+}
+
+// Apply the configurable score to every combo. Isolated from the formula itself
+// (tune_score.zig) so the ranking rule can change without touching the grid.
+fn applyScores(combos: []Combo) void {
+    for (combos) |*c| {
+        c.score = scoring.compute(.{
+            .sharpe = c.sharpe,
+            .profit_factor = c.profit_factor,
+            .max_drawdown = c.drawdown,
+            .return_pct = c.return_pct,
+            .expectancy = c.expectancy,
+            .win_rate = c.win_rate,
+            .avg_drawdown = c.avg_drawdown,
+        });
+    }
 }
 
 const Shared = struct {
@@ -341,13 +427,20 @@ fn Worker(comptime S: type) type {
                 };
                 defer result.deinit(sh.gpa);
 
-                // Compute growth and max drawdown.
-                var final_balance = sh.balance;
-                for (result.trades) |t| {
-                    final_balance += t.pnl;
-                }
-                c.growth = if (sh.balance > 0) (final_balance - sh.balance) / sh.balance * 100.0 else 0.0;
+                // Reporting only: pull the full metric set from this combo's
+                // Result using the SAME computeReport() that /api/run uses, so
+                // ranking/CSV/summary stay numerically identical to a single run.
+                // (growth/drawdown keep their old meaning for back-compat.)
+                const rep = bt_run.computeReport(result);
+                c.final_balance = rep.final_balance;
+                c.return_pct = rep.net_growth;
+                c.growth = rep.net_growth;
+                c.profit_factor = rep.profit_factor;
+                c.sharpe = rep.sharpe;
+                c.expectancy = rep.expectancy;
+                c.win_rate = rep.win_rate;
                 c.drawdown = result.max_drawdown;
+                c.avg_drawdown = result.avg_drawdown;
 
                 _ = g_progress.fetchAdd(1, .release);
             }
@@ -388,55 +481,6 @@ fn runGrid(comptime S: type, io: std.Io, combos: []Combo, balance: f64, sizing_m
     for (threads[0..spawned]) |t| t.join();
 
     if (shared.failed.load(.acquire)) return shared.worker_err;
-}
-
-fn computeScores(combos: []Combo) void {
-    const n = combos.len;
-    if (n <= 1) {
-        if (n == 1) combos[0].score = 1;
-        return;
-    }
-
-    // Build index arrays for sorting.
-    const gi = alloc.alloc(usize, n) catch return;
-    defer alloc.free(gi);
-    const di = alloc.alloc(usize, n) catch return;
-    defer alloc.free(di);
-    const grank = alloc.alloc(usize, n) catch return;
-    defer alloc.free(grank);
-
-    for (0..n) |i| {
-        gi[i] = i;
-        di[i] = i;
-    }
-
-    // Sort growth indices descending.
-    const GrowthCtx = struct {
-        combos: []const Combo,
-        fn cmp(ctx: @This(), a: usize, b: usize) bool {
-            return ctx.combos[a].growth > ctx.combos[b].growth;
-        }
-    };
-    std.mem.sort(usize, gi, GrowthCtx{ .combos = combos }, GrowthCtx.cmp);
-
-    // Sort drawdown indices ascending.
-    const DdCtx = struct {
-        combos: []const Combo,
-        fn cmp(ctx: @This(), a: usize, b: usize) bool {
-            return ctx.combos[a].drawdown < ctx.combos[b].drawdown;
-        }
-    };
-    std.mem.sort(usize, di, DdCtx{ .combos = combos }, DdCtx.cmp);
-
-    // Growth rank for each combo.
-    for (gi, 0..) |ci, r| grank[ci] = r;
-
-    // Composite score: 1.0 = best in both, 0.0 = worst in both.
-    const denom: f64 = @floatFromInt(2 * (n - 1));
-    for (di, 0..) |ci, r| {
-        const rank_sum: f64 = @floatFromInt(grank[ci] + r);
-        combos[ci].score = 1.0 - rank_sum / denom;
-    }
 }
 
 fn buildTuneJson(work: []Combo, mode: sizing.Mode) ![]const u8 {
@@ -659,17 +703,35 @@ fn parseUintListOrDefault(s: []const u8, dst: []u32, def: u32) ?usize {
 pub fn handleStatus(req: *http.Ctx) !void {
     switch (g_status) {
         .idle, .running => {
-            var buf: [128]u8 = undefined;
-            const json = try std.fmt.bufPrint(&buf, "{{\"status\":\"running\",\"progress\":{d},\"total\":{d}}}", .{
-                g_progress.load(.acquire),
-                g_total,
-            });
+            const done = g_progress.load(.acquire);
+            const total = g_total;
+            const remaining = if (total > done) total - done else 0;
+            const pct: f64 = if (total > 0) @as(f64, @floatFromInt(done)) / @as(f64, @floatFromInt(total)) * 100.0 else 0.0;
+
+            // Elapsed + rolling throughput drive a live ETA. Uses the monotonic
+            // clock captured at job start.
+            const elapsed_ms: i64 = if (g_io) |io| @max(@as(i64, 0), nowMs(io) - g_start_ms) else 0;
+            const elapsed_s: f64 = @as(f64, @floatFromInt(elapsed_ms)) / 1000.0;
+            const throughput: f64 = if (elapsed_s > 0) @as(f64, @floatFromInt(done)) / elapsed_s else 0.0;
+            const eta_ms: i64 = if (throughput > 0)
+                @intFromFloat(@as(f64, @floatFromInt(remaining)) / throughput * 1000.0)
+            else
+                0;
+
+            // progress/total kept for backward compatibility with the existing UI.
+            const json = try std.fmt.allocPrint(alloc,
+                \\{{"status":"running","progress":{d},"total":{d},"completed":{d},"remaining":{d},"percentage":{d:.2},"elapsed":{d},"estimatedRemaining":{d},"throughput":{d:.2}}}
+            , .{ done, total, done, remaining, pct, elapsed_ms, eta_ms, throughput });
+            defer alloc.free(json);
             try req.setContentType(.JSON);
             try req.sendBody(json);
         },
         .completed => {
             if (g_result_json) |json| {
-                const resp = try std.fmt.allocPrint(alloc, "{{\"status\":\"completed\",\"result\":{s}}}", .{json});
+                const summary = g_summary_json orelse "null";
+                const resp = try std.fmt.allocPrint(alloc,
+                    \\{{"status":"completed","elapsed":{d},"total":{d},"summary":{s},"result":{s}}}
+                , .{ g_meta.elapsed_ms, g_meta.total, summary, json });
                 defer alloc.free(resp);
                 try req.setContentType(.JSON);
                 try req.sendBody(resp);
@@ -685,4 +747,73 @@ pub fn handleStatus(req: *http.Ctx) !void {
             try req.sendBody(resp);
         },
     }
+}
+
+// ── Result / export endpoints ─────────────────────────────────────────────────
+// All read the artifacts built at completion. If no completed run is in memory
+// they return 404 so the client can distinguish "not run yet" from an empty grid.
+
+fn noResults(req: *http.Ctx) !void {
+    req.setStatusNumeric(404);
+    try req.sendJson("{\"error\":\"no completed tune in memory\"}");
+}
+
+// GET /api/tune/results?sort=score|growth|drawdown|profitFactor|sharpe|expectancy&limit=N
+pub fn handleResults(req: *http.Ctx) !void {
+    const combos = g_combos orelse return noResults(req);
+    const query = req.query orelse "";
+    const sort_key = report.parseSort(queryParam(query, "sort") orelse "score");
+    const limit: usize = blk: {
+        const l = queryParam(query, "limit") orelse break :blk 20;
+        break :blk std.fmt.parseInt(usize, l, 10) catch 20;
+    };
+    const body = report.buildRanked(alloc, combos, sort_key, limit) catch return fail(req, error.Build);
+    defer alloc.free(body);
+    try req.setContentType(.JSON);
+    try req.sendBody(body);
+}
+
+// GET /api/tune/results.json[?full=true] — summary by default; full grid on demand.
+pub fn handleResultsJson(req: *http.Ctx) !void {
+    const combos = g_combos orelse return noResults(req);
+    const query = req.query orelse "";
+    const full = std.mem.eql(u8, queryParam(query, "full") orelse "", "true");
+    const body = report.buildResultsJson(alloc, combos, g_meta, full) catch return fail(req, error.Build);
+    defer alloc.free(body);
+    try req.setContentType(.JSON);
+    try req.sendBody(body);
+}
+
+// GET /api/tune/results.csv — every combo, sorted by score desc.
+pub fn handleResultsCsv(req: *http.Ctx) !void {
+    const csv = g_csv orelse return noResults(req);
+    req.setHeader("Content-Type", "text/csv") catch {};
+    try req.sendBody(csv);
+}
+
+// GET /api/tune/report.md — Markdown experiment report.
+pub fn handleReportMd(req: *http.Ctx) !void {
+    const md = g_markdown orelse return noResults(req);
+    req.setHeader("Content-Type", "text/markdown") catch {};
+    try req.sendBody(md);
+}
+
+// GET /api/tune/heatmap.json — volTarget × volHalflife average-score surface.
+pub fn handleHeatmap(req: *http.Ctx) !void {
+    const hm = g_heatmap_json orelse return noResults(req);
+    try req.setContentType(.JSON);
+    try req.sendBody(hm);
+}
+
+// Local query-string param reader (mirrors router.zig's helper) so these
+// handlers don't depend on router internals.
+fn queryParam(query: []const u8, key: []const u8) ?[]const u8 {
+    var pos: usize = 0;
+    while (pos < query.len) {
+        const eq = std.mem.indexOfScalarPos(u8, query, pos, '=') orelse break;
+        const amp = std.mem.indexOfScalarPos(u8, query, eq + 1, '&') orelse query.len;
+        if (std.mem.eql(u8, query[pos..eq], key)) return query[eq + 1 .. amp];
+        pos = amp + 1;
+    }
+    return null;
 }

@@ -226,7 +226,7 @@ fn fail(req: *http.Ctx, err: anyerror) !void {
 // Direct port of report.print's computation (sans the stdout printing) so the
 // JSON carries the exact same Sharpe / win-rate / daily-loss numbers the CLI
 // prints. Drawdown fields come straight off the engine Result.
-const Report = struct {
+pub const Report = struct {
     final_balance: f64,
     net_growth: f64,
     sharpe: f64,
@@ -250,7 +250,7 @@ const Report = struct {
     avg_daily_loss: f64,
 };
 
-fn computeReport(result: engine.Result) Report {
+pub fn computeReport(result: engine.Result) Report {
     const initial_balance = result.initial_balance;
     var balance = initial_balance;
 

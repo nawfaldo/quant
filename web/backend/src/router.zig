@@ -271,6 +271,29 @@ pub fn onRequest(req: *http.Ctx) !void {
         return;
     }
 
+    // Tune result/ranking/export endpoints (read the artifacts built when the
+    // last tune completed). All GET. Exact-match, so order among them is moot.
+    if (std.mem.eql(u8, path, "/api/tune/results.csv")) {
+        try bt_tune.handleResultsCsv(req);
+        return;
+    }
+    if (std.mem.eql(u8, path, "/api/tune/results.json")) {
+        try bt_tune.handleResultsJson(req);
+        return;
+    }
+    if (std.mem.eql(u8, path, "/api/tune/results")) {
+        try bt_tune.handleResults(req);
+        return;
+    }
+    if (std.mem.eql(u8, path, "/api/tune/report.md")) {
+        try bt_tune.handleReportMd(req);
+        return;
+    }
+    if (std.mem.eql(u8, path, "/api/tune/heatmap.json")) {
+        try bt_tune.handleHeatmap(req);
+        return;
+    }
+
     if (std.mem.eql(u8, path, "/api/backtests")) {
         const body = db.getBacktests(alloc) catch |err| {
             std.debug.print("db error: {}\n", .{err});
