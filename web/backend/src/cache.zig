@@ -222,6 +222,14 @@ pub fn fetchMarchTicks(io: std.Io, a: std.mem.Allocator, symbol: []const u8, sin
     return withRetry(io, buildMarchTicks, .{ io, a, symbol, since });
 }
 
+// fx_nq overlay candles: aggregate the fx_nq_ticks tick table (timestamp, BID,
+// ASK) into OHLC bars at `tf`, using the tick MID = (BID+ASK)/2 — the same price
+// bt/fx.zig fills against. Returns the same binary blob format as the regular
+// march candles, so the frontend reuses the identical decoder.
+pub fn fetchFxNqCandles(io: std.Io, a: std.mem.Allocator, tf: []const u8, from: []const u8, to: []const u8) ![]const u8 {
+    return withRetry(io, buildFxNqCandles, .{ io, a, tf, from, to });
+}
+
 fn buildMarchTickCandles(io: std.Io, a: std.mem.Allocator, symbol: []const u8, tf: []const u8, since_ns: i64, out: *std.ArrayList(u8)) !u32 {
     const table = try std.fmt.allocPrint(a, "bm_{s}_ticks", .{symbol});
     defer a.free(table);
@@ -376,6 +384,91 @@ fn buildMarchCandles(io: std.Io, a: std.mem.Allocator, symbol: []const u8, tf: [
         };
         count += ticks_count;
     }
+
+    std.mem.writeInt(u32, out.items[0..4], MAGIC, .little);
+    std.mem.writeInt(u32, out.items[4..8], count, .little);
+    return out.toOwnedSlice(a);
+}
+
+// Aggregate fx_nq_ticks into OHLC bars at `tf`. first()/last() take a column (not
+// an expression) in QuestDB, so the MID is computed in a subquery first. volume
+// is the tick count in each bucket (the tick table has no size column). Same
+// from/to/no-bounds shape as buildMarchCandles; output is the same binary blob.
+fn buildFxNqCandles(io: std.Io, a: std.mem.Allocator, tf: []const u8, from: []const u8, to: []const u8) ![]const u8 {
+    // The MID is computed in a subquery (first()/last() take a column, not an
+    // expression). `timestamp(timestamp)` re-designates the subquery's timestamp
+    // so SAMPLE BY has a base timestamp; ALIGN TO CALENDAR already returns rows
+    // ascending, so no outer ORDER BY is needed for the bounded case.
+    const agg =
+        "SELECT cast(timestamp as long) ts, first(mid) open, max(mid) high, min(mid) low, last(mid) close, count() volume" ++
+        " FROM (SELECT timestamp, (BID+ASK)/2.0 mid FROM fx_nq_ticks{s}) timestamp(timestamp)" ++
+        " SAMPLE BY {s} FILL(NONE) ALIGN TO CALENDAR";
+
+    const where = if (from.len > 0 and to.len > 0)
+        try std.fmt.allocPrint(a, " WHERE timestamp >= '{s}' AND timestamp < dateadd('d', 1, '{s}')", .{ from, to })
+    else if (from.len > 0)
+        try std.fmt.allocPrint(a, " WHERE timestamp >= '{s}'", .{from})
+    else
+        try a.dupe(u8, "");
+    defer a.free(where);
+
+    // With explicit bounds, stream the whole window ascending. Without bounds
+    // (rare — the chart always sends `from`), take the most recent 1500 buckets.
+    const sql = if (from.len > 0)
+        try std.fmt.allocPrint(a, agg, .{ where, tf })
+    else
+        try std.fmt.allocPrint(a,
+            "SELECT ts, open, high, low, close, volume FROM (" ++ agg ++ " ORDER BY ts DESC LIMIT 1500) ORDER BY ts ASC",
+            .{ where, tf },
+        );
+    defer a.free(sql);
+
+    var rd = try questdb.open(io, a, sql);
+    defer rd.deinit();
+
+    var out: std.ArrayList(u8) = .empty;
+    errdefer out.deinit(a);
+    try out.appendNTimes(a, 0, HEADER_BYTES);
+
+    _ = rd.nextLine(); // skip the CSV column-name header row
+    var count: u32 = 0;
+
+    while (rd.nextLine()) |line| {
+        if (line.len == 0) continue;
+
+        var c1: usize = 0;
+        while (c1 < line.len and line[c1] != ',') : (c1 += 1) {}
+        var c2: usize = c1 + 1;
+        while (c2 < line.len and line[c2] != ',') : (c2 += 1) {}
+        var c3: usize = c2 + 1;
+        while (c3 < line.len and line[c3] != ',') : (c3 += 1) {}
+        var c4: usize = c3 + 1;
+        while (c4 < line.len and line[c4] != ',') : (c4 += 1) {}
+        var c5: usize = c4 + 1;
+        while (c5 < line.len and line[c5] != ',') : (c5 += 1) {}
+        if (c5 >= line.len) continue;
+
+        const ts_micros = std.fmt.parseInt(i64, line[0..c1], 10) catch continue;
+        const open  = std.fmt.parseFloat(f32, line[c1 + 1 .. c2]) catch continue;
+        const high  = std.fmt.parseFloat(f32, line[c2 + 1 .. c3]) catch continue;
+        const low   = std.fmt.parseFloat(f32, line[c3 + 1 .. c4]) catch continue;
+        const close = std.fmt.parseFloat(f32, line[c4 + 1 .. c5]) catch continue;
+        const volume = std.fmt.parseFloat(f32, line[c5 + 1 ..])   catch continue;
+
+        const ts_secs: u32 = @intCast(@divFloor(ts_micros, 1_000_000));
+        try out.ensureUnusedCapacity(a, 24);
+        const dst = out.items.len;
+        out.items.len += 24;
+        std.mem.writeInt(u32, out.items[dst..][0..4],      ts_secs,          .little);
+        std.mem.writeInt(u32, out.items[dst + 4 ..][0..4], @bitCast(open),   .little);
+        std.mem.writeInt(u32, out.items[dst + 8 ..][0..4], @bitCast(high),   .little);
+        std.mem.writeInt(u32, out.items[dst + 12..][0..4], @bitCast(low),    .little);
+        std.mem.writeInt(u32, out.items[dst + 16..][0..4], @bitCast(close),  .little);
+        std.mem.writeInt(u32, out.items[dst + 20..][0..4], @bitCast(volume), .little);
+        count += 1;
+    }
+
+    if (!rd.complete) return error.IncompleteResponse;
 
     std.mem.writeInt(u32, out.items[0..4], MAGIC, .little);
     std.mem.writeInt(u32, out.items[4..8], count, .little);

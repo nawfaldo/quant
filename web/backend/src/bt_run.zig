@@ -55,6 +55,15 @@ pub fn handleSave(req: *http.Ctx) !void {
 
     const id = persist(p, result) catch |err| return fail(req, err);
 
+    // Persist the FX-execution book alongside the native one (best-effort, NQ
+    // only) so the chart can overlay fx-priced trades for this saved backtest.
+    if (std.mem.eql(u8, p.prefix, "nq")) {
+        if (fxmod.reprice(req.io, alloc, result.trades, p.params.cfg.instrument) catch null) |fx| {
+            defer fx.deinit(alloc);
+            saveFxTrades(id, fx.trades) catch |err| std.debug.print("save fx trades failed: {}\n", .{err});
+        }
+    }
+
     const resp = try std.fmt.allocPrint(alloc, "{{\"id\":{d}}}", .{id});
     defer alloc.free(resp);
     try req.setContentType(.JSON);
@@ -649,6 +658,26 @@ fn persist(p: Parsed, result: engine.Result) !i64 {
     }
 
     return db.saveBacktest(meta, save_trades, mc_save);
+}
+
+// Convert a re-priced engine.Trade slice into SaveTrade rows and persist them as
+// the backtest's fx book. The ts slices point into `trades`, which the caller
+// keeps alive across this call (db.bindText is SQLITE_STATIC).
+fn saveFxTrades(id: i64, trades: []const engine.Trade) !void {
+    const save_trades = try alloc.alloc(db.SaveTrade, trades.len);
+    defer alloc.free(save_trades);
+    for (trades, 0..) |t, i| {
+        save_trades[i] = .{
+            .side_long = t.side == .long,
+            .entry_ts = trades[i].entry_ts[0..],
+            .exit_ts = trades[i].exit_ts[0..],
+            .entry_price = fin(t.entry_price),
+            .exit_price = fin(t.exit_price),
+            .pnl = fin(t.pnl),
+            .contracts = fin(t.contracts),
+        };
+    }
+    try db.saveFxTrades(id, save_trades);
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

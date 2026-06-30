@@ -398,6 +398,32 @@ export async function fetchTrades(id: number): Promise<Trade[]> {
   return data
 }
 
+// FX-execution trades for a saved backtest (persisted at save time, re-priced
+// from fx_nq_ticks). Same binary format as fetchTrades; empty for non-NQ books.
+export async function fetchTradesFx(id: number): Promise<Trade[]> {
+  const res = await fetch(`${BACKEND_URL}/api/trades/${id}/fx`)
+  if (!res.ok) throw new Error(`Backend error: ${res.status}`)
+  const buf = await res.arrayBuffer()
+  const view = new DataView(buf)
+  if (view.getUint32(0, true) !== TRADE_MAGIC) throw new Error('Bad trades magic')
+  const count = view.getUint32(4, true)
+  const data: Trade[] = new Array(count)
+  let off = HEADER_BYTES
+  for (let i = 0; i < count; i++) {
+    data[i] = {
+      side: view.getUint8(off) === 0 ? 'long' : 'short',
+      et:   view.getUint32(off + 1,  true) as UTCTimestamp,
+      xt:   view.getUint32(off + 5,  true) as UTCTimestamp,
+      ep:   view.getFloat32(off + 9,  true),
+      xp:   view.getFloat32(off + 13, true),
+      pnl:  view.getFloat32(off + 17, true),
+      qty:  view.getFloat32(off + 21, true),
+    }
+    off += TRADE_ROW_BYTES
+  }
+  return data
+}
+
 // ── March strategy API (served on main web port 8080 via /api/march/) ────────
 
 export interface MarchStrategy {

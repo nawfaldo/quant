@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
 import { useQuery, useQueries } from '@tanstack/react-query'
 import { TIMEFRAMES, makeDefaultPanelConfig, type TF, type MarchLayouts, type LayoutPanelConfig } from './types'
-import { fetchTrades, fetchMarchSettings, saveMarchSettings, fetchMarchLayouts, saveMarchLayouts, type RunResult, type TuneResult } from './api'
+import { fetchTrades, fetchTradesFx, fetchMarchSettings, saveMarchSettings, fetchMarchLayouts, saveMarchLayouts, type RunResult, type TuneResult } from './api'
 
 import BacktestsModal from './components/BacktestsModal'
 import IndicatorsModal from './components/IndicatorsModal'
@@ -173,6 +173,20 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [tradeQueries.map(q => q.dataUpdatedAt).join(',')]
   )
+  // FX-execution trades for the same toggled-on backtests, re-priced from
+  // fx_nq_ticks — overlaid on the fx_nq candle pane when that overlay is shown.
+  const fxTradeQueries = useQueries({
+    queries: visibleIdsArray.map(id => ({
+      queryKey: ['tradesFx', id] as const,
+      queryFn: () => fetchTradesFx(id),
+      staleTime: Infinity,
+    }))
+  })
+  const allFxTrades = useMemo(
+    () => fxTradeQueries.flatMap(q => q.data ?? []),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [fxTradeQueries.map(q => q.dataUpdatedAt).join(',')]
+  )
   const [selectedBacktestId, setSelectedBacktestId] = useState<number | null>(null)
   const [activeTab, setActiveTab] = useState<'analysis' | 'equity' | 'splicing' | 'monte-carlo'>('analysis')
   const [marchSymbol, setMarchSymbol] = useState<'nq' | 'es'>('nq')
@@ -313,7 +327,7 @@ export default function App() {
     <AppContext.Provider value={{
       modalOpen, setModalOpen,
       indicatorsOpen, setIndicatorsOpen,
-      visibleIds, loadingIds, allTrades, toggleId,
+      visibleIds, loadingIds, allTrades, allFxTrades, toggleId,
       marchSymbol, setMarchSymbol,
       marchTf, setMarchTf,
       marchStreamStatus, setMarchStreamStatus,

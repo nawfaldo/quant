@@ -121,6 +121,17 @@ pub fn getBacktests(a: std.mem.Allocator) ![]const u8 {
 }
 
 pub fn getTradesBin(a: std.mem.Allocator, backtest_id: i64) ![]const u8 {
+    return tradesBinFrom(a, backtest_id, "trades");
+}
+
+// FX-execution trades for a saved backtest, persisted by saveFxTrades (re-priced
+// from fx_nq_ticks at save time). Same binary format as getTradesBin — returns a
+// header with count 0 when none were saved (e.g. a non-NQ book).
+pub fn getFxTradesBin(a: std.mem.Allocator, backtest_id: i64) ![]const u8 {
+    return tradesBinFrom(a, backtest_id, "fx_trades");
+}
+
+fn tradesBinFrom(a: std.mem.Allocator, backtest_id: i64, comptime table: []const u8) ![]const u8 {
     var db: ?*c.sqlite3 = null;
     if (c.sqlite3_open_v2(APP_DB_PATH, &db, c.SQLITE_OPEN_READONLY | c.SQLITE_OPEN_FULLMUTEX, null) != c.SQLITE_OK)
         return error.DbOpenFailed;
@@ -133,7 +144,7 @@ pub fn getTradesBin(a: std.mem.Allocator, backtest_id: i64) ![]const u8 {
         "  CAST(strftime('%s', entry_ts) AS INTEGER)," ++
         "  CAST(strftime('%s', exit_ts)  AS INTEGER)," ++
         "  entry_price, exit_price, pnl, contracts" ++
-        " FROM trades WHERE backtest_id = ? ORDER BY entry_ts";
+        " FROM " ++ table ++ " WHERE backtest_id = ? ORDER BY entry_ts";
     if (c.sqlite3_prepare_v2(db, sql, -1, &stmt, null) != c.SQLITE_OK)
         return error.PrepFailed;
     defer _ = c.sqlite3_finalize(stmt);
@@ -337,6 +348,14 @@ const BACKTEST_SCHEMA =
     \\  pnl REAL NOT NULL DEFAULT 0, contracts REAL NOT NULL DEFAULT 0
     \\);
     \\CREATE INDEX IF NOT EXISTS idx_trades_bt ON trades(backtest_id);
+    \\CREATE TABLE IF NOT EXISTS fx_trades (
+    \\  id INTEGER PRIMARY KEY AUTOINCREMENT,
+    \\  backtest_id INTEGER NOT NULL, side TEXT NOT NULL DEFAULT 'long',
+    \\  entry_ts TEXT NOT NULL DEFAULT '', exit_ts TEXT NOT NULL DEFAULT '',
+    \\  entry_price REAL NOT NULL DEFAULT 0, exit_price REAL NOT NULL DEFAULT 0,
+    \\  pnl REAL NOT NULL DEFAULT 0, contracts REAL NOT NULL DEFAULT 0
+    \\);
+    \\CREATE INDEX IF NOT EXISTS idx_fx_trades_bt ON fx_trades(backtest_id);
     \\CREATE TABLE IF NOT EXISTS montecarlo (
     \\  id INTEGER PRIMARY KEY AUTOINCREMENT,
     \\  run_at TEXT NOT NULL DEFAULT '', source_id INTEGER NOT NULL,
@@ -621,6 +640,51 @@ pub fn saveBacktest(meta: SaveMeta, trades: []const SaveTrade, mc: ?SaveMonteCar
 
     if (c.sqlite3_exec(db, "COMMIT;", null, null, null) != c.SQLITE_OK) return error.DbCommit;
     return bt_id;
+}
+
+// Persist the FX-execution trade book for an already-saved backtest. Called after
+// saveBacktest with that backtest's id; runs in its own transaction (the fx book
+// is derived best-effort data, so it isn't atomic with the native save). Replaces
+// any existing fx_trades rows for the id so a re-save stays consistent.
+pub fn saveFxTrades(backtest_id: i64, trades: []const SaveTrade) !void {
+    var db: ?*c.sqlite3 = null;
+    if (c.sqlite3_open(APP_DB_PATH, &db) != c.SQLITE_OK) return error.DbOpen;
+    defer _ = c.sqlite3_close(db);
+    _ = c.sqlite3_busy_timeout(db, 3000);
+    _ = c.sqlite3_exec(db, BACKTEST_SCHEMA, null, null, null);
+
+    if (c.sqlite3_exec(db, "BEGIN;", null, null, null) != c.SQLITE_OK) return error.DbBegin;
+    errdefer _ = c.sqlite3_exec(db, "ROLLBACK;", null, null, null);
+
+    {
+        var stmt: ?*c.sqlite3_stmt = null;
+        if (c.sqlite3_prepare_v2(db, "DELETE FROM fx_trades WHERE backtest_id = ?", -1, &stmt, null) != c.SQLITE_OK)
+            return error.PrepFailed;
+        defer _ = c.sqlite3_finalize(stmt);
+        _ = c.sqlite3_bind_int64(stmt, 1, backtest_id);
+        if (c.sqlite3_step(stmt) != c.SQLITE_DONE) return error.InsertFailed;
+    }
+
+    {
+        var stmt: ?*c.sqlite3_stmt = null;
+        if (c.sqlite3_prepare_v2(db, "INSERT INTO fx_trades (backtest_id, side, entry_ts, exit_ts, entry_price, exit_price, pnl, contracts) VALUES (?,?,?,?,?,?,?,?)", -1, &stmt, null) != c.SQLITE_OK)
+            return error.PrepFailed;
+        defer _ = c.sqlite3_finalize(stmt);
+        for (trades) |t| {
+            _ = c.sqlite3_reset(stmt);
+            _ = c.sqlite3_bind_int64(stmt, 1, backtest_id);
+            bindText(stmt, 2, if (t.side_long) "long" else "short");
+            bindText(stmt, 3, t.entry_ts);
+            bindText(stmt, 4, t.exit_ts);
+            _ = c.sqlite3_bind_double(stmt, 5, t.entry_price);
+            _ = c.sqlite3_bind_double(stmt, 6, t.exit_price);
+            _ = c.sqlite3_bind_double(stmt, 7, t.pnl);
+            _ = c.sqlite3_bind_double(stmt, 8, t.contracts);
+            if (c.sqlite3_step(stmt) != c.SQLITE_DONE) return error.InsertFailed;
+        }
+    }
+
+    if (c.sqlite3_exec(db, "COMMIT;", null, null, null) != c.SQLITE_OK) return error.DbCommit;
 }
 
 pub fn getTrades(a: std.mem.Allocator, backtest_id: i64) ![]const u8 {
@@ -1125,6 +1189,17 @@ pub fn deleteBacktest(backtest_id: i64) !void {
     {
         var stmt: ?*c.sqlite3_stmt = null;
         const sql = "DELETE FROM trades WHERE backtest_id = ?";
+        if (c.sqlite3_prepare_v2(db, sql, -1, &stmt, null) == c.SQLITE_OK) {
+            defer _ = c.sqlite3_finalize(stmt);
+            _ = c.sqlite3_bind_int64(stmt, 1, backtest_id);
+            _ = c.sqlite3_step(stmt);
+        }
+    }
+
+    // Delete from fx_trades
+    {
+        var stmt: ?*c.sqlite3_stmt = null;
+        const sql = "DELETE FROM fx_trades WHERE backtest_id = ?";
         if (c.sqlite3_prepare_v2(db, sql, -1, &stmt, null) == c.SQLITE_OK) {
             defer _ = c.sqlite3_finalize(stmt);
             _ = c.sqlite3_bind_int64(stmt, 1, backtest_id);
