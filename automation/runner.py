@@ -211,6 +211,19 @@ class TuneClient:
         """GET a raw artifact (csv/json/md) as bytes."""
         return self._request("GET", path).content
 
+    def save_run(self, body: dict[str, str]) -> int:
+        """POST /api/run/save — run a single backtest and persist it to app.db
+        (so it appears under /stats). Returns the new backtest id. This is the
+        RUN path, not the tune path, so it never touches the tuner's global
+        state."""
+        resp = self._request("POST", "/api/run/save", json=body)
+        data = resp.json()
+        if data.get("error"):
+            raise TuneApiError(f"save failed: {data['error']}")
+        if "id" not in data:
+            raise TuneApiError(f"unexpected save response: {data}")
+        return int(data["id"])
+
 
 # ── Result model ──────────────────────────────────────────────────────────────
 
@@ -225,6 +238,7 @@ class ExperimentResult:
     error: Optional[str] = None
     elapsed_seconds: float = 0.0
     best_score: Optional[float] = None
+    best_score_return: Optional[float] = None  # return % of the best-by-score config
     best_sharpe: Optional[float] = None
     best_profit_factor: Optional[float] = None
     best_drawdown: Optional[float] = None
@@ -235,6 +249,9 @@ class ExperimentResult:
             "Experiment": self.name,
             "Status": self.status,
             "Best Score": self.best_score,
+            # Profit % of the best-by-score config — the one --save-best persists.
+            # (Distinct from "Best Return", which is the highest-return combo.)
+            "Best Score Profit %": self.best_score_return,
             "Best Sharpe": self.best_sharpe,
             "Best PF": self.best_profit_factor,
             "Best Drawdown": self.best_drawdown,
@@ -255,6 +272,22 @@ _ARTIFACTS: dict[str, str] = {
     "report.md": "/api/tune/report.md",
     "heatmap.json": "/api/tune/heatmap.json",
 }
+
+
+# The six swept dimensions a tune best-combo carries; the rest of the run body
+# (strategy, symbol, balance, costs, dates, sizing) comes from the experiment's
+# base config unchanged.
+_SAVE_SWEPT = ("baseLot", "leverage", "volTarget", "volHalflife", "volMaxMult", "volMinDays")
+
+
+def _build_save_body(base: dict[str, Any], best: dict[str, Any]) -> dict[str, str]:
+    """Build a /api/run/save body: the experiment's base params (from its saved
+    config.json) with the swept fields pinned to the single best-combo values."""
+    body = {k: str(v) for k, v in base.items() if k in _TUNE_KEYS}
+    for key in _SAVE_SWEPT:
+        if best.get(key) is not None:
+            body[key] = str(best[key])
+    return body
 
 
 def _format_eta(ms: float) -> str:
@@ -291,6 +324,7 @@ def _extract_summary(result: ExperimentResult, status: dict[str, Any]) -> None:
         return _safe_float(node.get(metric)) if isinstance(node, dict) else None
 
     result.best_score = pick("bestByScore", "score")
+    result.best_score_return = pick("bestByScore", "returnPct")
     result.best_sharpe = pick("bestSharpe", "sharpe")
     result.best_profit_factor = pick("bestProfitFactor", "profitFactor")
     result.best_drawdown = pick("lowestDrawdown", "maxDrawdown")
@@ -469,7 +503,7 @@ class Suite:
         self._client = TuneClient(cfg.base_url, cfg.http)
         self._runner = ExperimentRunner(self._client, cfg)
 
-    def run(self) -> list[ExperimentResult]:
+    def run(self, ask_save_best: bool = True) -> list[ExperimentResult]:
         total = len(self._cfg.experiments)
         log.info("Running %d experiment(s) against %s", total, self._cfg.base_url)
         results: list[ExperimentResult] = []
@@ -479,7 +513,105 @@ class Suite:
             result = self._runner.run(experiment, i, total)
             results.append(result)
         self._write_summary(results)
+        if ask_save_best:
+            self._prompt_and_save(results)
         return results
+
+    # ── Saving the best config of each experiment to /stats ───────────────────
+
+    def _prompt_and_save(self, results: list[ExperimentResult]) -> None:
+        """After a run, offer to persist each experiment's best (by score) config
+        as a saved backtest. One yes/no for the whole set."""
+        savable = [r for r in results if r.status == "completed" and r.output_dir]
+        if not savable:
+            return
+        try:
+            answer = input(
+                f"\nSave the best (by score) config of {len(savable)} experiment(s) "
+                f"to saved backtests (view at /stats)? [y/N]: "
+            ).strip().lower()
+        except EOFError:
+            answer = "n"
+        if answer not in ("y", "yes"):
+            log.info("Not saving best configs.")
+            return
+        self._save_best([r.output_dir for r in savable if r.output_dir])
+
+    def save_best_from_disk(self) -> None:
+        """Standalone: for every experiment in the config, find its most recent
+        results folder on disk, save that run's best combo, and rebuild
+        summary.csv from those folders. Lets you persist an already-finished
+        suite (and refresh the summary, e.g. for new columns) without re-running."""
+        out = self._cfg.output_dir
+        if not out.exists():
+            log.error("No results directory: %s", out)
+            return
+        pairs = [
+            (e, f) for e in self._cfg.experiments
+            if (f := self._latest_folder(out, e.name)) is not None
+        ]
+        if not pairs:
+            log.error("No result folders found under %s", out)
+            return
+
+        # Refresh summary.csv from disk first (fast), then save (network-bound).
+        results = [
+            r for exp, folder in pairs
+            if (r := self._result_from_folder(exp.name, folder)) is not None
+        ]
+        if results:
+            self._write_summary(results)
+        self._save_best([f for _, f in pairs])
+
+    @staticmethod
+    def _result_from_folder(name: str, folder: Path) -> Optional[ExperimentResult]:
+        """Reconstruct an ExperimentResult (for summary.csv) from a folder's saved
+        results.json, reusing the same extraction as a live run."""
+        res_path = folder / "results.json"
+        if not res_path.exists():
+            return None
+        try:
+            data = json.loads(res_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        result = ExperimentResult(name=name, status="completed", output_dir=folder)
+        # results.json carries {elapsedMs, summary{...}}; map it to the shape
+        # _extract_summary expects from a /status payload.
+        _extract_summary(result, {"elapsed": data.get("elapsedMs", 0), "summary": data.get("summary")})
+        return result
+
+    def _save_best(self, folders: list[Path]) -> None:
+        saved = 0
+        for folder in folders:
+            cfg_path, res_path = folder / "config.json", folder / "results.json"
+            if not (cfg_path.exists() and res_path.exists()):
+                log.warning("Incomplete results in %s — skipping", folder.name)
+                continue
+            try:
+                base = json.loads(cfg_path.read_text(encoding="utf-8"))
+                results = json.loads(res_path.read_text(encoding="utf-8"))
+                best = (results.get("summary") or {}).get("bestByScore")
+                if not isinstance(best, dict):
+                    log.warning("No bestByScore in %s — skipping", folder.name)
+                    continue
+                new_id = self._client.save_run(_build_save_body(base, best))
+                log.info("Saved best of %s → backtest #%d", folder.name, new_id)
+                saved += 1
+            except (TuneApiError, ValueError, KeyError, OSError) as exc:
+                log.error("Could not save %s: %s", folder.name, exc)
+        if saved:
+            console.print(
+                f"\n[bold green]Saved {saved} backtest(s).[/] "
+                f"View them at [cyan]http://localhost:5173/stats[/]"
+            )
+
+    @staticmethod
+    def _latest_folder(out: Path, name: str) -> Optional[Path]:
+        """Most recent `<timestamp>_<name>` folder (timestamps sort lexically)."""
+        matches = sorted(
+            p for p in out.iterdir() if p.is_dir() and p.name.endswith(f"_{name}")
+        )
+        return matches[-1] if matches else None
 
     def _write_summary(self, results: list[ExperimentResult]) -> None:
         self._cfg.output_dir.mkdir(parents=True, exist_ok=True)
@@ -526,6 +658,12 @@ def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run quant tuning experiments sequentially.")
     parser.add_argument("--config", type=Path, default=Path(__file__).with_name("config.yaml"))
     parser.add_argument("--base-url", type=str, default=None, help="Override base_url from the config.")
+    parser.add_argument(
+        "--save-best",
+        action="store_true",
+        help="Don't run anything; save the best (by score) config of each experiment's "
+             "most recent results folder to /stats. Use this to persist an already-finished run.",
+    )
     return parser.parse_args()
 
 
@@ -548,7 +686,11 @@ def main() -> int:
         )
 
     try:
-        Suite(cfg).run()
+        suite = Suite(cfg)
+        if args.save_best:
+            suite.save_best_from_disk()
+        else:
+            suite.run()
     except KeyboardInterrupt:
         log.warning("Interrupted by user.")
         return 130
