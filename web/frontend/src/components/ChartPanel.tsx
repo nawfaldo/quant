@@ -106,6 +106,42 @@ async function fetchMarchCandles(
   return data;
 }
 
+// fx_nq overlay candles: same binary format as the march candles, aggregated
+// server-side from the fx_nq_ticks tick table. No symbol param — the table is
+// NQ-specific.
+async function fetchFxNqCandles(
+  tf: TF,
+  from?: string,
+  to?: string,
+): Promise<Bar[]> {
+  const params = new URLSearchParams({ tf: tf.table });
+  if (from) params.set("from", from);
+  if (to) params.set("to", to);
+  const res = await fetch(
+    `${BACKEND_URL}/api/march/fx-candles/bin?${params.toString()}`,
+  );
+  if (!res.ok) throw new Error(`Backend error: ${res.status}`);
+  const buf = await res.arrayBuffer();
+  const view = new DataView(buf);
+  if (view.getUint32(0, true) !== 0x45444c43)
+    throw new Error("Bad response magic");
+  const count = view.getUint32(4, true);
+  const data: Bar[] = new Array(count);
+  let off = 8;
+  for (let i = 0; i < count; i++) {
+    data[i] = {
+      time: view.getUint32(off, true) as UTCTimestamp,
+      open: view.getFloat32(off + 4, true),
+      high: view.getFloat32(off + 8, true),
+      low: view.getFloat32(off + 12, true),
+      close: view.getFloat32(off + 16, true),
+      volume: view.getFloat32(off + 20, true),
+    };
+    off += 24;
+  }
+  return data;
+}
+
 const TZ = "UTC";
 
 const timeFormatter = new Intl.DateTimeFormat("en-US", {
@@ -170,7 +206,12 @@ export default function ChartPanel({
   const { symbol, tf, mode, fromDate, toDate, vwap } = config;
 
   const containerRef = useRef<HTMLDivElement>(null);
-  const { visibleTradeStrategies, allTrades } = useApp();
+  const { visibleTradeStrategies, allTrades, allFxTrades } = useApp();
+  // Latest fx trades, read inside the pane-creation effect without making it a
+  // dependency (that effect re-fetches candles; trade updates flow via a separate
+  // effect instead).
+  const allFxTradesRef = useRef(allFxTrades);
+  allFxTradesRef.current = allFxTrades;
   const [streamStatus, setStreamStatus] = useState<
     "loading" | "live" | "idle" | "error"
   >("idle");
@@ -179,9 +220,12 @@ export default function ChartPanel({
   const [chartSeries, setChartSeries] = useState<any>(null);
   const chartRef = useRef<any>(null);
   const vwapSeriesRef = useRef<any>(null);
+  const fxSeriesRef = useRef<any>(null);
+  const [showFxNq, setShowFxNq] = useState(false);
   const activePositionsPlugin = useRef(new ActivePositionsPrimitive());
   const historicalTradesPlugin = useRef(new HistoricalTradesPrimitive());
   const tradeLinesPrimitive = useRef(new TradeLinesPrimitive());
+  const fxTradeLinesPrimitive = useRef(new TradeLinesPrimitive());
   const [chartContextMenu, setChartContextMenu] = useState<{ x: number; y: number } | null>(null);
 
   useEffect(() => {
@@ -223,6 +267,10 @@ export default function ChartPanel({
       layout: {
         background: { type: ColorType.Solid, color: "#030712" },
         textColor: "#d1d5db",
+        panes: {
+          separatorColor: "#030712",
+          separatorHoverColor: "#030712",
+        },
       },
       grid: {
         vertLines: { color: "#111827" },
@@ -276,6 +324,10 @@ export default function ChartPanel({
       visible: vwap && symbol === "nq",
     });
     vwapSeriesRef.current = vwapSeries;
+
+    // The fx_nq overlay candles live in a SECOND pane (created on demand by the
+    // toggle effect below), so NQ keeps its own full pane + price axis on top and
+    // fx_nq stacks underneath with its own axis.
 
     // Streaming state — shared between the catch-up fetch and the live WS feed.
     let lastCandle: Bar | null = null;
@@ -594,6 +646,7 @@ export default function ChartPanel({
       chart.remove();
       setChartSeries(null);
       chartRef.current = null;
+      fxSeriesRef.current = null;
     };
   }, [symbol, tf, mode, fromDate, toDate]);
 
@@ -719,9 +772,81 @@ export default function ChartPanel({
     tradeLinesPrimitive.current.setTrades(allTrades, tf.seconds);
   }, [allTrades, tf, chartSeries]);
 
+  // fx-priced trades for the same toggled-on backtests, drawn on the fx_nq pane.
+  // Only populated while the fx_nq overlay is shown (NQ only); cleared otherwise.
+  useEffect(() => {
+    if (!chartSeries) return;
+    const show = showFxNq && symbol === "nq";
+    fxTradeLinesPrimitive.current.setTrades(show ? allFxTrades : [], tf.seconds);
+  }, [allFxTrades, showFxNq, symbol, tf, chartSeries]);
+
   useEffect(() => {
     vwapSeriesRef.current?.applyOptions({ visible: vwap && symbol === "nq" });
   }, [vwap, symbol, chartSeries]);
+
+  // fx_nq overlay: when toggled on (NQ only), create a SECOND pane below the NQ
+  // pane holding the aggregated fx candles (own price axis), and fetch its data.
+  // On toggle off / unmount / range change, the fx series is removed, which drops
+  // the empty pane so NQ reclaims the full height.
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart || !chartSeries) return;
+    if (!(showFxNq && symbol === "nq")) return;
+
+    const fxSeries = chart.addSeries(
+      CandlestickSeries,
+      {
+        upColor: "#22c55e",
+        downColor: "#ef4444",
+        borderUpColor: "#22c55e",
+        borderDownColor: "#ef4444",
+        wickUpColor: "#22c55e",
+        wickDownColor: "#ef4444",
+        lastValueVisible: true,
+        priceLineVisible: false,
+      },
+      1, // pane index 1 → new pane stacked below NQ
+    );
+    fxSeries.attachPrimitive(fxTradeLinesPrimitive.current);
+    fxSeriesRef.current = fxSeries;
+    fxTradeLinesPrimitive.current.setTrades(allFxTradesRef.current, tf.seconds);
+
+    // Give the NQ pane ~2/3 of the height, fx_nq the rest.
+    const panes = chart.panes();
+    if (panes.length > 1) {
+      panes[0].setStretchFactor(2);
+      panes[1].setStretchFactor(1);
+    }
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const candles =
+          mode === "latest"
+            ? await fetchFxNqCandles(tf, fromDate)
+            : await fetchFxNqCandles(tf, fromDate, toDate);
+        if (cancelled) return;
+        // fx_nq_ticks may extend past where nq_1m ends; setData would otherwise
+        // scroll the (right-anchored) view to the fx end, leaving the NQ pane
+        // blank. Preserve the current time window across the update.
+        const prevRange = chart.timeScale().getVisibleRange();
+        fxSeries.setData(fillGaps(candles, tf.seconds) as any);
+        if (prevRange) {
+          try { chart.timeScale().setVisibleRange(prevRange); } catch { /* range out of bounds */ }
+        }
+      } catch (err) {
+        console.warn("fx_nq candles load failed:", err);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      try {
+        chart.removeSeries(fxSeries);
+      } catch { /* chart already disposed */ }
+      fxSeriesRef.current = null;
+    };
+  }, [showFxNq, symbol, tf, mode, fromDate, toDate, chartSeries]);
 
   return (
     <div className="flex flex-col bg-gray-950 min-h-0 min-w-0 h-full w-full">
@@ -785,7 +910,7 @@ export default function ChartPanel({
             e.preventDefault();
             e.stopPropagation();
             const menuWidth = 140;
-            const menuHeight = 104;
+            const menuHeight = symbol === "nq" ? 144 : 104;
             let x = e.clientX;
             let y = e.clientY;
 
@@ -843,6 +968,25 @@ export default function ChartPanel({
             </svg>
             Backtests
           </button>
+          {symbol === "nq" && (
+            <button
+              onClick={() => {
+                setShowFxNq((v) => !v);
+                setChartContextMenu(null);
+              }}
+              className="w-full px-4 py-2 text-left hover:bg-blue-600/20 hover:text-white transition-colors duration-150 cursor-pointer whitespace-nowrap flex items-center gap-2"
+            >
+              <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
+                <rect x="1" y="8.5" width="2.5" height="5" rx="0.4" stroke="currentColor" strokeWidth="1.1" />
+                <line x1="2.25" y1="6.5" x2="2.25" y2="15" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" />
+                <rect x="6.75" y="5" width="2.5" height="6" rx="0.4" stroke="currentColor" strokeWidth="1.1" />
+                <line x1="8" y1="2.5" x2="8" y2="13" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" />
+                <rect x="12.5" y="9" width="2.5" height="4" rx="0.4" stroke="currentColor" strokeWidth="1.1" />
+                <line x1="13.75" y1="7" x2="13.75" y2="15" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" />
+              </svg>
+              {showFxNq ? "Hide fx_nq" : "Show fx_nq"}
+            </button>
+          )}
         </div>
       )}
     </div>

@@ -341,6 +341,27 @@ pub fn onRequest(req: *http.Ctx) !void {
     }
 
 
+    // GET /api/trades/:id/fx — saved FX-execution trades (binary, same format as
+    // /api/trades/:id). Must precede the /api/trades/ prefix match below.
+    if (std.mem.startsWith(u8, path, "/api/trades/") and std.mem.endsWith(u8, path, "/fx")) {
+        const id_str = path["/api/trades/".len .. path.len - "/fx".len];
+        const backtest_id = std.fmt.parseInt(i64, id_str, 10) catch {
+            req.setStatusNumeric(400);
+            try req.sendJson("{\"error\":\"invalid id\"}");
+            return;
+        };
+        const body = db.getFxTradesBin(alloc, backtest_id) catch |err| {
+            std.debug.print("db error: {}\n", .{err});
+            req.setStatusNumeric(500);
+            try req.sendJson("{\"error\":\"db failed\"}");
+            return;
+        };
+        defer alloc.free(body);
+        req.setHeader("Content-Type", "application/octet-stream") catch {};
+        try req.sendBody(body);
+        return;
+    }
+
     if (std.mem.startsWith(u8, path, "/api/trades/")) {
         const id_str      = path["/api/trades/".len..];
         const backtest_id = std.fmt.parseInt(i64, id_str, 10) catch {
@@ -409,6 +430,26 @@ pub fn onRequest(req: *http.Ctx) !void {
 
         const body = cache.fetchMarchCandles(req.io, alloc, q_symbol, tf, from, to) catch |err| {
             std.debug.print("march candles fetch error: {}\n", .{err});
+            req.setStatusNumeric(503);
+            try req.sendJson("{\"error\":\"fetch failed\"}");
+            return;
+        };
+        defer alloc.free(body);
+        req.setHeader("Content-Type", "application/octet-stream") catch {};
+        try req.sendBody(body);
+        return;
+    }
+
+    if (std.mem.eql(u8, path, "/api/march/fx-candles/bin")) {
+        const query = req.query orelse "";
+        const tf = queryParam(query, "tf") orelse "1m";
+        const q_from = queryParam(query, "from") orelse "";
+        const q_to   = queryParam(query, "to")   orelse "";
+        const from = if (isIsoDate(q_from)) q_from else "";
+        const to   = if (isIsoDate(q_to))   q_to   else "";
+
+        const body = cache.fetchFxNqCandles(req.io, alloc, tf, from, to) catch |err| {
+            std.debug.print("fx_nq candles fetch error: {}\n", .{err});
             req.setStatusNumeric(503);
             try req.sendJson("{\"error\":\"fetch failed\"}");
             return;

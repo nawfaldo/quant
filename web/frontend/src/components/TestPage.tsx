@@ -2,7 +2,6 @@ import { useState, useMemo, useEffect, useRef } from "react";
 import EquityChart from "./EquityChart";
 import MonteCarloChart from "./MonteCarloChart";
 import Splicing from "./Splicing";
-import SensitivityHeatmap from "./SensitivityHeatmap";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { runBacktest, saveRun, combineBacktests, saveCombine, fetchBacktests, runTune, fetchTuneStatus, type RunParams, type TuneResult } from "../api";
 import { useApp } from "../context/AppContext";
@@ -157,7 +156,6 @@ export default function TestPage() {
 
   const [isLoading, setIsLoading] = useState(false);
   const [tuneProgress, setTuneProgress] = useState<{ progress: number, total: number } | null>(null);
-  const [tuneView, setTuneView] = useState<"rankings" | "sensitivity">("rankings");
   // Which execution view the result panel shows: native (nq fills) or the
   // fx-re-priced book (signals from nq bars, fills from fx_nq_ticks).
   const [execView, setExecView] = useState<"native" | "fx">("native");
@@ -1520,34 +1518,9 @@ export default function TestPage() {
 
             return (
               <div className="flex-1 overflow-y-auto no-scrollbar px-8 py-8 flex flex-col gap-8 max-w-5xl mx-auto w-full">
-                {/* Rankings / Sensitivity toggle */}
-                <div className="flex items-center gap-0.5 bg-gray-900 rounded-lg p-0.5 border border-gray-800/80 self-start">
-                  {([["rankings", "Rankings"], ["sensitivity", "Sensitivity"]] as const).map(([id, label]) => (
-                    <button
-                      key={id}
-                      onClick={() => setTuneView(id)}
-                      className={`px-3 py-1 transition-all duration-150 text-xs font-medium rounded-md select-none cursor-pointer ${
-                        tuneView === id ? "bg-gray-700 text-white shadow-sm" : "text-gray-500 hover:text-gray-200 hover:bg-gray-800/70"
-                      }`}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
-
-                {tuneView === "rankings" ? (
-                  <>
-                    {renderTable("Top 10 — Best Growth", activeTuneResult.bestGrowth)}
-                    {renderTable("Top 10 — Smallest Drawdown", activeTuneResult.minDrawdown)}
-                    {renderTable("Top 10 — Best of Two (Balanced)", activeTuneResult.bestOfTwo)}
-                  </>
-                ) : (
-                  activeTuneResult.grid && activeTuneResult.grid.length > 0 ? (
-                    <SensitivityHeatmap grid={activeTuneResult.grid} hasVol={hasVol} />
-                  ) : (
-                    <div className="text-sm text-gray-500">No grid data — re-run Tune (restart the backend if this persists).</div>
-                  )
-                )}
+                {renderTable("Top 10 — Best Growth", activeTuneResult.bestGrowth)}
+                {renderTable("Top 10 — Smallest Drawdown", activeTuneResult.minDrawdown)}
+                {renderTable("Top 10 — Best of Two (Balanced)", activeTuneResult.bestOfTwo)}
               </div>
             );
           })()}

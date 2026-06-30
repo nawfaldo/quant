@@ -10,6 +10,7 @@ export interface AppContextType {
   visibleIds: Set<number>
   loadingIds: Set<number>
   allTrades: Trade[]
+  allFxTrades: Trade[]
   toggleId: (id: number) => void
   marchSymbol: 'nq' | 'es'
   setMarchSymbol: (sym: 'nq' | 'es') => void
