@@ -361,8 +361,13 @@ export default function TestPage() {
     volMinDays,
     fromDate,
     toDate,
-    spread,
-    slippage,
+    // Cost fields are trimmed, and an empty value is sent as an explicit "0"
+    // rather than "". The backend treats a missing/blank spread or slippage as
+    // its built-in default (spread = 4.0 pt), which silently and drastically
+    // changes results — a winning run can flip to a big loss with no indication.
+    // Coercing here guarantees the UI always runs with the cost the user sees.
+    spread: spread.trim() || "0",
+    slippage: slippage.trim() || "0",
   });
 
   const handleSeeResult = async () => {
@@ -442,8 +447,10 @@ export default function TestPage() {
           volMinDays,
           fromDate,
           toDate,
-          spread,
-          slippage,
+          // Same cost coercion as buildRunParams: never let a blank spread fall
+          // back to the backend's 4.0 default (see buildRunParams comment).
+          spread: spread.trim() || "0",
+          slippage: slippage.trim() || "0",
         });
 
         progressInterval = setInterval(async () => {

@@ -76,9 +76,14 @@ pub fn run(gpa: std.mem.Allocator, pnls: []const f64, initial_balance: f64, cfg:
 
     var seed = cfg.seed;
     if (seed == 0) {
-        var ts: std.c.timespec = .{ .sec = 0, .nsec = 0 };
-        _ = std.c.clock_gettime(std.c.CLOCK.REALTIME, &ts);
-        seed = @bitCast(@as(i64, ts.nsec) ^ (@as(i64, ts.sec) << 20));
+        // Portable entropy seed. The old code used std.c.clock_gettime / timespec,
+        // which are POSIX-only (timespec resolves to `void` on Windows), and this
+        // std build exposes no cross-platform wall clock. This app always passes a
+        // fixed non-zero seed (MC_SEED=1) for reproducibility, so this branch is
+        // effectively dead here; a stack-address (ASLR) seed compiles everywhere and
+        // is fine for the non-reproducible case.
+        var entropy: u8 = 0;
+        seed = @intCast(@intFromPtr(&entropy));
     }
     var prng = std.Random.DefaultPrng.init(seed);
     const rnd = prng.random();

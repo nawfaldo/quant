@@ -4,7 +4,7 @@ const c = @cImport(@cInclude("sqlite3.h"));
 
 const APP_DB_PATH = switch (builtin.os.tag) {
     .macos   => "/Users/nawfaldo/Bunker/Quant/web/backend/app.db",
-    .windows => "C:/Users/JawirGaming66/Quant/web/backend/app.db",
+    .windows => "C:/Users/andra/Desktop/quant/web/backend/app.db",
     else     => "/mnt/c/Users/JawirGaming66/Quant/web/backend/app.db",
 };
 

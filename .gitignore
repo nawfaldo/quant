@@ -170,3 +170,16 @@ march/zig/zig-out/
 *.db-wal
 output.bin
 output_daily.bin
+
+# The unanchored Python "lib/" rule above also swallows the frontend's REAL
+# source folder web/frontend/src/lib/ (primitives.ts, tradeStats.ts, ...).
+# Re-include it here (last match wins, so this must come AFTER "lib/").
+!web/frontend/src/lib/
+!web/frontend/src/lib/**
+
+# Large market-data files & local DB (never commit)
+/nq-1m_bk*.csv
+/qdbroot/
+
+# Playwright MCP test artifacts
+.playwright-mcp/
