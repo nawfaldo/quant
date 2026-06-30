@@ -26,6 +26,8 @@ const TF_SUFFIXES = [NUM_TF][]const u8{ "1m", "5m", "15m", "30m", "1h", "4h", "1
 
 const ColType = enum { timestamp, float, integer, string };
 
+const TzMode = enum { fixed, utc_to_et };
+
 const OhlcvCols = struct {
     open: usize,
     high: usize,
@@ -51,7 +53,8 @@ const Config = struct {
     port: u16 = 9009,
     ts_col: usize = 0,
     ts_col2: ?usize = null, // when set, combined as "<ts_col> <ts_col2>" before parsing
-    tz_offset_ns: i64 = 0, // nanoseconds to add to every parsed timestamp
+    tz_offset_ns: i64 = 0, // nanoseconds to add to every parsed timestamp (fixed mode)
+    tz_mode: TzMode = .fixed,
     delim: u8 = ',',
     aggregate: bool = false,
 };
@@ -102,6 +105,8 @@ pub fn main(init: std.process.Init) !void {
             const s = args_it.next() orelse fatal(&err_w, io, "--tz-hours requires a value");
             const hours = std.fmt.parseInt(i64, s, 10) catch fatal(&err_w, io, "invalid --tz-hours value");
             cfg.tz_offset_ns = hours * 3_600_000_000_000;
+        } else if (std.mem.eql(u8, arg, "--tz-et")) {
+            cfg.tz_mode = .utc_to_et;
         } else if (std.mem.eql(u8, arg, "--aggregate") or std.mem.eql(u8, arg, "-a")) {
             cfg.aggregate = true;
         } else if (std.mem.startsWith(u8, arg, "--")) {
@@ -123,6 +128,7 @@ pub fn main(init: std.process.Init) !void {
             \\  --ts-col2 NAME|N   time column to merge with --ts-col (e.g. separate date+time cols)
             \\  --delim   CHAR     CSV delimiter (default: ,)
             \\  --tz-hours  N      shift timestamps by N hours (e.g. 1 for CT→ET)
+            \\  --tz-et            DST-aware UTC → New York ET conversion
             \\  --aggregate / -a   aggregate OHLCV into _1m/_5m/_15m/_30m/_1h/_4h/_1d tables
             \\
         );
@@ -166,8 +172,10 @@ pub fn main(init: std.process.Init) !void {
         while (it.next()) |raw| : (col_count += 1) {
             if (col_count >= MAX_COLS) break;
             const trimmed = std.mem.trim(u8, raw, " \t");
-            // strip surrounding double-quotes (e.g. "Open" → Open)
+            // strip surrounding double-quotes or angle brackets (e.g. "Open"→Open, <DATE>→DATE)
             const unquoted = if (trimmed.len >= 2 and trimmed[0] == '"' and trimmed[trimmed.len - 1] == '"')
+                trimmed[1 .. trimmed.len - 1]
+            else if (trimmed.len >= 2 and trimmed[0] == '<' and trimmed[trimmed.len - 1] == '>')
                 trimmed[1 .. trimmed.len - 1]
             else
                 trimmed;
@@ -607,7 +615,10 @@ fn parseTs(cfg: *const Config, vals: *const [MAX_COLS][]const u8) !i64 {
             return error.TimestampTooLong;
         break :blk try parseTimestamp(combined);
     } else try parseTimestamp(date_raw);
-    return ts + cfg.tz_offset_ns;
+    return switch (cfg.tz_mode) {
+        .fixed => ts + cfg.tz_offset_ns,
+        .utc_to_et => ts + etOffsetNs(ts),
+    };
 }
 
 // ── timestamp parsing ─────────────────────────────────────────────────────────
@@ -641,18 +652,27 @@ fn parseTimestamp(s: []const u8) !i64 {
         return (try dateTimeToUnix(year, month, day, hour, minute, 0)) * 1_000_000_000;
     }
 
-    // YYYY.MM.DD[ HH:MM] — e.g. "2005.01.03 00:01"
+    // YYYY.MM.DD[ HH:MM[:SS[.mmm]]] — e.g. "2005.01.03 00:01" or "2026.01.01 23:00:02.147"
     if (s.len >= 10 and s[4] == '.') {
         const year   = try std.fmt.parseInt(i32, s[0..4],  10);
         const month  = try std.fmt.parseInt(u32, s[5..7],  10);
         const day    = try std.fmt.parseInt(u32, s[8..10], 10);
         var hour: u32 = 0;
         var minute: u32 = 0;
+        var second: u32 = 0;
+        var millis: i64 = 0;
         if (s.len >= 16 and s[10] == ' ') {
             hour   = try std.fmt.parseInt(u32, s[11..13], 10);
             minute = try std.fmt.parseInt(u32, s[14..16], 10);
+            if (s.len >= 19 and s[16] == ':') {
+                second = try std.fmt.parseInt(u32, s[17..19], 10);
+                if (s.len >= 23 and s[19] == '.') {
+                    millis = try std.fmt.parseInt(i64, s[20..23], 10);
+                }
+            }
         }
-        return (try dateTimeToUnix(year, month, day, hour, minute, 0)) * 1_000_000_000;
+        const unix = try dateTimeToUnix(year, month, day, hour, minute, second);
+        return unix * 1_000_000_000 + millis * 1_000_000;
     }
 
     if (s.len >= 16 and s[4] == '-') {
@@ -693,6 +713,46 @@ fn isAllDigits(s: []const u8) bool {
     if (s.len == 0) return false;
     for (s) |c| if (c < '0' or c > '9') return false;
     return true;
+}
+
+// ── US Eastern DST helpers ────────────────────────────────────────────────────
+// Converts a UTC nanosecond timestamp to the appropriate ET offset (nanoseconds).
+// EDT (UTC-4): 2nd Sunday of March at 07:00 UTC → 1st Sunday of November at 06:00 UTC
+// EST (UTC-5): everything else
+fn etOffsetNs(utc_ns: i64) i64 {
+    const utc_s = @divFloor(utc_ns, 1_000_000_000);
+    const year = utcSecondsYear(utc_s);
+    const edt_start = nthWeekdayUnixSecs(year, 3, 0, 2, 7) catch return -5 * 3_600_000_000_000;
+    const est_start = nthWeekdayUnixSecs(year, 11, 0, 1, 6) catch return -5 * 3_600_000_000_000;
+    return if (utc_s >= edt_start and utc_s < est_start)
+        -4 * 3_600_000_000_000
+    else
+        -5 * 3_600_000_000_000;
+}
+
+// Returns the year containing a given UTC second offset.
+fn utcSecondsYear(utc_s: i64) i32 {
+    var year: i32 = 1970;
+    var rem = utc_s;
+    while (true) {
+        const secs: i64 = (if (isLeapYear(year)) @as(i64, 366) else @as(i64, 365)) * 86400;
+        if (rem < secs) break;
+        rem -= secs;
+        year += 1;
+    }
+    return year;
+}
+
+// Returns the Unix second for the Nth occurrence (1-based) of weekday (0=Sun..6=Sat)
+// in the given year/month at the given UTC hour.
+fn nthWeekdayUnixSecs(year: i32, month: u32, weekday: u32, n: u32, hour: u32) !i64 {
+    const first_secs = try dateTimeToUnix(year, month, 1, 0, 0, 0);
+    const first_day_num: i64 = @divFloor(first_secs, 86400);
+    // 1970-01-01 was Thursday = weekday 4
+    const first_dow: i64 = @mod(first_day_num + 4, 7);
+    const days_ahead: i64 = @mod(@as(i64, weekday) - first_dow + 7, 7);
+    const day: u32 = @intCast(1 + days_ahead + @as(i64, (n - 1) * 7));
+    return try dateTimeToUnix(year, month, day, hour, 0, 0);
 }
 
 // ── date/time helpers ─────────────────────────────────────────────────────────

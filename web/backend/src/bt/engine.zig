@@ -537,7 +537,7 @@ fn closeFill(strat: anytype, bars: []const Bar, timestamps: []const data.Ts, i: 
     return .{ .price = price, .ts = ts };
 }
 
-fn calcPnl(side: Side, entry: f64, exit: f64, lots: f64, inst: Instrument) f64 {
+pub fn calcPnl(side: Side, entry: f64, exit: f64, lots: f64, inst: Instrument) f64 {
     const mult = lotMultOf(inst);
     return switch (side) {
         .long => (exit - entry) * mult * lots,
@@ -549,7 +549,7 @@ fn calcPnl(side: Side, entry: f64, exit: f64, lots: f64, inst: Instrument) f64 {
 // buying=true : long entry or short exit — price is pushed higher (costs more).
 // buying=false: short entry or long exit — price is pushed lower (gets less).
 // The fixed model ignores size and bar range, so it takes only the cost params.
-fn applyFillCost(raw: f64, buying: bool, sprd: f64, slip: f64) f64 {
+pub fn applyFillCost(raw: f64, buying: bool, sprd: f64, slip: f64) f64 {
     const adverse = sprd / 2.0 + slip;
     return if (buying) raw + adverse else raw - adverse;
 }

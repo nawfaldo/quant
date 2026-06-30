@@ -99,6 +99,91 @@ pub fn fetch(io: Io, gpa: std.mem.Allocator, cols: Columns, src: Source) !Datase
 }
 
 // =========================================================================
+// streamFxTicks — fetch (timestamp, BID, ASK) rows from the fx_nq_ticks tick
+// table and hand each one to `consumer.onTick(ts_unix_micros, bid, ask)` as it
+// is decoded, WITHOUT buffering the whole result. The tick table has tens of
+// millions of rows, so the re-pricer (bt/fx.zig) streams a single ordered pass
+// and keeps only O(trades) state instead of materializing every tick.
+//
+// `from`/`to` are "YYYY-MM-DD" bounds (>= from, < to). `consumer` is any value
+// with a `pub fn onTick(self: *@This(), ts: i64, bid: f64, ask: f64) void`.
+// Timestamps are returned as unix microseconds (fake-UTC, matching the bar
+// tables' clock) so callers can compare against bar timestamps directly.
+// =========================================================================
+pub fn streamFxTicks(io: Io, gpa: std.mem.Allocator, from: []const u8, to: []const u8, consumer: anytype) !void {
+    var sql_buf: [256]u8 = undefined;
+    const sql = std.fmt.bufPrint(&sql_buf, "SELECT timestamp, BID, ASK FROM fx_nq_ticks WHERE timestamp >= '{s}' AND timestamp < '{s}' ORDER BY timestamp", .{ from, to }) catch return error.SqlTooLong;
+
+    const addr = net.IpAddress.parseIp4(PG_HOST, PG_PORT) catch return error.InvalidAddress;
+    var stream = try addr.connect(io, .{ .mode = .stream });
+    defer stream.close(io);
+
+    var write_buf: [4096]u8 = undefined;
+    var writer = stream.writer(io, &write_buf);
+    const w = &writer.interface;
+
+    const read_buf = try gpa.alloc(u8, 16 * 1024 * 1024);
+    defer gpa.free(read_buf);
+    var reader = stream.reader(io, read_buf);
+    const r = &reader.interface;
+
+    try sendStartup(w);
+    try w.flush();
+    try handleAuth(r, w);
+    try waitForReady(r);
+    try sendExtendedQuery(w, sql);
+    try w.flush();
+
+    while (true) {
+        const h = try readHeader(r);
+        switch (h.tag) {
+            '1', '2', 'T', 'C' => try r.discardAll(h.payload_len),
+            'D' => {
+                const col_count = try r.takeInt(u16, .big);
+                if (col_count < 3) {
+                    // Drain whatever fields exist and skip this row.
+                    var k: u16 = 0;
+                    while (k < col_count) : (k += 1) {
+                        const flen = try r.takeInt(i32, .big);
+                        if (flen > 0) try r.discardAll(@intCast(flen));
+                    }
+                    continue;
+                }
+                const ts = try readTsMicros(r);
+                const bid = try readF8(r);
+                const ask = try readF8(r);
+                var k: u16 = 3;
+                while (k < col_count) : (k += 1) {
+                    const flen = try r.takeInt(i32, .big);
+                    if (flen > 0) try r.discardAll(@intCast(flen));
+                }
+                consumer.onTick(ts, bid, ask);
+            },
+            'Z' => {
+                try r.discardAll(h.payload_len);
+                return;
+            },
+            'E' => {
+                try r.discardAll(h.payload_len);
+                return error.PgwireServerError;
+            },
+            else => try r.discardAll(h.payload_len),
+        }
+    }
+}
+
+// Read a binary timestamp field as unix microseconds (fake-UTC). PG sends
+// microseconds since 2000-01-01; we shift to the unix epoch so the value lines
+// up with bar timestamps converted via the same civil-date math.
+fn readTsMicros(r: *Io.Reader) !i64 {
+    const len = try r.takeInt(i32, .big);
+    if (len == -1) return 0;
+    if (len != 8) return error.PgwireBadFieldLen;
+    const micros = try r.takeInt(i64, .big);
+    return micros + PG_EPOCH_UNIX * 1_000_000;
+}
+
+// =========================================================================
 // Outbound protocol messages.
 //
 // Postgres frames look like: [1-byte type tag][int32 length including the

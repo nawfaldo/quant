@@ -42,8 +42,8 @@ export interface AppContextType {
   setActiveMarchPanel: (p: { layout: string; index: number } | null) => void
   selectedBacktestId: number | null
   setSelectedBacktestId: (id: number | null) => void
-  activeTab: 'analysis' | 'equity' | 'monte-carlo'
-  setActiveTab: (tab: 'analysis' | 'equity' | 'monte-carlo') => void
+  activeTab: 'analysis' | 'equity' | 'splicing' | 'monte-carlo'
+  setActiveTab: (tab: 'analysis' | 'equity' | 'splicing' | 'monte-carlo') => void
   testResults: Record<string, RunResult>
   setTestResults: React.Dispatch<React.SetStateAction<Record<string, RunResult>>>
   testErrors: Record<string, string>

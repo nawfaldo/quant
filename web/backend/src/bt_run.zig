@@ -4,6 +4,7 @@ const db = @import("db.zig");
 const engine = @import("bt/engine.zig");
 const data = @import("bt/data.zig");
 const montecarlo = @import("bt/montecarlo.zig");
+const fxmod = @import("bt/fx.zig");
 const sizing = @import("bt/sizings/vol_target.zig");
 
 const RthVwap = @import("bt/strategies/rth_vwap.zig").RthVwap;
@@ -26,7 +27,16 @@ pub fn handle(req: *http.Ctx) !void {
     var result = dispatchRun(req.io, p) catch |err| return fail(req, err);
     defer result.deinit(alloc);
 
-    const json = buildJson(result, p.prefix) catch |err| return fail(req, err);
+    // FX-execution view: re-price the same trades from fx_nq_ticks (best-effort —
+    // a fetch failure or no coverage simply omits the fx block). Only NQ has an
+    // fx tick table, so other symbols get no fx view.
+    var fx: ?fxmod.Repriced = if (std.mem.eql(u8, p.prefix, "nq"))
+        (fxmod.reprice(req.io, alloc, result.trades, p.params.cfg.instrument) catch null)
+    else
+        null;
+    defer if (fx) |*f| f.deinit(alloc);
+
+    const json = buildJson(result, p.prefix, fx) catch |err| return fail(req, err);
     defer alloc.free(json);
 
     try req.setContentType(.JSON);
@@ -54,6 +64,53 @@ pub fn handleSave(req: *http.Ctx) !void {
 fn badBody(req: *http.Ctx) !void {
     req.setStatusNumeric(400);
     try req.sendJson("{\"error\":\"no body\"}");
+}
+
+// GET /api/backtests/:id/fx — re-price a SAVED backtest's trades from
+// fx_nq_ticks on demand and return `{"fx": <body>|null}`. Nothing is persisted;
+// the engine is deterministic and the tick table is static, so the fx view is
+// always recomputed fresh from the stored trade log.
+pub fn handleBacktestFx(req: *http.Ctx, id: i64) !void {
+    const src = db.loadCombineSource(alloc, id) catch |err| {
+        if (err == error.NotFound) {
+            req.setStatusNumeric(404);
+            try req.sendJson("{\"error\":\"not_found\"}");
+            return;
+        }
+        return fail(req, err);
+    };
+    defer {
+        alloc.free(src.strategy);
+        alloc.free(src.symbol);
+        alloc.free(src.instrument);
+        alloc.free(src.trades);
+    }
+
+    // Only NQ-derived books can be re-priced against the NQ fx tick table.
+    var fx: ?fxmod.Repriced = if (std.mem.indexOf(u8, src.symbol, "nq") != null)
+        (fxmod.reprice(req.io, alloc, src.trades, .forex) catch null)
+    else
+        null;
+    defer if (fx) |*f| f.deinit(alloc);
+
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(alloc);
+    try out.appendSlice(alloc, "{\"fx\":");
+    if (fx) |f| {
+        try out.appendSlice(alloc, "{");
+        const fxres = fxmod.resultFor(src.initial_bal, f.trades);
+        try appendBody(&out, fxres, src.symbol);
+        const counts = try std.fmt.allocPrint(alloc, ",\"tradesInWindow\":{d},\"tradesTotal\":{d}", .{ f.in_window, f.total });
+        defer alloc.free(counts);
+        try out.appendSlice(alloc, counts);
+        try out.appendSlice(alloc, "}");
+    } else {
+        try out.appendSlice(alloc, "null");
+    }
+    try out.appendSlice(alloc, "}");
+
+    try req.setContentType(.JSON);
+    try req.sendBody(out.items);
 }
 
 const Params = struct {
@@ -331,14 +388,39 @@ fn computeReport(result: engine.Result) Report {
 // ── JSON assembly ───────────────────────────────────────────────────────────
 // Field names mirror the saved-backtest shape (types.ts `Backtest`) so the
 // frontend renders a live run with the same components it uses for /stats.
-fn buildJson(result: engine.Result, prefix: []const u8) ![]const u8 {
-    const r = computeReport(result);
-
+fn buildJson(result: engine.Result, prefix: []const u8, fx: ?fxmod.Repriced) ![]const u8 {
     var out: std.ArrayList(u8) = .empty;
     errdefer out.deinit(alloc);
 
+    try out.appendSlice(alloc, "{");
+    try appendBody(&out, result, prefix);
+
+    // FX-execution block — same shape as the native body, nested under "fx", plus
+    // the in-window trade counts. Null when no trade fell inside the fx window.
+    if (fx) |f| {
+        try out.appendSlice(alloc, ",\"fx\":{");
+        const fxres = fxmod.resultFor(result.initial_balance, f.trades);
+        try appendBody(&out, fxres, prefix);
+        const counts = try std.fmt.allocPrint(alloc, ",\"tradesInWindow\":{d},\"tradesTotal\":{d}", .{ f.in_window, f.total });
+        defer alloc.free(counts);
+        try out.appendSlice(alloc, counts);
+        try out.appendSlice(alloc, "}");
+    } else {
+        try out.appendSlice(alloc, ",\"fx\":null");
+    }
+
+    try out.appendSlice(alloc, "}");
+    return out.toOwnedSlice(alloc);
+}
+
+// Writes the report fields + drawdown + trades + montecarlo for one result,
+// WITHOUT the surrounding braces, so it can serve both the top-level object and
+// the nested "fx" object.
+pub fn appendBody(out: *std.ArrayList(u8), result: engine.Result, prefix: []const u8) !void {
+    const r = computeReport(result);
+
     const head = try std.fmt.allocPrint(alloc,
-        \\{{"symbol":"{s}","instrument":"forex","first_ts":"{s}","last_ts":"{s}","total_days":{d},"num_trades":{d},"initial_bal":{d:.2},"final_bal":{d:.2},"net_growth":{d:.4},"sharpe":{d:.4},"total_win":{d:.2},"total_loss":{d:.2},"win_rate":{d:.4},"win_count":{d},"profit_factor":{d:.4},"expectancy":{d:.4},"max_lose_streak":{d},"avg_size":{d:.4},"min_size":{d:.4},"max_size":{d:.4},"avg_weekly":{d:.2},"avg_monthly":{d:.2},"avg_weekly_pct":{d:.4},"avg_monthly_pct":{d:.4}
+        \\"symbol":"{s}","instrument":"forex","first_ts":"{s}","last_ts":"{s}","total_days":{d},"num_trades":{d},"initial_bal":{d:.2},"final_bal":{d:.2},"net_growth":{d:.4},"sharpe":{d:.4},"total_win":{d:.2},"total_loss":{d:.2},"win_rate":{d:.4},"win_count":{d},"profit_factor":{d:.4},"expectancy":{d:.4},"max_lose_streak":{d},"avg_size":{d:.4},"min_size":{d:.4},"max_size":{d:.4},"avg_weekly":{d:.2},"avg_monthly":{d:.2},"avg_weekly_pct":{d:.4},"avg_monthly_pct":{d:.4}
     , .{
         prefix,                  result.first_ts,         result.last_ts,
         r.total_days,            result.trades.len,       fin(result.initial_balance),
@@ -386,10 +468,7 @@ fn buildJson(result: engine.Result, prefix: []const u8) ![]const u8 {
     try out.appendSlice(alloc, "]");
 
     // Monte Carlo resampling of the realized trade PnLs (sequence-risk view).
-    try appendMonteCarlo(&out, result);
-
-    try out.appendSlice(alloc, "}");
-    return out.toOwnedSlice(alloc);
+    try appendMonteCarlo(out, result);
 }
 
 const MC_RENDER_PATHS: usize = 50; // spaghetti lines drawn in the chart

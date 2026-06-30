@@ -174,7 +174,7 @@ export default function App() {
     [tradeQueries.map(q => q.dataUpdatedAt).join(',')]
   )
   const [selectedBacktestId, setSelectedBacktestId] = useState<number | null>(null)
-  const [activeTab, setActiveTab] = useState<'analysis' | 'equity' | 'monte-carlo'>('analysis')
+  const [activeTab, setActiveTab] = useState<'analysis' | 'equity' | 'splicing' | 'monte-carlo'>('analysis')
   const [marchSymbol, setMarchSymbol] = useState<'nq' | 'es'>('nq')
   const [marchTf, setMarchTf] = useState<TF>(DEFAULT_TF)
   const [marchStreamStatus, setMarchStreamStatus] = useState<'loading' | 'live' | 'idle' | 'error'>('idle')

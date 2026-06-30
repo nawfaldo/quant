@@ -4,6 +4,7 @@ const db = @import("db.zig");
 const engine = @import("bt/engine.zig");
 const data = @import("bt/data.zig");
 const montecarlo = @import("bt/montecarlo.zig");
+const fxmod = @import("bt/fx.zig");
 
 const alloc = std.heap.page_allocator;
 
@@ -21,8 +22,18 @@ pub fn handle(req: *http.Ctx) !void {
 
     const result = compute(req.io, p) catch |err| return fail(req, err);
     defer alloc.free(result.trades);
+    defer alloc.free(result.strategies);
+    defer alloc.free(result.symbol);
 
-    const json = buildJson(result, p.initial_balance) catch |err| return fail(req, err);
+    // FX-execution view: re-price the merged book from fx_nq_ticks (best-effort).
+    // Only meaningful when an NQ leg is present (fx_nq_ticks is the NQ proxy feed).
+    var fx: ?fxmod.Repriced = if (std.mem.indexOf(u8, result.symbol, "nq") != null)
+        (fxmod.reprice(req.io, alloc, result.trades, .forex) catch null)
+    else
+        null;
+    defer if (fx) |*f| f.deinit(alloc);
+
+    const json = buildJson(result, p.initial_balance, fx) catch |err| return fail(req, err);
     defer alloc.free(json);
 
     try req.setContentType(.JSON);
@@ -37,6 +48,8 @@ pub fn handleSave(req: *http.Ctx) !void {
 
     const result = compute(req.io, p) catch |err| return fail(req, err);
     defer alloc.free(result.trades);
+    defer alloc.free(result.strategies);
+    defer alloc.free(result.symbol);
 
     const id = persistCombine(result, p.initial_balance) catch |err| return fail(req, err);
 
@@ -399,8 +412,35 @@ pub fn realizedDrawdown(initial: f64, trades: []const engine.Trade) Drawdown {
     var max_dd_from: [10]u8 = blank_date;
     var max_dd_to: [10]u8 = blank_date;
 
+    var day_peak: f64 = initial;
+    var cur_day: [10]u8 = blank_date;
+    var day_started = false;
+    var day_max_idd: f64 = 0;
+    var day_max_idd_dollars: f64 = 0;
+    var max_idd: f64 = 0;
+    var max_idd_dollars: f64 = 0;
+    var max_idd_date: [10]u8 = blank_date;
+    var idd_sum: f64 = 0;
+    var idd_dollars_sum: f64 = 0;
+    var idd_days: usize = 0;
+
     for (trades) |t| {
+        const t_day = t.exit_ts[0..10];
+        if (!day_started or !std.mem.eql(u8, t_day, cur_day[0..10])) {
+            if (day_started) {
+                idd_sum += day_max_idd;
+                idd_dollars_sum += day_max_idd_dollars;
+                idd_days += 1;
+            }
+            @memcpy(&cur_day, t_day);
+            day_peak = equity;
+            day_max_idd = 0;
+            day_max_idd_dollars = 0;
+            day_started = true;
+        }
+
         equity += t.pnl;
+
         if (equity > peak) {
             peak = equity;
             @memcpy(peak_date[0..], t.exit_ts[0..10]);
@@ -416,8 +456,28 @@ pub fn realizedDrawdown(initial: f64, trades: []const engine.Trade) Drawdown {
         dd_sum += dd;
         dd_dollars_sum += dd_dollars;
         dd_count += 1;
+
+        if (equity > day_peak) day_peak = equity;
+        const idd_dollars = day_peak - equity;
+        const idd = if (day_peak > 0) idd_dollars / day_peak * 100.0 else 0.0;
+        if (idd > day_max_idd) {
+            day_max_idd = idd;
+            day_max_idd_dollars = idd_dollars;
+        }
+        if (idd > max_idd) {
+            max_idd = idd;
+            max_idd_dollars = idd_dollars;
+            @memcpy(&max_idd_date, t_day);
+        }
     }
+    if (day_started) {
+        idd_sum += day_max_idd;
+        idd_dollars_sum += day_max_idd_dollars;
+        idd_days += 1;
+    }
+
     const n: f64 = @floatFromInt(dd_count);
+    const iddc: f64 = @floatFromInt(idd_days);
     return .{
         .max_drawdown = max_dd,
         .avg_drawdown = if (dd_count > 0) dd_sum / n else 0.0,
@@ -425,11 +485,11 @@ pub fn realizedDrawdown(initial: f64, trades: []const engine.Trade) Drawdown {
         .max_drawdown_trough_date = max_dd_to,
         .max_drawdown_dollars = max_dd_dollars,
         .avg_drawdown_dollars = if (dd_count > 0) dd_dollars_sum / n else 0.0,
-        .max_intraday_drawdown = 0,
-        .max_intraday_drawdown_dollars = 0,
-        .max_intraday_drawdown_date = [_]u8{' '} ** 10,
-        .avg_intraday_drawdown = 0,
-        .avg_intraday_drawdown_dollars = 0,
+        .max_intraday_drawdown = max_idd,
+        .max_intraday_drawdown_dollars = max_idd_dollars,
+        .max_intraday_drawdown_date = max_idd_date,
+        .avg_intraday_drawdown = if (idd_days > 0) idd_sum / iddc else 0.0,
+        .avg_intraday_drawdown_dollars = if (idd_days > 0) idd_dollars_sum / iddc else 0.0,
     };
 }
 
@@ -481,10 +541,59 @@ fn combineSymbolPrefix(label: []const u8) ?[]const u8 {
     if (std.ascii.eqlIgnoreCase(s, "EURUSD") or std.ascii.eqlIgnoreCase(s, "eurusd") or std.mem.eql(u8, s, "EUR/USD Spot")) return "eurusd";
     return null;
 }
+// Map a stored strategy code (as saved by bt_run) back to its display name.
+fn strategyDisplay(code: []const u8) []const u8 {
+    if (std.mem.eql(u8, code, "RTH_VWAP")) return "RTH VWAP";
+    if (std.mem.eql(u8, code, "30M_BUY")) return "30m Buy";
+    if (std.mem.eql(u8, code, "5M_ORB")) return "5m ORB";
+    if (std.mem.eql(u8, code, "BUY_HOLD")) return "Buy & Hold";
+    return code;
+}
+
+// Build "A (#1) + B (#2) + C (#3)" label including each source backtest's ID.
+// Heap-allocated; the caller owns and frees it.
+fn buildStrategiesLabel(sources: []const db.CombineSource, ids: []const i64) ![]const u8 {
+    var lbuf: std.ArrayList(u8) = .empty;
+    defer lbuf.deinit(alloc);
+    for (sources, 0..) |s, i| {
+        const disp = strategyDisplay(s.strategy);
+        if (lbuf.items.len > 0) try lbuf.appendSlice(alloc, " + ");
+        try lbuf.appendSlice(alloc, disp);
+        var idbuf: [32]u8 = undefined;
+        const id_str = std.fmt.bufPrint(&idbuf, " (#{d})", .{ids[i]}) catch "";
+        try lbuf.appendSlice(alloc, id_str);
+    }
+    if (lbuf.items.len == 0) try lbuf.appendSlice(alloc, "COMBINED");
+    return alloc.dupe(u8, lbuf.items);
+}
+
+// Build a de-duplicated "nq + gbpusd" symbol label from sources.
+// Heap-allocated; the caller owns and frees it.
+fn buildSymbolLabel(sources: []const db.CombineSource) ![]const u8 {
+    var lbuf: std.ArrayList(u8) = .empty;
+    defer lbuf.deinit(alloc);
+    var seen: [16][]const u8 = undefined;
+    var seen_n: usize = 0;
+    for (sources) |s| {
+        const sym = combineSymbolPrefix(s.symbol) orelse s.symbol;
+        var dup = false;
+        for (seen[0..seen_n]) |x| {
+            if (std.mem.eql(u8, x, sym)) { dup = true; break; }
+        }
+        if (dup) continue;
+        if (seen_n < seen.len) { seen[seen_n] = sym; seen_n += 1; }
+        if (lbuf.items.len > 0) try lbuf.appendSlice(alloc, " + ");
+        try lbuf.appendSlice(alloc, sym);
+    }
+    if (lbuf.items.len == 0) try lbuf.appendSlice(alloc, "combined");
+    return alloc.dupe(u8, lbuf.items);
+}
+
 const CombineResult = struct {
     trades: []engine.Trade, // heap-allocated, caller frees
     initial_balance: f64,
-    strategies: []const u8, // comma-joined, stack buffer
+    strategies: []const u8, // readable "A (#1) + B (#2)" label, heap-allocated, caller frees
+    symbol: []const u8,     // de-duplicated "nq + gbpusd" label, heap-allocated, caller frees
     first_ts: [16]u8,
     last_ts: [16]u8,
     max_drawdown: f64,
@@ -550,6 +659,12 @@ fn compute(io: std.Io, p: Parsed) !CombineResult {
 
     std.mem.sort(engine.Trade, merged.items, {}, tradeLess);
     const trades = try merged.toOwnedSlice(alloc);
+    errdefer alloc.free(trades);
+
+    const strategies_label = try buildStrategiesLabel(sources, p.ids);
+    errdefer alloc.free(strategies_label);
+    const symbol_label = try buildSymbolLabel(sources);
+    errdefer alloc.free(symbol_label);
 
     var first_ts: [16]u8 = [_]u8{'9'} ** 16;
     var last_ts: [16]u8 = [_]u8{'0'} ** 16;
@@ -569,7 +684,8 @@ fn compute(io: std.Io, p: Parsed) !CombineResult {
     return .{
         .trades = trades,
         .initial_balance = p.initial_balance,
-        .strategies = "COMBINED",
+        .strategies = strategies_label,
+        .symbol = symbol_label,
         .first_ts = first_ts,
         .last_ts = last_ts,
         .max_drawdown = dd.max_drawdown,
@@ -742,16 +858,76 @@ fn computeReport(result: CombineResult) Report {
     };
 }
 
-fn buildJson(result: CombineResult, initial_balance: f64) ![]const u8 {
+fn buildJson(result: CombineResult, initial_balance: f64, fx: ?fxmod.Repriced) ![]const u8 {
     _ = initial_balance;
-    const r = computeReport(result);
-
     var out: std.ArrayList(u8) = .empty;
     errdefer out.deinit(alloc);
 
+    try out.appendSlice(alloc, "{");
+    try appendBody(&out, result);
+
+    // FX-execution block — same shape as the native body, nested under "fx".
+    if (fx) |f| {
+        try out.appendSlice(alloc, ",\"fx\":{");
+        const fxres = fxCombineResult(result, f.trades);
+        try appendBody(&out, fxres);
+        const counts = try std.fmt.allocPrint(alloc, ",\"tradesInWindow\":{d},\"tradesTotal\":{d}", .{ f.in_window, f.total });
+        defer alloc.free(counts);
+        try out.appendSlice(alloc, counts);
+        try out.appendSlice(alloc, "}");
+    } else {
+        try out.appendSlice(alloc, ",\"fx\":null");
+    }
+
+    try out.appendSlice(alloc, "}");
+    return out.toOwnedSlice(alloc);
+}
+
+// A CombineResult over the fx-re-priced trades, reusing the native labels but
+// recomputing the time span and (realized-equity) drawdown. `trades` is borrowed.
+fn fxCombineResult(base: CombineResult, trades: []engine.Trade) CombineResult {
+    var first: [16]u8 = [_]u8{'9'} ** 16;
+    var last: [16]u8 = [_]u8{'0'} ** 16;
+    for (trades) |t| {
+        if (std.mem.order(u8, &t.entry_ts, &first) == .lt) first = t.entry_ts;
+        if (std.mem.order(u8, &t.exit_ts, &last) == .gt) last = t.exit_ts;
+    }
+    if (trades.len == 0) {
+        first = [_]u8{' '} ** 16;
+        last = [_]u8{' '} ** 16;
+    }
+    const dd = fxmod.realizedDrawdown(base.initial_balance, trades);
+    return .{
+        .trades = trades,
+        .initial_balance = base.initial_balance,
+        .strategies = base.strategies,
+        .symbol = base.symbol,
+        .first_ts = first,
+        .last_ts = last,
+        .max_drawdown = dd.max_drawdown,
+        .max_drawdown_dollars = dd.max_drawdown_dollars,
+        .max_drawdown_peak_date = dd.max_drawdown_peak_date,
+        .max_drawdown_trough_date = dd.max_drawdown_trough_date,
+        .avg_drawdown = dd.avg_drawdown,
+        .avg_drawdown_dollars = dd.avg_drawdown_dollars,
+        .max_intraday_drawdown = dd.max_intraday_drawdown,
+        .max_intraday_drawdown_dollars = dd.max_intraday_drawdown_dollars,
+        .max_intraday_drawdown_date = dd.max_intraday_drawdown_date,
+        .avg_intraday_drawdown = dd.avg_intraday_drawdown,
+        .avg_intraday_drawdown_dollars = dd.avg_intraday_drawdown_dollars,
+    };
+}
+
+// Writes the report fields + drawdown + trades + montecarlo for one combine
+// result, WITHOUT the surrounding braces (shared by the top-level and "fx").
+fn appendBody(out: *std.ArrayList(u8), result: CombineResult) !void {
+    const r = computeReport(result);
+
     const head = try std.fmt.allocPrint(alloc,
-        \\{{"symbol":"COMBINED","instrument":"forex","first_ts":"{s}","last_ts":"{s}","total_days":{d},"num_trades":{d},"initial_bal":{d:.2},"final_bal":{d:.2},"net_growth":{d:.4},"sharpe":{d:.4},"total_win":{d:.2},"total_loss":{d:.2},"win_rate":{d:.4},"win_count":{d},"profit_factor":{d:.4},"expectancy":{d:.4},"max_lose_streak":{d},"avg_size":{d:.4},"min_size":{d:.4},"max_size":{d:.4},"avg_weekly":{d:.2},"avg_monthly":{d:.2},"avg_weekly_pct":{d:.4},"avg_monthly_pct":{d:.4}
+        \\"strategy":"{s}","symbol":"{s}","instrument":"forex","first_ts":"{s}","last_ts":"{s}","total_days":{d},"num_trades":{d},"initial_bal":{d:.2},"final_bal":{d:.2},"net_growth":{d:.4},"sharpe":{d:.4},"total_win":{d:.2},"total_loss":{d:.2},"win_rate":{d:.4},"win_count":{d},"profit_factor":{d:.4},"expectancy":{d:.4},"max_lose_streak":{d},"avg_size":{d:.4},"min_size":{d:.4},"max_size":{d:.4},"avg_weekly":{d:.2},"avg_monthly":{d:.2},"avg_weekly_pct":{d:.4},"avg_monthly_pct":{d:.4}
     , .{
+        result.strategies,
+        result.symbol,
         result.first_ts,           result.last_ts,
         r.total_days,              result.trades.len,       fin(result.initial_balance),
         fin(r.final_balance),      fin(r.net_growth),       fin(r.sharpe),
@@ -798,10 +974,7 @@ fn buildJson(result: CombineResult, initial_balance: f64) ![]const u8 {
     try out.appendSlice(alloc, "]");
 
     // Monte Carlo.
-    try appendMonteCarlo(&out, result);
-
-    try out.appendSlice(alloc, "}");
-    return out.toOwnedSlice(alloc);
+    try appendMonteCarlo(out, result);
 }
 
 fn appendMonteCarlo(out: *std.ArrayList(u8), result: CombineResult) !void {
@@ -873,8 +1046,8 @@ fn persistCombine(result: CombineResult, initial_balance: f64) !i64 {
     const r = computeReport(result);
 
     const meta = db.SaveMeta{
-        .strategy = "COMBINED",
-        .symbol   = "COMBINED",
+        .strategy = result.strategies,
+        .symbol   = result.symbol,
         .instrument = "forex",
         .first_ts = result.first_ts[0..],
         .last_ts  = result.last_ts[0..],
@@ -904,11 +1077,11 @@ fn persistCombine(result: CombineResult, initial_balance: f64) !i64 {
         .max_drawdown_peak_date = result.max_drawdown_peak_date[0..],
         .max_drawdown_trough_date = result.max_drawdown_trough_date[0..],
         .avg_drawdown_dollars = fin(result.avg_drawdown_dollars),
-        .max_intraday_drawdown = 0,
-        .max_intraday_drawdown_dollars = 0,
-        .max_intraday_drawdown_date = "          ",
-        .avg_intraday_drawdown = 0,
-        .avg_intraday_drawdown_dollars = 0,
+        .max_intraday_drawdown = fin(result.max_intraday_drawdown),
+        .max_intraday_drawdown_dollars = fin(result.max_intraday_drawdown_dollars),
+        .max_intraday_drawdown_date = result.max_intraday_drawdown_date[0..],
+        .avg_intraday_drawdown = fin(result.avg_intraday_drawdown),
+        .avg_intraday_drawdown_dollars = fin(result.avg_intraday_drawdown_dollars),
         .max_daily_loss = fin(r.max_daily_loss),
         .max_daily_loss_date = r.max_daily_loss_date[0..],
         .avg_daily_loss = fin(r.avg_daily_loss),

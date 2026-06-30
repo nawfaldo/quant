@@ -715,9 +715,12 @@ pub fn loadCombineSource(a: std.mem.Allocator, backtest_id: i64) !CombineSource 
         defer _ = c.sqlite3_finalize(stmt);
         if (c.sqlite3_bind_int64(stmt, 1, backtest_id) != c.SQLITE_OK) return error.BindFailed;
         while (c.sqlite3_step(stmt) == c.SQLITE_ROW) {
-            const side_i = c.sqlite3_column_int(stmt, 0);
             var t: engine.Trade = undefined;
-            t.side = if (side_i == 0) .long else .short;
+            // `side` is stored as TEXT ("long"/"short"); reading it as an int would
+            // coerce both strings to 0 and make every trade long.
+            var side_buf: [8]u8 = undefined;
+            const side_len = copyCol(stmt, 0, &side_buf);
+            t.side = if (std.mem.eql(u8, side_buf[0..side_len], "short")) .short else .long;
             const ets = copyCol(stmt, 1, &t.entry_ts);
             if (ets < 16) @memset(t.entry_ts[ets..], ' ');
             const xts = copyCol(stmt, 2, &t.exit_ts);

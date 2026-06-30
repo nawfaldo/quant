@@ -1,7 +1,9 @@
+import { useState, useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { fetchBacktests, fetchTrades, fetchMonteCarloData, deleteBacktest } from "../api";
+import { fetchBacktests, fetchTrades, fetchMonteCarloData, deleteBacktest, fetchBacktestFx } from "../api";
 import EquityChart from "./EquityChart";
 import MonteCarloChart from "./MonteCarloChart";
+import Splicing from "./Splicing";
 import { useApp } from "../context/AppContext";
 
 function fmt$(v: number) {
@@ -92,6 +94,10 @@ function MonteCarloTab({ backtestId }: { backtestId: number }) {
     );
   if (!data) return null;
 
+  return <MonteCarloView data={data} />;
+}
+
+function MonteCarloView({ data }: { data: import("../types").MonteCarloData }) {
   return (
     <div className="flex-1 min-h-0 w-full flex flex-col gap-4 pt-20 px-8 pb-8 overflow-y-auto">
       {/* Summary table */}
@@ -174,9 +180,35 @@ export default function StatsPage() {
   } = useQuery({
     queryKey: ["trades", selectedBacktestId],
     queryFn: () => fetchTrades(selectedBacktestId!),
-    enabled: selectedBacktestId !== null && activeTab === "equity",
+    enabled:
+      selectedBacktestId !== null &&
+      (activeTab === "equity" || activeTab === "splicing"),
     staleTime: Infinity,
   });
+
+  // FX-execution view: the same saved book re-priced from fx_nq_ticks. Fetched
+  // whenever a backtest is selected so the toggle knows if an fx view exists.
+  const [execView, setExecView] = useState<"native" | "fx">("native");
+  useEffect(() => {
+    setExecView("native");
+  }, [selectedBacktestId]);
+
+  const fxQuery = useQuery({
+    queryKey: ["backtest-fx", selectedBacktestId],
+    queryFn: () => fetchBacktestFx(selectedBacktestId!),
+    enabled: selectedBacktestId !== null,
+    staleTime: Infinity,
+    retry: false,
+  });
+  const fxData = fxQuery.data ?? null;
+  const showFx = execView === "fx";
+  // Report/trades the tabs render: native (list row) or the fx-re-priced book.
+  // When forex is selected but unavailable, rep is null so the tabs yield to the
+  // explanatory empty state below instead of rendering native numbers.
+  const rep = showFx ? (fxData ? fxData.report : null) : b;
+  const viewTrades = showFx ? (fxData ? fxData.trades : undefined) : trades;
+  const tradesLoadingNow = showFx ? fxQuery.isLoading : loadingTrades;
+  const tradesErrorNow = showFx ? fxQuery.isError : tradesError;
 
   return (
     <div className="flex-1 bg-gray-950 flex flex-row min-h-0">
@@ -230,70 +262,94 @@ export default function StatsPage() {
           <div className="flex-1 min-h-0 bg-gray-950 flex flex-col relative">
             {/* Floating Tab Selection */}
             <div className="absolute top-6 left-8 z-10 flex items-center gap-0.5 bg-gray-900 rounded-lg p-0.5 border border-gray-800/80 shrink-0 shadow-lg shadow-black/40">
-              <button
-                onClick={() => setActiveTab("analysis")}
-                className={`px-2.5 py-1 transition-all duration-150 text-xs font-medium rounded-md select-none ${
-                  activeTab === "analysis"
-                    ? "bg-gray-700 text-white shadow-sm"
-                    : "text-gray-500 hover:text-gray-200 hover:bg-gray-800/70"
-                }`}
-              >
-                Analysis
-              </button>
-              <button
-                onClick={() => setActiveTab("equity")}
-                className={`px-2.5 py-1 transition-all duration-150 text-xs font-medium rounded-md select-none ${
-                  activeTab === "equity"
-                    ? "bg-gray-700 text-white shadow-sm"
-                    : "text-gray-500 hover:text-gray-200 hover:bg-gray-800/70"
-                }`}
-              >
-                Equity
-              </button>
-              <button
-                onClick={() => setActiveTab("monte-carlo")}
-                className={`px-2.5 py-1 transition-all duration-150 text-xs font-medium rounded-md select-none ${
-                  activeTab === "monte-carlo"
-                    ? "bg-gray-700 text-white shadow-sm"
-                    : "text-gray-500 hover:text-gray-200 hover:bg-gray-800/70"
-                }`}
-              >
-                Monte Carlo
-              </button>
+              {([
+                ["analysis", "Analysis"],
+                ["equity", "Equity"],
+                ["splicing", "Splicing"],
+                ["monte-carlo", "Monte Carlo"],
+              ] as const).map(([id, label]) => (
+                <button
+                  key={id}
+                  onClick={() => setActiveTab(id)}
+                  className={`px-2.5 py-1 transition-all duration-150 text-xs font-medium rounded-md select-none ${
+                    activeTab === id
+                      ? "bg-gray-700 text-white shadow-sm"
+                      : "text-gray-500 hover:text-gray-200 hover:bg-gray-800/70"
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
             </div>
 
-            {activeTab === "analysis" && b && (
+            {/* Native / Forex-execution switch */}
+            <div className="absolute top-6 right-8 z-10 flex items-center gap-0.5 bg-gray-900 rounded-lg p-0.5 border border-gray-800/80 shrink-0 shadow-lg shadow-black/40">
+              {([
+                ["native", "Native"],
+                ["fx", "March"],
+              ] as const).map(([id, label]) => {
+                const active = execView === id;
+                return (
+                  <button
+                    key={id}
+                    onClick={() => setExecView(id)}
+                    className={`px-2.5 py-1 transition-all duration-150 text-xs font-medium rounded-md select-none cursor-pointer ${
+                      active
+                        ? "bg-indigo-600 text-white shadow-sm"
+                        : "text-gray-500 hover:text-gray-200 hover:bg-gray-800/70"
+                    }`}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Forex selected but unavailable for this backtest. */}
+            {showFx && !fxData && (
+              <div className="flex-1 flex items-center justify-center pt-20 px-8 text-center">
+                <span className="text-sm text-gray-500 max-w-md">
+                  {fxQuery.isLoading
+                    ? "Loading forex execution…"
+                    : "No forex execution for this backtest. Forex re-pricing covers NQ trades within the tick window 2026-01-01 → 2026-06-26."}
+                </span>
+              </div>
+            )}
+
+            {activeTab === "analysis" && rep && (
               <div className="px-8 pb-8 pt-20 overflow-y-auto flex-1">
                 <div className="grid grid-cols-2 gap-6 max-w-5xl mx-auto">
                   {/* Left Column */}
                   <div className="space-y-6">
                     <Section title="Overview">
-                      <StatRow label="Symbol" value={b.symbol.toUpperCase()} />
-                      <StatRow label="Instrument" value={b.instrument} />
+                      {(rep.symbol.toLowerCase() === 'combined' || rep.strategy.includes(' + ')) && (
+                        <StatRow label="Strategies" value={rep.strategy} />
+                      )}
+                      <StatRow label="Symbol" value={rep.symbol.toUpperCase()} />
                       <StatRow
                         label="Period"
-                        value={`${fmtDate(b.first_ts)} → ${fmtDate(b.last_ts)}`}
+                        value={`${fmtDate(rep.first_ts)} → ${fmtDate(rep.last_ts)}`}
                       />
                       <StatRow
                         label="Total Days"
-                        value={String(b.total_days)}
+                        value={String(rep.total_days)}
                       />
                       <StatRow
                         label="Number of Trades"
-                        value={String(b.num_trades)}
+                        value={String(rep.num_trades)}
                       />
                     </Section>
 
                     <Section title="Balance">
                       <StatRow
                         label="Initial Balance"
-                        value={fmt$(b.initial_bal)}
+                        value={fmt$(rep.initial_bal)}
                       />
                       <StatRow
                         label="Final Balance"
-                        value={`${fmt$(b.final_bal)} (${b.net_growth >= 0 ? "+" : ""}${fmtPct(b.net_growth)})`}
+                        value={`${fmt$(rep.final_bal)} (${rep.net_growth >= 0 ? "+" : ""}${fmtPct(rep.net_growth)})`}
                         color={
-                          b.final_bal >= b.initial_bal
+                          rep.final_bal >= rep.initial_bal
                             ? "text-emerald-400"
                             : "text-red-400"
                         }
@@ -303,18 +359,18 @@ export default function StatsPage() {
                     <Section title="Average Returns">
                       <StatRow
                         label="Weekly"
-                        value={`${fmt$(b.avg_weekly)} (${fmtPct(b.avg_weekly_pct)})`}
+                        value={`${fmt$(rep.avg_weekly)} (${fmtPct(rep.avg_weekly_pct)})`}
                         color={
-                          b.avg_weekly >= 0
+                          rep.avg_weekly >= 0
                             ? "text-emerald-400"
                             : "text-red-400"
                         }
                       />
                       <StatRow
                         label="Monthly"
-                        value={`${fmt$(b.avg_monthly)} (${fmtPct(b.avg_monthly_pct)})`}
+                        value={`${fmt$(rep.avg_monthly)} (${fmtPct(rep.avg_monthly_pct)})`}
                         color={
-                          b.avg_monthly >= 0
+                          rep.avg_monthly >= 0
                             ? "text-emerald-400"
                             : "text-red-400"
                         }
@@ -324,29 +380,29 @@ export default function StatsPage() {
                     <Section title="Performance Ratios">
                       <StatRow
                         label="Sharpe Ratio"
-                        value={b.sharpe.toFixed(2)}
+                        value={rep.sharpe.toFixed(2)}
                         color={
-                          b.sharpe >= 1
+                          rep.sharpe >= 1
                             ? "text-emerald-400"
-                            : b.sharpe >= 0
+                            : rep.sharpe >= 0
                               ? "text-gray-200"
                               : "text-red-400"
                         }
                       />
                       <StatRow
                         label="Profit Factor"
-                        value={b.profit_factor.toFixed(2)}
+                        value={rep.profit_factor.toFixed(2)}
                         color={
-                          b.profit_factor >= 1
+                          rep.profit_factor >= 1
                             ? "text-emerald-400"
                             : "text-red-400"
                         }
                       />
                       <StatRow
                         label="Expectancy"
-                        value={fmt$(b.expectancy)}
+                        value={fmt$(rep.expectancy)}
                         color={
-                          b.expectancy >= 0
+                          rep.expectancy >= 0
                             ? "text-emerald-400"
                             : "text-red-400"
                         }
@@ -359,31 +415,31 @@ export default function StatsPage() {
                     <Section title="Win / Loss">
                       <StatRow
                         label="Win Rate"
-                        value={`${fmtPct(b.win_rate, 1)} (${b.win_count}/${b.num_trades})`}
+                        value={`${fmtPct(rep.win_rate, 1)} (${rep.win_count}/${rep.num_trades})`}
                         color={
-                          b.win_rate >= 50 ? "text-emerald-400" : "text-red-400"
+                          rep.win_rate >= 50 ? "text-emerald-400" : "text-red-400"
                         }
                       />
                       <StatRow
                         label="Total Wins"
-                        value={fmt$(b.total_win)}
+                        value={fmt$(rep.total_win)}
                         color="text-emerald-400"
                       />
                       <StatRow
                         label="Total Losses"
-                        value={fmt$(b.total_loss)}
+                        value={fmt$(rep.total_loss)}
                         color="text-red-400"
                       />
                       <StatRow
                         label="Max Losing Streak"
-                        value={String(b.max_lose_streak)}
+                        value={String(rep.max_lose_streak)}
                       />
                     </Section>
 
                     <Section title="Position Sizing">
                       <StatRow
                         label="Size"
-                        value={`${b.avg_size.toFixed(1)} (Min: ${b.min_size.toFixed(1)} / Max: ${b.max_size.toFixed(1)})`}
+                        value={`${rep.avg_size.toFixed(1)} (Min: ${rep.min_size.toFixed(1)} / Max: ${rep.max_size.toFixed(1)})`}
                       />
                     </Section>
 
@@ -393,14 +449,14 @@ export default function StatsPage() {
                         value={
                           <>
                             <span className="text-red-400">
-                              {fmtPct(b.max_drawdown)} (
-                              {fmt$(b.max_drawdown_dollars)})
+                              {fmtPct(rep.max_drawdown)} (
+                              {fmt$(rep.max_drawdown_dollars)})
                             </span>
-                            {b.max_drawdown_peak_date && (
+                            {rep.max_drawdown_peak_date && (
                               <span className="text-white">
                                 {" "}
-                                [{fmtDate(b.max_drawdown_peak_date)} →{" "}
-                                {fmtDate(b.max_drawdown_trough_date)}]
+                                [{fmtDate(rep.max_drawdown_peak_date)} →{" "}
+                                {fmtDate(rep.max_drawdown_trough_date)}]
                               </span>
                             )}
                           </>
@@ -408,7 +464,7 @@ export default function StatsPage() {
                       />
                       <StatRow
                         label="Avg Drawdown"
-                        value={`${fmtPct(b.avg_drawdown)} (${fmt$(b.avg_drawdown_dollars)})`}
+                        value={`${fmtPct(rep.avg_drawdown)} (${fmt$(rep.avg_drawdown_dollars)})`}
                         color="text-red-400"
                       />
                       <StatRow
@@ -416,13 +472,13 @@ export default function StatsPage() {
                         value={
                           <>
                             <span className="text-red-400">
-                              {fmtPct(b.max_intraday_drawdown)} (
-                              {fmt$(b.max_intraday_drawdown_dollars)})
+                              {fmtPct(rep.max_intraday_drawdown)} (
+                              {fmt$(rep.max_intraday_drawdown_dollars)})
                             </span>
-                            {b.max_intraday_drawdown_date && (
+                            {rep.max_intraday_drawdown_date && (
                               <span className="text-white">
                                 {" "}
-                                [{fmtDate(b.max_intraday_drawdown_date)}]
+                                [{fmtDate(rep.max_intraday_drawdown_date)}]
                               </span>
                             )}
                           </>
@@ -430,7 +486,7 @@ export default function StatsPage() {
                       />
                       <StatRow
                         label="Avg Intraday DD"
-                        value={`${fmtPct(b.avg_intraday_drawdown)} (${fmt$(b.avg_intraday_drawdown_dollars)})`}
+                        value={`${fmtPct(rep.avg_intraday_drawdown)} (${fmt$(rep.avg_intraday_drawdown_dollars)})`}
                         color="text-red-400"
                       />
                       <StatRow
@@ -438,12 +494,12 @@ export default function StatsPage() {
                         value={
                           <>
                             <span className="text-red-400">
-                              {fmt$(b.max_daily_loss)}
+                              {fmt$(rep.max_daily_loss)}
                             </span>
-                            {b.max_daily_loss_date && (
+                            {rep.max_daily_loss_date && (
                               <span className="text-white">
                                 {" "}
-                                [{fmtDate(b.max_daily_loss_date)}]
+                                [{fmtDate(rep.max_daily_loss_date)}]
                               </span>
                             )}
                           </>
@@ -451,7 +507,7 @@ export default function StatsPage() {
                       />
                       <StatRow
                         label="Avg Daily Loss"
-                        value={fmt$(b.avg_daily_loss)}
+                        value={fmt$(rep.avg_daily_loss)}
                         color="text-red-400"
                       />
                     </Section>
@@ -466,20 +522,20 @@ export default function StatsPage() {
               </div>
             )}
 
-            {activeTab === "equity" && b && (
+            {activeTab === "equity" && rep && (
               <div className="flex-1 min-h-0 w-full relative">
-                {loadingTrades ? (
+                {tradesLoadingNow ? (
                   <div className="absolute inset-0 flex items-center justify-center">
                     <span className="text-sm text-gray-400">
                       Loading trades...
                     </span>
                   </div>
-                ) : tradesError ? (
+                ) : tradesErrorNow ? (
                   <div className="absolute inset-0 flex items-center justify-center text-red-400 text-xs">
                     Error loading trades: {errorObj?.message}
                   </div>
-                ) : trades ? (
-                  <EquityChart trades={trades} initialBalance={b.initial_bal} startDate={b.first_ts?.slice(0, 10)} />
+                ) : viewTrades ? (
+                  <EquityChart trades={viewTrades} initialBalance={rep.initial_bal} startDate={rep.first_ts?.slice(0, 10)} />
                 ) : (
                   <div className="absolute inset-0 flex items-center justify-center">
                     <span className="text-sm text-gray-500">
@@ -490,8 +546,32 @@ export default function StatsPage() {
               </div>
             )}
 
-            {activeTab === "monte-carlo" && b && (
-              <MonteCarloTab backtestId={b.id} />
+            {activeTab === "splicing" && rep && (
+              <div className="flex-1 min-h-0 w-full relative overflow-y-auto px-8 pb-8 pt-20">
+                {tradesLoadingNow ? (
+                  <div className="text-sm text-gray-400">Loading trades...</div>
+                ) : tradesErrorNow ? (
+                  <div className="text-red-400 text-xs">Error loading trades: {errorObj?.message}</div>
+                ) : viewTrades && viewTrades.length > 0 ? (
+                  <Splicing trades={viewTrades} initialBalance={rep.initial_bal} />
+                ) : (
+                  <div className="text-sm text-gray-500">No trades data available.</div>
+                )}
+              </div>
+            )}
+
+            {activeTab === "monte-carlo" && rep && (
+              showFx ? (
+                fxData!.monteCarlo ? (
+                  <MonteCarloView data={fxData!.monteCarlo} />
+                ) : (
+                  <div className="flex-1 flex items-center justify-center">
+                    <span className="text-sm text-gray-600">Not enough fx trades for a Monte Carlo simulation.</span>
+                  </div>
+                )
+              ) : (
+                <MonteCarloTab backtestId={selectedBacktestId!} />
+              )
             )}
           </div>
         )}

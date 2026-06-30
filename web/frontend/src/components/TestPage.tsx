@@ -1,8 +1,7 @@
 import { useState, useMemo, useEffect, useRef } from "react";
 import EquityChart from "./EquityChart";
 import MonteCarloChart from "./MonteCarloChart";
-import Breakdown from "./Breakdown";
-import WalkForward from "./WalkForward";
+import Splicing from "./Splicing";
 import SensitivityHeatmap from "./SensitivityHeatmap";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { runBacktest, saveRun, combineBacktests, saveCombine, fetchBacktests, runTune, fetchTuneStatus, type RunParams, type TuneResult } from "../api";
@@ -28,7 +27,7 @@ interface TestTab {
   slippage: string;
   hasResult: boolean;
   isSaved: boolean;
-  activeTab: "analysis" | "equity" | "breakdown" | "walk-forward" | "monte-carlo";
+  activeTab: "analysis" | "equity" | "splicing" | "monte-carlo";
   combineBacktestIds: string[];
 }
 
@@ -159,6 +158,9 @@ export default function TestPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [tuneProgress, setTuneProgress] = useState<{ progress: number, total: number } | null>(null);
   const [tuneView, setTuneView] = useState<"rankings" | "sensitivity">("rankings");
+  // Which execution view the result panel shows: native (nq fills) or the
+  // fx-re-priced book (signals from nq bars, fills from fx_nq_ticks).
+  const [execView, setExecView] = useState<"native" | "fx">("native");
 
   const [savingTabs, setSavingTabs] = useState<Record<string, boolean>>({});
 
@@ -366,6 +368,7 @@ export default function TestPage() {
   const handleSeeResult = async () => {
     const tabId = activeTabId;
     updateActiveTab({ hasResult: false, isSaved: false, activeTab: "analysis" });
+    setExecView("native");
     setResults((prev) => {
       const next = { ...prev };
       delete next[tabId];
@@ -1543,19 +1546,19 @@ export default function TestPage() {
           })()}
 
           {!isLoading && hasResult && selectedCommand !== "Tune" && activeResult && (() => {
-            const b = activeResult.report;
-            const instrumentName =
-              b.symbol === "nq" ? "Nasdaq 100 E-mini" :
-              b.symbol === "gbpusd" ? "GBP/USD Spot" :
-              b.symbol === "eurusd" ? "EUR/USD Spot" : b.instrument;
-            // Result sub-tabs. Breakdown (#3 slicing) shows for Run and Combine;
-            // Walk-Forward (#1 OOS consistency) is Run-only. `effectiveTab` guards
-            // against a persisted tab that isn't valid for the current command.
+            // Native vs Forex-execution view. `fxData` is the same trade book re-priced
+            // from fx_nq_ticks; when selected, every sub-tab below reads from it.
+            const fxData = activeResult.fx;
+            const showFx = execView === "fx";
+            const view = showFx && fxData ? fxData : activeResult;
+            const b = view.report;
+            const mc = view.monteCarlo;
+            // Result sub-tabs. Splicing re-aggregates the trade log and applies to
+            // Run and Combine. `effectiveTab` guards a persisted tab not valid here.
             const resultTabs: { id: TestTab["activeTab"]; label: string }[] = [
               { id: "analysis", label: "Analysis" },
               { id: "equity", label: "Equity" },
-              { id: "breakdown", label: "Breakdown" },
-              ...(selectedCommand === "Run" ? [{ id: "walk-forward" as const, label: "Walk-Forward" }] : []),
+              { id: "splicing", label: "Splicing" },
               { id: "monte-carlo", label: "Monte Carlo" },
             ];
             const effectiveTab = resultTabs.some((t) => t.id === activeTab) ? activeTab : "analysis";
@@ -1578,7 +1581,41 @@ export default function TestPage() {
                 ))}
               </div>
 
+              {/* Native / Forex-execution switch */}
+              <div className="absolute top-6 right-8 z-10 flex items-center gap-0.5 bg-gray-900 rounded-lg p-0.5 border border-gray-800/80 shrink-0 shadow-lg shadow-black/40">
+                {([
+                  ["native", "Native"],
+                  ["fx", "March"],
+                ] as const).map(([id, label]) => {
+                  const active = execView === id;
+                  return (
+                    <button
+                      key={id}
+                      onClick={() => setExecView(id)}
+                      className={`px-2.5 py-1 transition-all duration-150 text-xs font-medium rounded-md select-none cursor-pointer ${
+                        active
+                          ? "bg-indigo-600 text-white shadow-sm"
+                          : "text-gray-500 hover:text-gray-200 hover:bg-gray-800/70"
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Forex selected but no trades fell inside the tick window. */}
+              {showFx && !fxData && (
+                <div className="flex-1 flex items-center justify-center pt-20 px-8 text-center">
+                  <span className="text-sm text-gray-500 max-w-md">
+                    No forex execution for this run. Forex re-pricing covers NQ trades within
+                    the tick window 2026-01-01 → 2026-06-26 — run a backtest inside that range to see it.
+                  </span>
+                </div>
+              )}
+
               {/* Tab Contents */}
+              {!(showFx && !fxData) && (<>
               {effectiveTab === "analysis" && (
                 <div className="flex-1 overflow-y-auto no-scrollbar px-8 pb-8 pt-20">
                   <div className="grid grid-cols-2 gap-6 max-w-5xl mx-auto pb-16">
@@ -1586,8 +1623,10 @@ export default function TestPage() {
                     {/* Left Sub-column */}
                     <div className="space-y-6">
                       <Section title="Overview">
+                        {selectedCommand === "Combine" && b.strategy && (
+                          <StatRow label="Strategies" value={b.strategy} />
+                        )}
                         <StatRow label="Symbol" value={b.symbol.toUpperCase()} />
-                        <StatRow label="Instrument" value={instrumentName} />
                         <StatRow label="Period" value={`${fmtDate(b.first_ts)} → ${fmtDate(b.last_ts)}`} />
                         <StatRow label="Total Days" value={String(b.total_days)} />
                         <StatRow label="Number of Trades" value={String(b.num_trades)} />
@@ -1677,8 +1716,8 @@ export default function TestPage() {
               {effectiveTab === "equity" && (
                 <div className="flex-1 overflow-y-auto no-scrollbar px-8 pb-8 pt-20 flex flex-col justify-center">
                   <div className="w-full max-w-5xl mx-auto h-[400px]">
-                    {activeResult.trades.length > 0 ? (
-                      <EquityChart trades={activeResult.trades} initialBalance={b.initial_bal} startDate={fromDate || undefined} />
+                    {view.trades.length > 0 ? (
+                      <EquityChart trades={view.trades} initialBalance={b.initial_bal} startDate={fromDate || undefined} />
                     ) : (
                       <div className="h-full flex items-center justify-center text-sm text-gray-500">No trades in this period.</div>
                     )}
@@ -1686,21 +1725,15 @@ export default function TestPage() {
                 </div>
               )}
 
-              {effectiveTab === "breakdown" && (
+              {effectiveTab === "splicing" && (
                 <div className="flex-1 overflow-y-auto no-scrollbar px-8 pb-8 pt-20">
-                  <Breakdown trades={activeResult.trades} initialBalance={b.initial_bal} />
-                </div>
-              )}
-
-              {effectiveTab === "walk-forward" && (
-                <div className="flex-1 overflow-y-auto no-scrollbar px-8 pb-8 pt-20">
-                  <WalkForward trades={activeResult.trades} initialBalance={b.initial_bal} startDate={fromDate || undefined} />
+                  <Splicing trades={view.trades} initialBalance={b.initial_bal} />
                 </div>
               )}
 
               {effectiveTab === "monte-carlo" && (
                 <div className="flex-1 overflow-y-auto no-scrollbar px-8 pb-8 pt-8 flex flex-col items-center justify-center gap-6">
-                  {activeResult.monteCarlo ? (
+                  {mc ? (
                     <>
                       {/* Summary table */}
                       <div className="w-full max-w-5xl font-mono text-sm">
@@ -1718,15 +1751,15 @@ export default function TestPage() {
                           <tbody>
                             <tr className="text-right">
                               <td className="text-left text-gray-300 pr-4">Final balance</td>
-                              <td className="pr-6">{activeResult.monteCarlo.p5.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                              <td className="pr-6">{activeResult.monteCarlo.p25.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                              <td className="pr-6">{activeResult.monteCarlo.p50.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                              <td className="pr-6">{activeResult.monteCarlo.p75.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                              <td>{activeResult.monteCarlo.p95.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                              <td className="pr-6">{mc.p5.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                              <td className="pr-6">{mc.p25.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                              <td className="pr-6">{mc.p50.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                              <td className="pr-6">{mc.p75.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                              <td>{mc.p95.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                             </tr>
                             <tr className="text-right">
                               <td className="text-left text-gray-300 pr-4">Max drawdown %</td>
-                              {([activeResult.monteCarlo.ddP5, activeResult.monteCarlo.ddP25, activeResult.monteCarlo.ddP50, activeResult.monteCarlo.ddP75, activeResult.monteCarlo.ddP95] as number[]).map((v, i, arr) => (
+                              {([mc.ddP5, mc.ddP25, mc.ddP50, mc.ddP75, mc.ddP95] as number[]).map((v, i, arr) => (
                                 <td key={i} className={i < arr.length - 1 ? "pr-6" : ""}>{isNaN(v) ? "—" : fmtPct(v, 1)}</td>
                               ))}
                             </tr>
@@ -1734,13 +1767,13 @@ export default function TestPage() {
                         </table>
                         <p className="text-gray-500 text-xs mt-1">(Worst case: the p5 column for balance, the p95 column for drawdown.)</p>
                         <div className="mt-3 flex gap-8 text-sm">
-                          <span><span className="text-gray-400">P(profit)</span>&nbsp;&nbsp;&nbsp;{fmtPct(activeResult.monteCarlo.pProfit * 100, 1)}</span>
-                          <span><span className="text-gray-400">P(ruin ≤ 50% start)</span>&nbsp;&nbsp;&nbsp;{fmtPct(activeResult.monteCarlo.pRuin * 100, 1)}</span>
+                          <span><span className="text-gray-400">P(profit)</span>&nbsp;&nbsp;&nbsp;{fmtPct(mc.pProfit * 100, 1)}</span>
+                          <span><span className="text-gray-400">P(ruin ≤ 50% start)</span>&nbsp;&nbsp;&nbsp;{fmtPct(mc.pRuin * 100, 1)}</span>
                         </div>
                       </div>
                       {/* Chart */}
                       <div className="w-full max-w-5xl h-[400px]">
-                        <MonteCarloChart data={activeResult.monteCarlo} />
+                        <MonteCarloChart data={mc} />
                       </div>
                     </>
                   ) : (
@@ -1748,6 +1781,7 @@ export default function TestPage() {
                   )}
                 </div>
               )}
+              </>)}
             </>
             );
           })()}

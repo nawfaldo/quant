@@ -2,9 +2,9 @@ import { useMemo, useState } from 'react'
 import type { Trade } from '../types'
 import { computeStats, bucketBy, entryYear, entryWeekday, entryHour, weekdayLabel, type TradeStats } from '../lib/tradeStats'
 
-// #3 — Regime / time slicing. Re-aggregates the existing trade log along a chosen
-// axis (long/short, year, weekday, hour) so you can see WHERE the edge comes from
-// and whether it's broadly sourced or concentrated in one fragile bucket.
+// Splicing — re-aggregates the existing trade log along a chosen axis (long/short,
+// year, weekday, hour) so you can see WHERE the edge comes from and whether it's
+// broadly sourced or concentrated in one fragile bucket.
 //
 // Thin buckets are dimmed: a great win rate on 6 trades is noise, not signal.
 
@@ -64,7 +64,7 @@ function buildRows(trades: Trade[], axis: Axis, initialBalance: number): Row[] {
   }))
 }
 
-export default function Breakdown({ trades, initialBalance }: Props) {
+export default function Splicing({ trades, initialBalance }: Props) {
   const [axis, setAxis] = useState<Axis>('side')
   const rows = useMemo(() => buildRows(trades, axis, initialBalance), [trades, axis, initialBalance])
 
@@ -125,14 +125,6 @@ export default function Breakdown({ trades, initialBalance }: Props) {
           </tbody>
         </table>
       </div>
-
-      {axis === 'side' && (
-        <p className="text-gray-500 text-xs">
-          For an index with strong upward drift (NQ), longs profiting while shorts bleed is a warning — the "edge" may just
-          be the market going up. Both sides independently profitable is far stronger evidence.
-        </p>
-      )}
-      <p className="text-gray-600 text-[11px]">Buckets with fewer than {LOW_CONFIDENCE} trades are dimmed — too few to be statistically meaningful.</p>
     </div>
   )
 }

@@ -19,6 +19,16 @@ export async function deleteBacktest(id: number): Promise<void> {
   if (!res.ok) throw new Error(`Backend error: ${res.status}`)
 }
 
+// FX-execution view of a SAVED backtest: re-prices its stored trades from
+// fx_nq_ticks on demand. Returns null when no trade falls in the fx window
+// (or the backtest is not NQ-derived).
+export async function fetchBacktestFx(id: number): Promise<FxResult | null> {
+  const res = await fetch(`${BACKEND_URL}/api/backtests/${id}/fx`)
+  if (!res.ok) throw new Error(`Backend error: ${res.status}`)
+  const data = await res.json()
+  return parseFx(data.fx)
+}
+
 
 export async function fetchMarchSettings(): Promise<MarchSettings> {
   const res = await fetch(`${BACKEND_URL}/api/march/settings`)
@@ -119,10 +129,22 @@ export interface RunParams {
 // id/run_at fields, plus initial_bal/final_bal supplied by the engine.
 export type RunReport = Omit<Backtest, 'id' | 'run_at'>
 
+// FX-execution view: the same trade book re-priced from fx_nq_ticks (100ms
+// latency, ±0.10 spread, 2026 coverage window). Same shape as RunResult plus
+// the count of trades that fell inside the fx window.
+export interface FxResult {
+  report: RunReport
+  trades: Trade[]
+  monteCarlo: MonteCarloData | null
+  tradesInWindow: number
+  tradesTotal: number
+}
+
 export interface RunResult {
   report: RunReport
   trades: Trade[]
   monteCarlo: MonteCarloData | null
+  fx: FxResult | null
 }
 
 interface RunMonteCarloJson {
@@ -146,6 +168,55 @@ interface RunMonteCarloJson {
   paths: number[][]
 }
 
+function parseTrades(raw: { trades?: Trade[] }): Trade[] {
+  return (raw.trades ?? []).map((t: Trade) => ({
+    side: t.side,
+    et: t.et as UTCTimestamp,
+    xt: t.xt as UTCTimestamp,
+    ep: t.ep,
+    xp: t.xp,
+    pnl: t.pnl,
+    qty: t.qty,
+  }))
+}
+
+function parseMonteCarlo(mc: RunMonteCarloJson | null | undefined): MonteCarloData | null {
+  if (!mc) return null
+  return {
+    numPaths: mc.numPaths,
+    sims: mc.sims,
+    steps: mc.steps,
+    stepValues: Uint32Array.from(mc.stepValues),
+    initialBalance: mc.initialBalance,
+    p5: mc.p5,
+    p25: mc.p25,
+    p50: mc.p50,
+    p75: mc.p75,
+    p95: mc.p95,
+    pProfit: mc.pProfit,
+    pRuin: mc.pRuin,
+    ddP5: mc.ddP5,
+    ddP25: mc.ddP25,
+    ddP50: mc.ddP50,
+    ddP75: mc.ddP75,
+    ddP95: mc.ddP95,
+    paths: mc.paths.map((p) => Float32Array.from(p)),
+  }
+}
+
+// Parse the nested fx-execution block (same shape as the top-level result).
+function parseFx(fx: Record<string, unknown> | null | undefined): FxResult | null {
+  if (!fx) return null
+  const { trades: _t, montecarlo: mc, tradesInWindow, tradesTotal, ...report } = fx
+  return {
+    report: report as unknown as RunReport,
+    trades: parseTrades(fx as { trades?: Trade[] }),
+    monteCarlo: parseMonteCarlo(mc as RunMonteCarloJson | null),
+    tradesInWindow: (tradesInWindow as number) ?? 0,
+    tradesTotal: (tradesTotal as number) ?? 0,
+  }
+}
+
 export async function runBacktest(params: RunParams): Promise<RunResult> {
   const res = await fetch(`${BACKEND_URL}/api/run`, {
     method: 'POST',
@@ -162,44 +233,13 @@ export async function runBacktest(params: RunParams): Promise<RunResult> {
   }
   const data = await res.json()
 
-  const trades: Trade[] = (data.trades ?? []).map((t: Trade) => ({
-    side: t.side,
-    et: t.et as UTCTimestamp,
-    xt: t.xt as UTCTimestamp,
-    ep: t.ep,
-    xp: t.xp,
-    pnl: t.pnl,
-    qty: t.qty,
-  }))
+  const trades = parseTrades(data)
+  const monteCarlo = parseMonteCarlo(data.montecarlo)
+  const fx = parseFx(data.fx)
 
-  let monteCarlo: MonteCarloData | null = null
-  const mc: RunMonteCarloJson | null = data.montecarlo
-  if (mc) {
-    monteCarlo = {
-      numPaths: mc.numPaths,
-      sims: mc.sims,
-      steps: mc.steps,
-      stepValues: Uint32Array.from(mc.stepValues),
-      initialBalance: mc.initialBalance,
-      p5: mc.p5,
-      p25: mc.p25,
-      p50: mc.p50,
-      p75: mc.p75,
-      p95: mc.p95,
-      pProfit: mc.pProfit,
-      pRuin: mc.pRuin,
-      ddP5: mc.ddP5,
-      ddP25: mc.ddP25,
-      ddP50: mc.ddP50,
-      ddP75: mc.ddP75,
-      ddP95: mc.ddP95,
-      paths: mc.paths.map((p) => Float32Array.from(p)),
-    }
-  }
-
-  // Strip trades/montecarlo from the report object; the rest is the Backtest shape.
-  const { trades: _t, montecarlo: _m, ...report } = data
-  return { report: report as RunReport, trades, monteCarlo }
+  // Strip trades/montecarlo/fx from the report object; the rest is the Backtest shape.
+  const { trades: _t, montecarlo: _m, fx: _fx, ...report } = data
+  return { report: report as RunReport, trades, monteCarlo, fx }
 }
 
 // Persist a run into app.db (re-runs server-side with a fixed Monte Carlo seed,
@@ -242,25 +282,11 @@ export async function combineBacktests(params: CombineParams): Promise<RunResult
   }
   const data = await res.json()
   if (typeof data.symbol !== 'string') throw new Error('Unexpected response — restart the backend')
-  const trades: Trade[] = (data.trades ?? []).map((t: Trade) => ({
-    side: t.side, et: t.et as any, xt: t.xt as any,
-    ep: t.ep, xp: t.xp, pnl: t.pnl, qty: t.qty,
-  }))
-  let monteCarlo: MonteCarloData | null = null
-  const mc: RunMonteCarloJson | null = data.montecarlo
-  if (mc) {
-    monteCarlo = {
-      numPaths: mc.numPaths, sims: mc.sims, steps: mc.steps,
-      stepValues: Uint32Array.from(mc.stepValues),
-      initialBalance: mc.initialBalance,
-      p5: mc.p5, p25: mc.p25, p50: mc.p50, p75: mc.p75, p95: mc.p95,
-      pProfit: mc.pProfit, pRuin: mc.pRuin,
-      ddP5: mc.ddP5, ddP25: mc.ddP25, ddP50: mc.ddP50, ddP75: mc.ddP75, ddP95: mc.ddP95,
-      paths: mc.paths.map((p) => Float32Array.from(p)),
-    }
-  }
-  const { trades: _t, montecarlo: _m, ...report } = data
-  return { report: report as RunReport, trades, monteCarlo }
+  const trades = parseTrades(data)
+  const monteCarlo = parseMonteCarlo(data.montecarlo)
+  const fx = parseFx(data.fx)
+  const { trades: _t, montecarlo: _m, fx: _fx, ...report } = data
+  return { report: report as RunReport, trades, monteCarlo, fx }
 }
 
 export async function saveCombine(params: CombineParams): Promise<number> {

@@ -283,6 +283,18 @@ pub fn onRequest(req: *http.Ctx) !void {
         return;
     }
 
+    // GET /api/backtests/:id/fx — on-demand fx-execution re-pricing of a saved run.
+    if (std.mem.startsWith(u8, path, "/api/backtests/") and std.mem.endsWith(u8, path, "/fx")) {
+        const mid = path["/api/backtests/".len .. path.len - "/fx".len];
+        const backtest_id = std.fmt.parseInt(i64, mid, 10) catch {
+            req.setStatusNumeric(400);
+            try req.sendJson("{\"error\":\"invalid id\"}");
+            return;
+        };
+        try bt_run.handleBacktestFx(req, backtest_id);
+        return;
+    }
+
     if (std.mem.startsWith(u8, path, "/api/backtests/")) {
         if (!std.mem.eql(u8, req.method orelse "", "DELETE")) {
             req.setStatusNumeric(405);
