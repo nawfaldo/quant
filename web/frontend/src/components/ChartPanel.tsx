@@ -13,6 +13,7 @@ import {
   HistoricalTradesPrimitive,
   type HistoricalTradeInfo,
   TradeLinesPrimitive,
+  NoiseAreaPrimitive,
 } from "../lib/primitives";
 import { useQuery } from "@tanstack/react-query";
 import { useApp } from "../context/AppContext";
@@ -29,6 +30,7 @@ export interface PanelConfig {
   fromDate: string;
   toDate: string;
   vwap: boolean;
+  noiseArea: boolean;
 }
 
 interface ChartPanelProps {
@@ -203,7 +205,7 @@ export default function ChartPanel({
   onOpenIndicators,
   onOpenBacktests,
 }: ChartPanelProps) {
-  const { symbol, tf, mode, fromDate, toDate, vwap } = config;
+  const { symbol, tf, mode, fromDate, toDate, vwap, noiseArea } = config;
 
   const containerRef = useRef<HTMLDivElement>(null);
   const { visibleTradeStrategies, allTrades, allFxTrades } = useApp();
@@ -226,6 +228,7 @@ export default function ChartPanel({
   const historicalTradesPlugin = useRef(new HistoricalTradesPrimitive());
   const tradeLinesPrimitive = useRef(new TradeLinesPrimitive());
   const fxTradeLinesPrimitive = useRef(new TradeLinesPrimitive());
+  const noiseAreaPlugin = useRef(new NoiseAreaPrimitive());
   const [chartContextMenu, setChartContextMenu] = useState<{ x: number; y: number } | null>(null);
 
   useEffect(() => {
@@ -314,6 +317,7 @@ export default function ChartPanel({
     series.attachPrimitive(activePositionsPlugin.current);
     series.attachPrimitive(historicalTradesPlugin.current);
     series.attachPrimitive(tradeLinesPrimitive.current);
+    series.attachPrimitive(noiseAreaPlugin.current);
 
     const vwapSeries = chart.addSeries(LineSeries, {
       color: "#60a5fa",
@@ -783,6 +787,34 @@ export default function ChartPanel({
   useEffect(() => {
     vwapSeriesRef.current?.applyOptions({ visible: vwap && symbol === "nq" });
   }, [vwap, symbol, chartSeries]);
+
+  useEffect(() => {
+    let active = true;
+    async function updateNoiseArea() {
+      if (noiseArea) {
+        try {
+          const params = new URLSearchParams({ symbol });
+          if (fromDate) params.set("from", fromDate);
+          if (toDate) params.set("to", toDate);
+
+          const res = await fetch(`${BACKEND_URL}/api/march/indicators/zara-noise-area?${params.toString()}`);
+          if (!res.ok) throw new Error("Backend error");
+          const data = await res.json();
+
+          if (!active) return;
+          noiseAreaPlugin.current.setData(data);
+        } catch (err) {
+          console.error("Failed to load noise area:", err);
+        }
+      } else {
+        noiseAreaPlugin.current.setData([]);
+      }
+    }
+    updateNoiseArea();
+    return () => {
+      active = false;
+    };
+  }, [noiseArea, symbol, fromDate, toDate, chartSeries]);
 
   // fx_nq overlay: when toggled on (NQ only), create a SECOND pane below the NQ
   // pane holding the aggregated fx candles (own price axis), and fetch its data.

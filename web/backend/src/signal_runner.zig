@@ -1,11 +1,10 @@
 const std = @import("std");
-const engine = @import("engine.zig");
-const data = @import("data.zig");
+const engine = @import("bt/engine.zig");
+const data = @import("bt/data.zig");
 
-// Strategies — copy-pasted from backtest/src/strategies/ without modification.
+// Strategies live under strategies/ — the same code the backtester and the live
+// march engine run (no more copy-pasted duplicates).
 const RthVwap = @import("strategies/rth_vwap.zig").RthVwap;
-const OrbBuy = @import("strategies/30m_buy.zig").OrbBuy;
-const MinLoop = @import("strategies/min_loop.zig").MinLoop;
 
 // ── Signal runner ─────────────────────────────────────────────────────────────
 //
@@ -13,7 +12,7 @@ const MinLoop = @import("strategies/min_loop.zig").MinLoop;
 // to stdout. The Python side spawns this process and communicates over pipes.
 //
 // Protocol (line-based, UTF-8):
-//   → STRATEGY rth_vwap           (or orb_buy, buy_hold)
+//   → STRATEGY rth_vwap
 //   → CONFIG key=value key=value  (contracts=0.1 leverage=1)
 //   → BAR 2024-01-15 09:30,17500.50,17510.00,17498.00,17505.30,1234
 //   ← LONG                        (or SHORT, FLAT, CLOSE)
@@ -23,14 +22,10 @@ const MinLoop = @import("strategies/min_loop.zig").MinLoop;
 
 const Strategy = union(enum) {
     rth_vwap: RthVwap,
-    orb_buy: OrbBuy,
-    min_loop: MinLoop,
 
     fn update(self: *Strategy, bar: engine.Bar, ts: data.Ts) engine.Signal {
         return switch (self.*) {
             .rth_vwap => |*s| s.update(bar, ts),
-            .orb_buy => |*s| s.update(bar, ts),
-            .min_loop => |*s| s.update(bar, ts),
         };
     }
 };
@@ -63,10 +58,6 @@ pub fn main(init: std.process.Init) !void {
             const name = line["STRATEGY ".len..];
             if (std.mem.eql(u8, name, "rth_vwap")) {
                 strat = .{ .rth_vwap = .{} };
-            } else if (std.mem.eql(u8, name, "orb_buy")) {
-                strat = .{ .orb_buy = .{} };
-            } else if (std.mem.eql(u8, name, "min_loop")) {
-                strat = .{ .min_loop = .{} };
             } else {
                 try w.print("ERROR unknown strategy: {s}\n", .{name});
                 try w.flush();
@@ -214,21 +205,11 @@ fn parseConfig(strat: *Strategy, config_str: []const u8) void {
                 const v = std.fmt.parseFloat(f64, val_str) catch continue;
                 switch (strat.*) {
                     .rth_vwap => |*s| s.contracts = v,
-                    .orb_buy => |*s| s.contracts = v,
-                    .min_loop => |*s| s.contracts = v,
                 }
             } else if (std.mem.eql(u8, key, "leverage")) {
                 const v = std.fmt.parseFloat(f64, val_str) catch continue;
                 switch (strat.*) {
                     .rth_vwap => |*s| {
-                        s.contracts *= v;
-                        s.leverage = v;
-                    },
-                    .orb_buy => |*s| {
-                        s.contracts *= v;
-                        s.leverage = v;
-                    },
-                    .min_loop => |*s| {
                         s.contracts *= v;
                         s.leverage = v;
                     },

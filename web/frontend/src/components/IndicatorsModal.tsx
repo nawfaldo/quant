@@ -11,7 +11,7 @@ interface Props {
 
 const INDICATOR_ROWS: { key: keyof Indicators; label: string; color: string; nqOnly: boolean }[] = [
   { key: 'vwap', label: 'VWAP', color: '#60a5fa', nqOnly: true },
-  { key: 'openingRange', label: 'Opening Range (9:30-10:00)', color: '#ef4444', nqOnly: true },
+  { key: 'noise_area', label: 'Noise Area', color: '#f43f5e', nqOnly: false },
 ]
 
 export default function IndicatorsModal({ open, onClose, indicators, onToggle, isNq }: Props) {

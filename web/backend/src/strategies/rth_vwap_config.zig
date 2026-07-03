@@ -1,26 +1,22 @@
-// march/zig/src/strategies/rth_vwap_config.zig
+// strategies/rth_vwap_config.zig
 //
-// Manual configuration for the RTH-VWAP strategy in march.
-// Edit the values in `config` below, then run `zig build` to apply.
+// LIVE-ONLY sizing config for the RTH-VWAP strategy in march. Edit the values
+// in `config` below, then `zig build` to apply.
 //
-// This file is march-native — it is NOT shared with the backtester, so tuning
-// it here changes only the live system. Every tunable parameter lives here;
-// rth_vwap.zig reads its defaults and time windows straight from `config`.
+// The strategy LOGIC (and its RTH time windows 09:30 / 15:59 / 16:00) lives in
+// the shared strategies/rth_vwap.zig, which the backtester and the live
+// engine both run. This file carries only the parameters that differ between a
+// backtest (driven by the Test-page request) and live trading — the order size.
+// march_api.zig reads it in makeRthVwap() and applies it at construction; the
+// backtester ignores it entirely.
 
 const sizing = @import("../sizings/vol_target.zig");
 
 pub const Config = struct {
-    // ── SIGNAL PARAMETERS — these change what march actually trades, live ──────
-    // Session window, in minutes since local midnight. The tick feed is
-    // timestamped NY-wall-clock, so these are ET. `9 * 60 + 30` == 09:30.
-    rth_open: u16, // first RTH bar — the entry side is decided here
-    exit_time: u16, // emit .close from this minute onward (flatten into the close)
-    rth_close: u16, // hard end of the trading window (exclusive)
-
     // ── SIZING — drives the live MT5 order volume ─────────────────────────────
-    // The lots march sends per entry = contracts × leverage × (vol-target
-    // multiplier, if sizing_mode == .vol_target). This is the actual order size
-    // submitted to MetaTrader 5; it overrides the Python VOLUME env.
+    // Lots march sends per entry = contracts × leverage × (vol-target multiplier
+    // if sizing_mode == .vol_target). This is the actual order size submitted to
+    // MetaTrader 5; it overrides the Python VOLUME env.
     contracts: f64, // base lots
     leverage: f64, // multiplier on contracts (1.0 = off)
     sizing_mode: sizing.Mode, // .none (fixed lots) or .vol_target
@@ -28,12 +24,6 @@ pub const Config = struct {
 };
 
 pub const config = Config{
-    // ── Signal ──
-    .rth_open = 9 * 60 + 30, // 09:30 ET
-    .exit_time = 15 * 60 + 59, // 15:59 ET → flatten into the 16:00 close
-    .rth_close = 16 * 60, // 16:00 ET
-
-    // ── Sizing (drives the live order volume) ──
     .contracts = 0.01,
     .leverage = 5.0,
     .sizing_mode = .vol_target,

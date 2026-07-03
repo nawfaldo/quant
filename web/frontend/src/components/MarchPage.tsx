@@ -235,6 +235,7 @@ export default function MarchPage() {
         fromDate: stored.from,
         toDate: stored.to,
         vwap: stored.indicators.vwap,
+        noiseArea: stored.indicators.noise_area,
       },
       setSymbol: (s: "nq" | "es") => updateMarchPanel(marchLayout, i, { symbol: s }),
       setTf: (t: TF) => updateMarchPanel(marchLayout, i, { tf: t.table }),

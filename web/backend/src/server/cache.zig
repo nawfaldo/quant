@@ -224,7 +224,7 @@ pub fn fetchMarchTicks(io: std.Io, a: std.mem.Allocator, symbol: []const u8, sin
 
 // fx_nq overlay candles: aggregate the fx_nq_ticks tick table (timestamp, BID,
 // ASK) into OHLC bars at `tf`, using the tick MID = (BID+ASK)/2 — the same price
-// bt/fx.zig fills against. Returns the same binary blob format as the regular
+// fx.zig fills against. Returns the same binary blob format as the regular
 // march candles, so the frontend reuses the identical decoder.
 pub fn fetchFxNqCandles(io: std.Io, a: std.mem.Allocator, tf: []const u8, from: []const u8, to: []const u8) ![]const u8 {
     return withRetry(io, buildFxNqCandles, .{ io, a, tf, from, to });

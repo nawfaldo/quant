@@ -87,7 +87,7 @@ Each panel is fully self-contained. Runs its own data pipeline:
 1. **Historical load**: `fetchMarchCandles` → sets candlestick series, seeds 24h VWAP accumulators
 2. **Live stream**: WebSocket `ws://localhost:8765` (Bookmap addon) → `applyTicks()` → updates OHLCV + VWAP tick-by-tick
 3. **VWAP**: 24h VWAP with **two re-anchors per ET day**: midnight (00:00) and RTH open (09:30). This gives two continuous VWAP sessions per day (overnight 00:00–09:30 and RTH+evening 09:30–24:00). The line breaks at each anchor so it never connects across a reset.
-4. **Primitives**: `ActivePositionsPrimitive` (live positions), `HistoricalTradesPrimitive` (live trade history), `TradeLinesPrimitive` (backtest trade overlays from `allTrades`), `OpeningRangePrimitive` (09:30–10:00 OR box for orb_buy strategy)
+4. **Primitives**: `ActivePositionsPrimitive` (live positions), `HistoricalTradesPrimitive` (live trade history), `TradeLinesPrimitive` (backtest trade overlays from `allTrades`)
 
 The VWAP accumulator logic is mirrored in both the historical render and the live `applyTicks` path — they use the same midnight + 09:30 anchor rule so the line is continuous across the historical→live boundary.
 
@@ -95,11 +95,7 @@ The VWAP accumulator logic is mirrored in both the historical render and the liv
 
 - **`ActivePositionsPrimitive`**: canvas overlay showing live MT5 open positions as price lines with P&L labels
 - **`HistoricalTradesPrimitive`**: canvas overlay of completed march trades (entry/exit arrows + P&L)
-- **`OpeningRangePrimitive`**: red box for days where the 09:55 ORB breakout triggered. Mirrors `strategies/30m_buy.zig` exactly — **do not change independently**:
-  - Range bars: 09:30–09:50 (first five 5m candles). `OR_high` = max close (breakout reference)
-  - Box extents: body high/low across all six bars including 09:55
-  - Trigger: 09:55 bar close > OR_high
-  - Timestamps are fake-UTC ET; always use `timeZone: 'UTC'`
+
 
 ## Binary wire formats (parsed in `api.ts`)
 
@@ -118,7 +114,6 @@ All timestamps from the backend are **New York (ET) wall-clock times stored as f
 Always format timestamps with `timeZone: 'UTC'` or UTC date methods (`getUTCHours`, `getUTCDate`, etc.):
 
 - `ChartPanel.tsx` — `TZ = 'UTC'` for all `Intl.DateTimeFormat` formatters
-- `primitives.ts` — `OpeningRangePrimitive.setBars` uses `timeZone: 'UTC'` to detect 09:30–10:00 OR window
 
 ## Environment
 

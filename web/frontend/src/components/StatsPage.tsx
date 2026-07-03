@@ -322,7 +322,7 @@ export default function StatsPage() {
                   {/* Left Column */}
                   <div className="space-y-6">
                     <Section title="Overview">
-                      {(rep.symbol.toLowerCase() === 'combined' || rep.strategy.includes(' + ')) && (
+                      {(rep.symbol.toLowerCase() === 'combined' || rep.strategy?.includes(' + ')) && (
                         <StatRow label="Strategies" value={rep.strategy} />
                       )}
                       <StatRow label="Symbol" value={rep.symbol.toUpperCase()} />

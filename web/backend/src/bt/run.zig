@@ -1,15 +1,14 @@
 const std = @import("std");
-const http = @import("http.zig");
-const db = @import("db.zig");
-const engine = @import("bt/engine.zig");
-const data = @import("bt/data.zig");
-const montecarlo = @import("bt/montecarlo.zig");
-const fxmod = @import("bt/fx.zig");
-const sizing = @import("bt/sizings/vol_target.zig");
+const http = @import("../server/http.zig");
+const db = @import("../db.zig");
+const engine = @import("engine.zig");
+const data = @import("data.zig");
+const montecarlo = @import("montecarlo.zig");
+const fxmod = @import("fx.zig");
+const sizing = @import("../sizings/vol_target.zig");
 
-const RthVwap = @import("bt/strategies/rth_vwap.zig").RthVwap;
-const ThirtyMinBuy = @import("bt/strategies/30m_buy.zig").ThirtyMinBuy;
-const Orb = @import("bt/strategies/5m_orb.zig").Orb;
+const RthVwap = @import("../strategies/rth_vwap.zig").RthVwap;
+const ZaraMomentum = @import("../strategies/zara_momentum.zig").ZaraMomentum;
 
 const alloc = std.heap.page_allocator;
 
@@ -158,7 +157,10 @@ fn parse(req: *http.Ctx, body: []const u8) !?Parsed {
     };
 
     const sizing_str = jsonStr(body, "sizing");
-    const sizing_mode: sizing.Mode = if (std.mem.eql(u8, sizing_str, "Vol Target")) .vol_target else .none;
+    const sizing_mode: sizing.Mode = if (std.mem.eql(u8, sizing_str, "Vol Target"))
+        .vol_target
+    else
+        .none;
     var vol: sizing.VolTarget = .{};
     if (sizing_mode == .vol_target) {
         if (jsonNum(body, "volTarget")) |v| vol.target = v;
@@ -198,22 +200,20 @@ fn parse(req: *http.Ctx, body: []const u8) !?Parsed {
 // Run the engine for the parsed strategy. `parse` has already validated the name.
 fn dispatchRun(io: std.Io, p: Parsed) !engine.Result {
     if (std.mem.eql(u8, p.strategy, "RTH VWAP")) return runStrategy(RthVwap, io, p.params);
-    if (std.mem.eql(u8, p.strategy, "30m Buy")) return runStrategy(ThirtyMinBuy, io, p.params);
-    if (std.mem.eql(u8, p.strategy, "5m ORB")) return runStrategy(Orb, io, p.params);
+    if (std.mem.eql(u8, p.strategy, "Zara Momentum")) return runStrategy(ZaraMomentum, io, p.params);
     unreachable;
 }
 
 // Display strategy name → canonical DB label (matches the CLI's STRATEGIES).
 fn saveName(strategy: []const u8) ?[]const u8 {
     if (std.mem.eql(u8, strategy, "RTH VWAP")) return "RTH_VWAP";
-    if (std.mem.eql(u8, strategy, "30m Buy")) return "30M_BUY";
-    if (std.mem.eql(u8, strategy, "5m ORB")) return "5M_ORB";
+    if (std.mem.eql(u8, strategy, "Zara Momentum")) return "ZARA_MOMENTUM";
     return null;
 }
 
-// Generic over the strategy type — Orb, RthVwap and ThirtyMinBuy share the same
-// parameter surface, exactly like the CLI's `runStrategy`: contracts = base lot ×
-// leverage (the engine reads strat.contracts at signal time).
+// Generic over the strategy type — RthVwap's parameter surface, exactly like
+// the CLI's `runStrategy`: contracts = base lot × leverage (the engine reads
+// strat.contracts at signal time).
 fn runStrategy(comptime S: type, io: std.Io, p: Params) !engine.Result {
     var strat = S{
         .initial_balance = p.balance,
@@ -770,4 +770,62 @@ fn jdn(ts: [16]u8) i64 {
 
 fn daysBetween(first: [16]u8, last: [16]u8) i64 {
     return jdn(last) - jdn(first);
+}
+
+pub fn fetchZaraNoiseArea(io: std.Io, symbol: []const u8, from: []const u8, to: []const u8) ![]const u8 {
+    var strat = ZaraMomentum{};
+    const cfg = engine.Config{
+        .symbol = symbol,
+        .instrument = .forex,
+        .from = if (from.len > 0) from else null,
+        .to = if (to.len > 0) to else null,
+        .spread = engine.spread,
+        .slippage = engine.slippage,
+        .warmup_days = 90,
+    };
+    const cols = engine.columnsFor(ZaraMomentum);
+    var tbuf: [40]u8 = undefined;
+    const table = try std.fmt.bufPrint(&tbuf, "{s}_{s}", .{ cfg.symbol, ZaraMomentum.timeframe });
+    const dataset = try engine.fetchDatasetCfg(io, alloc, cols, table, cfg);
+    defer dataset.deinit();
+
+    const start = engine.realStartIndex(dataset.timestamps, cfg.from);
+
+    var out: std.ArrayList(u8) = .empty;
+    errdefer out.deinit(alloc);
+
+    try out.appendSlice(alloc, "[");
+    var first: bool = true;
+
+    var i: usize = 0;
+    while (i < dataset.bars.len) : (i += 1) {
+        _ = strat.update(dataset.bars[i], dataset.timestamps[i]);
+
+        if (i >= start) {
+            if (strat.ub > 0.0 or strat.lb > 0.0) {
+                const ts_secs = tsToUnix(dataset.timestamps[i]);
+                const comma = if (first) "" else ",";
+                first = false;
+                const row = try std.fmt.allocPrint(alloc, "{s}{{\"time\":{d},\"ub\":{d:.4},\"lb\":{d:.4}}}", .{ comma, ts_secs, strat.ub, strat.lb });
+                defer alloc.free(row);
+                try out.appendSlice(alloc, row);
+
+                // The 15:30 bar carries the last slot's band (see
+                // zara_momentum.zig) but is itself stamped 15:30, so the
+                // polygon's right edge would sit at 15:30 instead of the
+                // true 16:00 session close. Emit one more point 30 min later
+                // (same ub/lb, flat edge) so the frontend fill/stroke reaches
+                // 16:00 instead of stopping half an hour short.
+                const ts_bytes = dataset.timestamps[i];
+                const is_eod = std.mem.eql(u8, ts_bytes[11..16], "15:30");
+                if (is_eod) {
+                    const row2 = try std.fmt.allocPrint(alloc, ",{{\"time\":{d},\"ub\":{d:.4},\"lb\":{d:.4}}}", .{ ts_secs + 1800, strat.ub, strat.lb });
+                    defer alloc.free(row2);
+                    try out.appendSlice(alloc, row2);
+                }
+            }
+        }
+    }
+    try out.appendSlice(alloc, "]");
+    return out.toOwnedSlice(alloc);
 }

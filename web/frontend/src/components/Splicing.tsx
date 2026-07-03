@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import type { Trade } from '../types'
-import { computeStats, bucketBy, entryYear, entryWeekday, entryHour, weekdayLabel, type TradeStats } from '../lib/tradeStats'
+import { computeStats, bucketBy, entryYear, entryWeekday, entryHour, weekdayLabel, hourLabel, type TradeStats } from '../lib/tradeStats'
 
 // Splicing — re-aggregates the existing trade log along a chosen axis (long/short,
 // year, weekday, hour) so you can see WHERE the edge comes from and whether it's
@@ -59,7 +59,7 @@ function buildRows(trades: Trade[], axis: Axis, initialBalance: number): Row[] {
   return keys.map((k) => ({
     key: String(k),
     label:
-      axis === 'year' ? String(k) : axis === 'weekday' ? weekdayLabel(k) : `${String(k).padStart(2, '0')}:00`,
+      axis === 'year' ? String(k) : axis === 'weekday' ? weekdayLabel(k) : hourLabel(k),
     stats: computeStats(buckets.get(k)!, initialBalance),
   }))
 }

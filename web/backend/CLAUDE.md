@@ -9,8 +9,8 @@ Zig 0.16 HTTP server, **cross-platform (Windows / macOS / Linux), built on `std.
 | Layer | Technology |
 |-------|-----------|
 | Language | Zig 0.16 |
-| HTTP server | Hand-rolled HTTP/1.1 on `std.Io.net` (`src/http.zig`) — cross-platform, no external dependency |
-| SQLite | **bundled** (`src/sqlite3.c` amalgamation, compiled by `build.zig`) — not system-linked, so it builds the same on every OS |
+| HTTP server | Hand-rolled HTTP/1.1 on `std.Io.net` (`src/server/http.zig`) — cross-platform, no external dependency |
+| SQLite | **bundled** (`src/vendor/sqlite3.c` amalgamation, compiled by `build.zig`) — not system-linked, so it builds the same on every OS |
 | OHLCV data | QuestDB on `localhost:9000` over `std.Io.net` (chunked-CSV `/exp`) |
 | Backtest results | SQLite at the per-OS path in `db.zig` (`DB_PATH`) |
 | Allocator | `std.heap.page_allocator` (per-request, supports free) |
@@ -32,24 +32,37 @@ backend/
 ├── build.zig          # build script (bundles sqlite3.c; links ws2_32 on Windows)
 ├── build.zig.zon      # package manifest (no dependencies)
 └── src/
-    ├── main.zig       # entry: web accept loop (PORT env) + spawns march.serve on Windows
-    ├── http.zig       # cross-platform HTTP/1.1 server + Ctx (request/response adapter)
-    ├── router.zig     # web request dispatch (onRequest takes *http.Ctx)
-    ├── cache.zig      # on-demand candle/VWAP blob builders (QuestDB); takes std.Io
-    ├── db.zig         # SQLite helpers: backtests list, trades/montecarlo binary
-    ├── settings.zig   # app.db key/value settings (incl. march settings + layouts)
-    ├── questdb.zig    # std.Io.net fetch + chunked-decode from QuestDB
-    ├── sqlite3.c/.h   # bundled SQLite amalgamation
-    └── march/         # integrated march live-trading server (Windows-only thread)
-        ├── api.zig         # serve(io): port-4000 server + WS engine (was march/zig api)
-        ├── db.zig          # march.db (mt5_accounts, strategies, trades) — at web/backend/march.db
-        ├── ws.zig          # Bookmap live-push WebSocket client
-        ├── engine.zig / data.zig
-        ├── signal_runner.zig   # stdin/stdout strategy bridge → built as a separate exe
-        ├── strategies/ , sizings/
+    ├── main.zig       # entry: web accept loop (PORT env) + spawns march.init on Windows
+    ├── signal_runner.zig   # stdin/stdout strategy bridge → separate exe (imports strategies/, bt/engine).
+    │                       #   MUST stay at src/ root: it's a standalone build module, so its
+    │                       #   import boundary is its own dir — it can't reach up from a subfolder.
+    ├── db.zig         # SQLite helpers: backtests list, trades/montecarlo binary (shared by all subsystems)
+    ├── settings.zig   # app.db key/value settings (incl. march settings + layouts; shared)
+    ├── root.zig       # package convention file
+    ├── sizings/       # vol_target.zig (shared: bt handlers + live march)
+    ├── strategies/    # rth_vwap, zara_momentum (backtest-facing); 30m_buy, min_loop
+    │                  #   (+ *_config.zig, live-facing). Import ../bt/engine + ../sizings.
+    │                  #   trade_filter.zig: shared day/hour entry exclusion (see below).
+    ├── vendor/        # sqlite3.c/.h — bundled SQLite amalgamation
+    ├── server/        # HTTP/server infra
+    │   ├── http.zig       # cross-platform HTTP/1.1 server + Ctx (request/response adapter)
+    │   ├── router.zig     # web request dispatch (onRequest takes *http.Ctx)
+    │   ├── cache.zig      # on-demand candle/VWAP blob builders (QuestDB); takes std.Io
+    │   └── questdb.zig    # std.Io.net fetch + chunked-decode from QuestDB
+    ├── march/         # live trading
+    │   ├── march_api.zig  # live march engine (imports ../strategies/); routes /api/march/*
+    │   └── ws.zig         # Bookmap live-push WebSocket client (Windows-only)
+    └── bt/            # backtest engine + handlers
+        ├── engine.zig / data.zig   # SHARED core: Bar/Ts/Signal types + backtest engine
+        ├── montecarlo.zig          #   (backtest AND live march)
+        ├── fx.zig                  # FX conversion overlay
+        ├── run.zig / tune.zig / combine.zig   # HTTP handlers → engine
+        └── tune_report.zig / tune_score.zig            # tuning helpers
 ```
 
-`march.db` lives at `web/backend/march.db` (absolute path in `march/db.zig`); `march/db.py` reads it from `../web/backend/march.db`. The Python side (`march/`, port 5001) is unchanged otherwise — it still receives `/execute` from the march server on 4000.
+**One strategy codebase.** `strategies/` + `sizings/` are the single source of truth: the backtest handlers (`bt/run`/`tune`/`combine`) and the live march engine (`march/march_api.zig`, `signal_runner.zig`) all `@import` the same strategy files, so live and backtest logic can never drift. `rth_vwap` and `zara_momentum` are wired into the Test page; `30m_buy` (OrbBuy) and `min_loop` are live-only. Live-tunable parameters that must NOT change backtest output (order size, leverage, vol-target) live in `strategies/*_config.zig` and are applied at construction in `march_api.zig` (`makeRthVwap`) / read as struct defaults (OrbBuy).
+
+`march.db` lives at `web/backend/march.db` (absolute path in `db.zig`). The Python side (`march/`, port 5001) is unchanged — it still receives `/execute` from `march_api.zig`.
 
 ## API routes
 
@@ -108,6 +121,15 @@ defer list.deinit(allocator);
 try list.append(allocator, byte);
 const owned = try list.toOwnedSlice(allocator);
 ```
+
+### Hardcoded trade filters (`strategies/trade_filter.zig`)
+`rth_vwap.zig` and `zara_momentum.zig` each declare hardcoded exclusion lists near the top of the file:
+```zig
+const filter_day: []const []const u8 = &.{};    // e.g. &.{ "Monday", "Tuesday" }
+const filter_hour: []const []const u8 = &.{};   // e.g. &.{ "09.00", "12.00" } — only the HH part is matched
+const filter_close_open: bool = false;          // true ⇒ flatten immediately on a filtered bar
+```
+These are **exclusion** lists, not allowlists: a listed day/hour blocks new entries and flips; an empty list means that filter is off. `filter_close_open` controls what happens to a position that's already open when a filtered bar arrives — `false` (default) lets it exit normally (VWAP flip / trailing stop / EOD flatten); `true` closes it immediately on that bar. Exits, the trailing stop, and the 16:00 EOD flatten are never blocked by the entry filter itself. Since these are compile-time constants inside the shared strategy files, they apply identically to backtests and the live march engine — edit the file and rebuild to change them.
 
 ### Adding a new route
 Add an `if` branch in `router.zig:onRequest`:

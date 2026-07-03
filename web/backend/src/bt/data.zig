@@ -102,7 +102,7 @@ pub fn fetch(io: Io, gpa: std.mem.Allocator, cols: Columns, src: Source) !Datase
 // streamFxTicks — fetch (timestamp, BID, ASK) rows from the fx_nq_ticks tick
 // table and hand each one to `consumer.onTick(ts_unix_micros, bid, ask)` as it
 // is decoded, WITHOUT buffering the whole result. The tick table has tens of
-// millions of rows, so the re-pricer (bt/fx.zig) streams a single ordered pass
+// millions of rows, so the re-pricer (fx.zig) streams a single ordered pass
 // and keeps only O(trades) state instead of materializing every tick.
 //
 // `from`/`to` are "YYYY-MM-DD" bounds (>= from, < to). `consumer` is any value

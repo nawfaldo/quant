@@ -21,42 +21,58 @@
 
 const std = @import("std");
 const builtin = @import("builtin");
-const db = @import("db.zig");
-const engine = @import("engine.zig");
-const data = @import("data.zig");
-const sizing = @import("sizings/vol_target.zig");
-const http = @import("http.zig");
-const questdb = @import("questdb.zig");
+const db = @import("../db.zig");
+// Engine core, sizing, and strategies are shared with the backtester
+// (a single source of truth — the live march engine and the backtest engine run
+// the exact same strategy code). See strategies/ and sizings/.
+const engine = @import("../bt/engine.zig");
+const data = @import("../bt/data.zig");
+const sizing = @import("../sizings/vol_target.zig");
+const http = @import("../server/http.zig");
+const questdb = @import("../server/questdb.zig");
 
-const RthVwap = @import("strategies/rth_vwap.zig").RthVwap;
-const OrbBuy = @import("strategies/30m_buy.zig").OrbBuy;
-const MinLoop = @import("strategies/min_loop.zig").MinLoop;
+const RthVwap = @import("../strategies/rth_vwap.zig").RthVwap;
+
+// Live-tunable RTH-VWAP sizing (lots/leverage/vol-target). The shared bt
+// strategy carries neutral backtest defaults, so the live parameters are
+// applied here at construction (makeRthVwap) rather than baked into the struct.
+const rth_cfg = @import("../strategies/rth_vwap_config.zig").config;
 
 // ── Strategy registry (global in-process state) ────────────────────────────────
 
-const StrategyTag = enum { rth_vwap, orb_buy, min_loop };
+const StrategyTag = enum { rth_vwap };
 
 const StrategyInstance = union(StrategyTag) {
     rth_vwap: RthVwap,
-    orb_buy: OrbBuy,
-    min_loop: MinLoop,
 
     fn update(self: *StrategyInstance, bar: engine.Bar, ts: data.Ts) engine.Signal {
         return switch (self.*) {
             .rth_vwap => |*s| s.update(bar, ts),
-            .orb_buy  => |*s| s.update(bar, ts),
-            .min_loop => |*s| s.update(bar, ts),
         };
     }
 
     fn liveVolume(self: *const StrategyInstance) f64 {
-        return switch (self.*) {
+        const raw = switch (self.*) {
             .rth_vwap => |*s| s.contracts * s.leverage,
-            .orb_buy  => |*s| s.contracts * s.leverage,
-            .min_loop => |*s| s.contracts * s.leverage,
         };
+        return roundToLotStep(raw);
     }
 };
+
+// Forex CFDs execute in 0.01-lot increments at every retail broker. The
+// vol-target multiplier (sizings/vol_target.zig) is a free-floating float,
+// so without this the computed volume can land on something like 0.0001 or
+// 0.8932 lots — MT5 will reject an order at an arbitrary volume that doesn't
+// line up with the symbol's volume_step, silently failing the trade (see
+// mt5_client.py's open_trade error branch). This is a best-effort default;
+// mt5_client.py additionally clamps to the broker's actual volume_step/
+// volume_min/volume_max right before order_send, since those aren't visible
+// from Zig.
+const lot_step: f64 = 0.01;
+
+fn roundToLotStep(raw: f64) f64 {
+    return @max(lot_step, @round(raw / lot_step) * lot_step);
+}
 
 const MAX_STRATEGIES = 8;
 var g_strategies: [MAX_STRATEGIES]?StrategyInstance = [_]?StrategyInstance{null} ** MAX_STRATEGIES;
@@ -78,9 +94,20 @@ fn findSlot(name: []const u8) ?usize {
 
 fn tagFromName(name: []const u8) ?StrategyTag {
     if (std.mem.eql(u8, name, "rth_vwap")) return .rth_vwap;
-    if (std.mem.eql(u8, name, "orb_buy"))  return .orb_buy;
-    if (std.mem.eql(u8, name, "min_loop")) return .min_loop;
     return null;
+}
+
+// Build a live RTH-VWAP instance from the march sizing config. The shared bt
+// strategy defaults are neutral (1 lot, no vol targeting), so the live lots,
+// leverage, and vol-target params are applied here. The strategy's own update()
+// still reads self.contracts/vol at signal time exactly as in the backtest.
+fn makeRthVwap() RthVwap {
+    return .{
+        .contracts = rth_cfg.contracts,
+        .leverage = rth_cfg.leverage,
+        .sizing_mode = rth_cfg.sizing_mode,
+        .vol = rth_cfg.vol,
+    };
 }
 
 fn activateStrategy(io: std.Io, name: []const u8) void {
@@ -98,16 +125,12 @@ fn activateStrategy(io: std.Io, name: []const u8) void {
         break :blk idx;
     };
     g_strategies[slot] = switch (tag) {
-        .rth_vwap => .{ .rth_vwap = .{} },
-        .orb_buy  => .{ .orb_buy  = .{} },
-        .min_loop => .{ .min_loop = .{} },
+        .rth_vwap => .{ .rth_vwap = makeRthVwap() },
     };
     g_prev_signals[slot] = .flat;
 
     if (g_strategies[slot]) |*inst| switch (inst.*) {
         .rth_vwap => |*s| if (s.sizing_mode == .vol_target) warmupVolTarget(io, &s.vol),
-        .orb_buy  => |*s| if (s.sizing_mode == .vol_target) warmupVolTarget(io, &s.vol),
-        .min_loop => {},
     };
 }
 
@@ -458,12 +481,7 @@ fn feedCompletedBar(io: std.Io, bar: engine.Bar, bar_start: i64, strat_name: []c
     g_strategies[slot] = inst;
 
     const prev = g_prev_signals[slot];
-    const is_min_loop = std.mem.eql(u8, strat_name, "min_loop");
-    const is_min_loop_trade_bar = if (is_min_loop) switch (inst) {
-        .min_loop => |s| s.bar_count % 2 == 1,
-        else => false,
-    } else false;
-    if (signal != prev or (is_min_loop and signal == .long and is_min_loop_trade_bar)) {
+    if (signal != prev) {
         g_prev_signals[slot] = signal;
         const db_res = handleTradeDbLogging(strat_name, prev, signal, volume, bar.close, ts);
         const sig_str: []const u8 = switch (signal) {
@@ -499,7 +517,6 @@ fn wsClientLoop(io: std.Io) void {
     defer ws.cleanupWsa();
 
     var builder_1m = BarBuilder{ .tf_secs = 60 };
-    var builder_5m = BarBuilder{ .tf_secs = 300 };
 
     var frame_buf: [262144]u8 = undefined;
     var tick_buf: [2048]ParsedTick = undefined;
@@ -521,7 +538,6 @@ fn wsClientLoop(io: std.Io) void {
         std.debug.print("[WS] connected to Bookmap live-push\n", .{});
 
         builder_1m = BarBuilder{ .tf_secs = 60 };
-        builder_5m = BarBuilder{ .tf_secs = 300 };
 
         while (true) {
             const frame = client.readFrame(&frame_buf) catch break;
@@ -538,10 +554,6 @@ fn wsClientLoop(io: std.Io) void {
 
                         if (builder_1m.onTick(tick.price, tick.size, tick_secs)) |c| {
                             feedCompletedBar(io, c.bar, c.bar_start, "rth_vwap");
-                            feedCompletedBar(io, c.bar, c.bar_start, "min_loop");
-                        }
-                        if (builder_5m.onTick(tick.price, tick.size, tick_secs)) |c| {
-                            feedCompletedBar(io, c.bar, c.bar_start, "orb_buy");
                         }
                     }
                 },
@@ -677,8 +689,7 @@ pub fn handleRequest(req: *http.Ctx) !bool {
         };
 
         const prev = g_prev_signals[slot];
-        const is_min_loop = std.mem.eql(u8, strat_name, "min_loop");
-        if (signal != prev or (is_min_loop and signal == .long)) {
+        if (signal != prev) {
             g_prev_signals[slot] = signal;
             const db_res = handleTradeDbLogging(strat_name, prev, signal, volume, parsed.bar.close, parsed.ts);
             switch (signal) {
