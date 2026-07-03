@@ -14,7 +14,7 @@ Quantitative trading system for NQ futures (and forex pairs). Four subsystems:
 | `data_collection/` | Python scripts — fetch data from yfinance / Bookmap into QuestDB |
 | `questdb_csv_importer/` | Zig CLI — stream CSV into QuestDB via ILP; builds all 7 timeframes in one pass |
 
-The backtest engine (formerly a standalone CLI in `backtest/`) now lives inside the web backend at `web/backend/src/bt/` and is driven over HTTP by the Test page — see "Backtest engine" below.
+The backtest engine (formerly a standalone CLI in `backtest/`) now lives inside the web backend at `web/backend/src/bt/` (engine/data) with `strategies/` and `sizings/` at `src/` and is driven over HTTP by the Test page — see "Backtest engine" below.
 
 Submodules have their own `CLAUDE.md` files with detailed context.
 
@@ -52,7 +52,7 @@ python main.py     # starts FastAPI on port 5001
 
 ```
 QuestDB (localhost:9000 HTTP, 8812 PGWire) ← CSV importer / yfinance scripts
-       ↓ HTTP chunked-CSV via questdb.zig (candles/VWAP) + PGWire via bt/data.zig (backtest engine)
+       ↓ HTTP chunked-CSV via questdb.zig (candles/VWAP) + PGWire via data.zig (backtest engine)
 web backend (port 8080)
        ↓ binary blobs + JSON
 web frontend (port 5173 dev)
@@ -83,7 +83,7 @@ Binary responses avoid JSON overhead for large datasets. All formats are little-
 
 ### Web backend internals
 - HTTP server is hand-rolled on `std.Io.net` (`http.zig`) — no zap/facil.io (they're POSIX-only).
-- SQLite is bundled as `src/sqlite3.c` amalgamation — no system dependency.
+- SQLite is bundled as `src/vendor/sqlite3.c` amalgamation — no system dependency.
 - `cache.zig` fetches candle/VWAP blobs **on demand** from QuestDB per request (no startup pre-cache); QuestDB always responds with `Transfer-Encoding: chunked`, decoded in `questdb.zig`.
 - Two SQLite databases: `app.db` (backtest results, march settings) and `march.db` (MT5 accounts, live strategies, trades).
 - Route dispatch is a flat `if` chain in `router.zig:onRequest`. To add a route, add an `if` branch there.
@@ -98,9 +98,11 @@ try list.append(allocator, byte);
 Use `std.Io` writers (`io.file.stdout().writer(io, &buf)`) and flush explicitly. Do not use `std.debug.print` for response output, and do not use `std.io` (pre-0.16 namespace). Current time: `std.c.clock_gettime(std.c.CLOCK.REALTIME, &ts)`.
 
 ### Backtest engine (`web/backend/src/bt/`)
-The engine, data client, Monte Carlo, sizing, and strategies live under `src/bt/`; the HTTP handlers `bt_run.zig`, `bt_tune.zig`, `bt_combine.zig` drive them and are dispatched from `router.zig`. The frontend Test page (`TestPage.tsx`) is the only UI: Run, Tune, and Combine. Saved runs and their trades/montecarlo go into `app.db`.
+The engine, data client, Monte Carlo, sizing, and strategies live under `src/bt/` (`engine.zig`, `data.zig`, `montecarlo.zig`), with `sizings/` and `strategies/` at `src/`; the HTTP handlers `bt/run.zig`, `bt/tune.zig`, `bt/combine.zig` drive them and are dispatched from `router.zig`. The frontend Test page (`TestPage.tsx`) is the only UI: Run, Tune, and Combine. Saved runs and their trades/montecarlo go into `app.db`.
 
 Run/Tune apply `contracts = base_lot × leverage` (× the vol-target multiplier when sizing is on); Tune grid-sweeps `base_lot × leverage × vol_params`. Combine merges each picked backtest's **saved trades** (deterministic engine ⇒ same as re-running) and marks the pooled book to market for a real portfolio drawdown.
+
+Lot sizing is rounded to a 0.01 step (`roundToLotStep` in `engine.zig`'s `sizeFor` and `march_api.zig`'s `liveVolume`) — the vol-target multiplier is a free-floating float, so without this a sized trade can land on `0.0001` or `0.8932` lots, which no forex broker fills. The live march path additionally clamps to the *actual* broker `volume_step`/`volume_min`/`volume_max` in `march/mt5_client.py`'s `_clamp_volume`, called right before `order_send` — that's the authoritative source since brokers don't all use a 0.01 step, and it isn't visible from Zig.
 
 Strategy contract — `engine.run` takes `strat: anytype` (compile-time duck typing):
 ```zig
@@ -108,13 +110,13 @@ pub const timeframe: []const u8 = "5m";
 pub const columns = .{ .open=bool, .high=bool, .low=bool, .close=bool, .volume=bool };
 pub fn update(self: *@This(), bar: engine.Bar, ts: engine.Ts) engine.Signal;
 ```
-Signals: `.long`, `.short`, `.flat`, `.close`. Default fill: next bar's open (1-bar delay). For intrabar stops/targets, expose `exit_fill: ?f64` on the strategy struct — the engine closes at that exact price when non-null (see `engine.closeFill`). Current strategies: `5m_orb`, `30m_buy`, `rth_vwap`.
+Signals: `.long`, `.short`, `.flat`, `.close`. Default fill: next bar's open (1-bar delay). For intrabar stops/targets, expose `exit_fill: ?f64` on the strategy struct — the engine closes at that exact price when non-null (see `engine.closeFill`). Current strategies: `rth_vwap`, `intraday_momentum` (Zarattini/Aziz/Barbon noise-area momentum on 30m bars, max(band, VWAP) trailing stop; its paper-exact sizing lives in `sizings/paper_vol.zig` as sizing mode `.paper_vol` / UI "Vol Target (Paper)").
 
-To add a strategy: create `src/bt/strategies/<name>.zig` with the three decls, then add a dispatch branch (display name → type) in `bt_run.zig`, `bt_tune.zig`, and `bt_combine.zig`, and add it to the `strategies` list in `TestPage.tsx`.
+To add a strategy: create `src/strategies/<name>.zig` with the three decls, then add a dispatch branch (display name → type) in `bt/run.zig`, `bt/tune.zig`, and `bt/combine.zig`, and add it to the `strategies` list in `TestPage.tsx`.
 
 ## Runtime dependencies
 
 - **QuestDB** on `localhost:9000` (HTTP) and `localhost:8812` (PGWire). Tables: `{symbol}_{timeframe}` — symbols: `nq`, `gbpusd`, `eurusd`; timeframes: `1m`, `5m`, `15m`, `30m`, `1h`, `4h`, `1d`.
 - **Bookmap** WebSocket addon on `ws://localhost:8765` (Windows only, live ticks).
 - **MetaTrader 5** terminal (Windows only, accessed via Python `MetaTrader5` package).
-- **SQLite** — bundled in `web/backend` (`src/sqlite3.c` amalgamation); no system dependency.
+- **SQLite** — bundled in `web/backend` (`src/vendor/sqlite3.c` amalgamation); no system dependency.

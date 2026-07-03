@@ -1,12 +1,12 @@
 const std = @import("std");
 const http = @import("http.zig");
 const cache = @import("cache.zig");
-const db = @import("db.zig");
-const settings = @import("settings.zig");
-const march = @import("march_api.zig");
-const bt_run = @import("bt_run.zig");
-const bt_combine = @import("bt_combine.zig");
-const bt_tune = @import("bt_tune.zig");
+const db = @import("../db.zig");
+const settings = @import("../settings.zig");
+const march = @import("../march/march_api.zig");
+const bt_run = @import("../bt/run.zig");
+const bt_combine = @import("../bt/combine.zig");
+const bt_tune = @import("../bt/tune.zig");
 
 const alloc = std.heap.page_allocator;
 
@@ -436,6 +436,37 @@ pub fn onRequest(req: *http.Ctx) !void {
         };
         defer alloc.free(body);
         req.setHeader("Content-Type", "application/octet-stream") catch {};
+        try req.sendBody(body);
+        return;
+    }
+
+    if (std.mem.eql(u8, path, "/api/march/indicators/zara-noise-area")) {
+        const query = req.query orelse "";
+        const q_symbol = queryParam(query, "symbol") orelse "nq";
+        const q_from = queryParam(query, "from") orelse "";
+        const q_to   = queryParam(query, "to")   orelse "";
+        const from = if (isIsoDate(q_from)) q_from else "";
+        const to   = if (isIsoDate(q_to))   q_to   else "";
+
+        var valid_symbol = false;
+        if (std.mem.eql(u8, q_symbol, "nq") or std.mem.eql(u8, q_symbol, "es")) {
+            valid_symbol = true;
+        }
+
+        if (!valid_symbol) {
+            req.setStatusNumeric(400);
+            try req.sendJson("{\"error\":\"unknown symbol for march\"}");
+            return;
+        }
+
+        const body = bt_run.fetchZaraNoiseArea(req.io, q_symbol, from, to) catch |err| {
+            std.debug.print("zara noise area fetch error: {}\n", .{err});
+            req.setStatusNumeric(503);
+            try req.sendJson("{\"error\":\"fetch failed\"}");
+            return;
+        };
+        defer alloc.free(body);
+        req.setHeader("Content-Type", "application/json") catch {};
         try req.sendBody(body);
         return;
     }

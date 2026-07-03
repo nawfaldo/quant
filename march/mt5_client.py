@@ -4,6 +4,7 @@ Handles connection, bar fetching, position management, and order execution.
 """
 
 import logging
+import math
 from datetime import datetime
 import MetaTrader5 as mt5
 from config import config
@@ -170,11 +171,43 @@ class MT5Client:
             )
             return float(result.price)
 
+    def _clamp_volume(self, symbol: str, volume: float) -> float | None:
+        """Snap `volume` to the broker's real lot step and clamp to its min/max.
+
+        The Zig side already rounds to a 0.01 default before it gets here, but
+        the authoritative constraint lives on the broker's symbol spec
+        (volume_step/volume_min/volume_max), which varies by symbol/account.
+        Submitting an off-step or out-of-range volume gets the order rejected
+        outright, so this is the last line of defense before order_send.
+        """
+        info = mt5.symbol_info(symbol)
+        if info is None:
+            logger.error(f"Cannot get symbol info for {symbol}: {mt5.last_error()}")
+            return None
+
+        step = info.volume_step or 0.01
+        snapped = round(volume / step) * step
+        clamped = min(max(snapped, info.volume_min), info.volume_max)
+        # Kill float noise from the division/multiplication above (e.g. 0.8999999999999999).
+        decimals = max(0, -int(round(math.log10(step))))
+        clamped = round(clamped, decimals)
+
+        if clamped != volume:
+            logger.warning(
+                f"Volume {volume} for {symbol} snapped to {clamped} "
+                f"(step={step}, min={info.volume_min}, max={info.volume_max})"
+            )
+        return clamped
+
     def open_trade(self, side: str, symbol: str, volume: float) -> tuple[float, float] | None:
         """Open a market order. side is 'buy' or 'sell' (or 'LONG'/'SHORT'). Returns (fill_price, spread) or None."""
         tick = mt5.symbol_info_tick(symbol)
         if tick is None:
             logger.error(f"Cannot get tick for {symbol}: {mt5.last_error()}")
+            return None
+
+        volume = self._clamp_volume(symbol, volume)
+        if volume is None:
             return None
 
         spread = tick.ask - tick.bid

@@ -85,6 +85,25 @@ export function entryHour(t: Trade): number {
   return new Date(t.et * 1000).getUTCHours() // 0–23 (ET)
 }
 
+// 30-minute slot of the ET trading day: 0 = 00:00–00:30 … 47 = 23:30–24:00.
+// et is fake-UTC ET seconds → read with UTC getters.
+export function entryHalfHour(t: Trade): number {
+  const d = new Date(t.et * 1000)
+  return d.getUTCHours() * 2 + (d.getUTCMinutes() >= 30 ? 1 : 0) // 0–47
+}
+
+// Label a 30-minute slot index (0–47) as its start time, e.g. 19 → "09:30".
+export function halfHourLabel(slot: number): string {
+  const h = Math.floor(slot / 2)
+  const m = (slot % 2) * 30
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`
+}
+
+// Label an ET hour (0–23) as its start time, e.g. 10 → "10:00".
+export function hourLabel(hour: number): string {
+  return `${String(hour).padStart(2, '0')}:00`
+}
+
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 
 export function weekdayLabel(day: number): string {

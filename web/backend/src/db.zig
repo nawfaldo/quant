@@ -853,7 +853,7 @@ const MARCH_SCHEMA =
     \\);
 ;
 
-const KNOWN_STRATEGIES = [_][]const u8{ "rth_vwap", "orb_buy", "min_loop" };
+const KNOWN_STRATEGIES = [_][]const u8{"rth_vwap"};
 
 pub fn open() !?*c.sqlite3 {
     var db: ?*c.sqlite3 = null;

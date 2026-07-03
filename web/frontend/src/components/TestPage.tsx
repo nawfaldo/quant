@@ -107,6 +107,7 @@ export default function TestPage() {
             if (migrated.leverage === undefined) {
               migrated.leverage = "";
             }
+            delete migrated.mimMode;
             if (migrated.combineBacktestIds === undefined) {
               migrated.combineBacktestIds = [
                 migrated.combineFirstBacktestId || "",
@@ -206,7 +207,7 @@ export default function TestPage() {
   } = activeTabObj;
 
   const commands = ["Run", "Tune", "Combine"];
-  const strategies = ["RTH VWAP", "30m Buy", "5m ORB"];
+  const strategies = ["RTH VWAP", "Zara Momentum"];
   const symbols = ["NQ", "GBPUSD", "EURUSD"];
   const sizingOptions = ["None", "Vol Target"];
 
@@ -227,7 +228,8 @@ export default function TestPage() {
     volMinDays.trim() !== "";
 
   const showDate =
-    (showSizing && sizing === "None") || (showVolParams && allVolParamsSet);
+    (showSizing && sizing === "None") ||
+    (showVolParams && allVolParamsSet);
 
   const showSpreadAndSlippage = showDate && fromDate.trim() !== "" && toDate.trim() !== "";
 
@@ -946,7 +948,7 @@ export default function TestPage() {
                   <div className={`w-3.5 h-3.5 rounded-full border z-10 absolute top-[31px] transition-colors duration-200 ${
                     isStrategyFilled ? "bg-gray-600 border-gray-500" : "bg-gray-950 border-gray-600"
                   }`} />
-                  {showSymbol && (
+                  {isStrategyFilled && (
                     <div className="absolute top-[45px] bottom-[-55px] w-[1px] bg-gray-600 z-0" />
                   )}
                 </div>
@@ -1131,7 +1133,7 @@ export default function TestPage() {
                   <div className={`w-3.5 h-3.5 rounded-full border z-10 absolute top-[31px] transition-colors duration-200 ${
                     isSizingFilled ? "bg-gray-600 border-gray-500" : "bg-gray-950 border-gray-600"
                   }`} />
-                  {((sizing === "None") || (sizing === "Vol Target")) && (
+                  {sizing !== "" && (
                     <div className="absolute top-[45px] bottom-[-55px] w-[1px] bg-gray-600 z-0" />
                   )}
                 </div>

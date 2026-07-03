@@ -1,10 +1,18 @@
 const std = @import("std");
-const engine = @import("../engine.zig");
-const data = @import("../data.zig");
+const engine = @import("../bt/engine.zig");
+const data = @import("../bt/data.zig");
 const sizing = @import("../sizings/vol_target.zig");
+const trade_filter = @import("trade_filter.zig");
 
-// All tunable parameters live in rth_vwap_config.zig — edit there, not here.
-const cfg = @import("rth_vwap_config.zig").config;
+// Hardcoded entry filters — listed days/hours are EXCLUDED from new entries;
+// empty list ⇒ filter off (see trade_filter.zig).
+// e.g. &.{ "Monday", "Tuesday" } / &.{ "09.00", "12.00" }
+const filter_day: []const []const u8 = &.{};
+const filter_hour: []const []const u8 = &.{};
+
+// When a filtered day/hour arrives with a trade still open: true ⇒ close it
+// immediately on that bar, false ⇒ keep holding it (normal exits still apply).
+const filter_close_open: bool = true;
 
 // ── RTH VWAP Flip (Long/Short) ───────────────────────────────────────────────
 //
@@ -28,7 +36,7 @@ const cfg = @import("rth_vwap_config.zig").config;
 //     overnight carry; the next day rebuilds the VWAP from scratch.
 //
 // ── Position sizing ───────────────────────────────────────────────────────────
-//   Identical model to OrbBuy: `sizing_mode` selects fixed lots (.none) or
+//   Identical model to Orb: `sizing_mode` selects fixed lots (.none) or
 //   Harvey et al. (2018) volatility targeting (.vol_target). The size is set on
 //   `self.contracts` just before each entry/flip, because the engine reads
 //   `strat.contracts` at signal time. See sizings/vol_target.zig.
@@ -43,13 +51,14 @@ pub const RthVwap = struct {
         .volume = true,
     };
 
-    contracts: f64 = cfg.contracts,
-    leverage: f64 = cfg.leverage,
+    initial_balance: f64 = 10_000.0,
+    contracts: f64 = 1.0,
+    leverage: f64 = 1.0,
 
     // Position sizing. `vol` holds the volatility-target params/state and is
     // only consulted when sizing_mode == .vol_target.
-    sizing_mode: sizing.Mode = cfg.sizing_mode,
-    vol: sizing.VolTarget = cfg.vol,
+    sizing_mode: sizing.Mode = .none,
+    vol: sizing.VolTarget = .{},
 
     current_day: [10]u8 = .{0} ** 10,
     // Session VWAP accumulators (reset each day at the first RTH bar).
@@ -60,9 +69,9 @@ pub const RthVwap = struct {
     base_contracts: f64 = 0.0,
     base_set: bool = false,
 
-    const RTH_OPEN: u16 = cfg.rth_open; // first RTH bar timestamp (09:30)
-    const EXIT_TIME: u16 = cfg.exit_time; // emit .close at 15:59 → fills at 16:00 open
-    const RTH_CLOSE: u16 = cfg.rth_close; // 16:00, exclusive end of the trading window
+    const RTH_OPEN: u16 = 9 * 60 + 30; // first RTH bar timestamp (09:30)
+    const EXIT_TIME: u16 = 15 * 60 + 59; // emit .close at 15:59 → fills at 16:00 open
+    const RTH_CLOSE: u16 = 16 * 60; // 16:00, exclusive end of the trading window
 
     pub fn update(self: *RthVwap, bar: engine.Bar, ts: data.Ts) engine.Signal {
         // Snapshot the configured size once. The CLI/tuner set `contracts` to
@@ -104,6 +113,13 @@ pub const RthVwap = struct {
         // Time exit: flatten at 16:00. .close is a no-op when already flat, so
         // emitting it from 15:59 onward is safe.
         if (mins >= EXIT_TIME) return .close;
+
+        // Entry filters: on a filtered day/hour emit no entry/flip signal.
+        // filter_close_open decides what happens to an open position: close it
+        // right away, or hold it until a normal exit.
+        if (!trade_filter.allowed(filter_day, filter_hour, ts)) {
+            return if (filter_close_open) .close else .flat;
+        }
 
         // VWAP cross. Above → long, below → short. The engine flips on a
         // differing signal and ignores repeats, so this naturally enters on the

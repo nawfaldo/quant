@@ -1,10 +1,10 @@
 const std = @import("std");
-const http = @import("http.zig");
-const db = @import("db.zig");
-const engine = @import("bt/engine.zig");
-const data = @import("bt/data.zig");
-const montecarlo = @import("bt/montecarlo.zig");
-const fxmod = @import("bt/fx.zig");
+const http = @import("../server/http.zig");
+const db = @import("../db.zig");
+const engine = @import("engine.zig");
+const data = @import("data.zig");
+const montecarlo = @import("montecarlo.zig");
+const fxmod = @import("fx.zig");
 
 const alloc = std.heap.page_allocator;
 
@@ -537,9 +537,8 @@ fn civilFromDays(z_in: i64) struct { y: i64, m: i64, d: i64 } {
 
 fn combineTimeframe(name: []const u8) ?[]const u8 {
     if (std.mem.eql(u8, name, "RTH_VWAP")) return "1m";
+    if (std.mem.eql(u8, name, "INTRADAY_MOM") or std.mem.eql(u8, name, "ZARA_MOMENTUM")) return "30m";
     if (std.mem.eql(u8, name, "BUY_HOLD")) return "1d";
-    if (std.mem.eql(u8, name, "30M_BUY")) return "30m";
-    if (std.mem.eql(u8, name, "5M_ORB")) return "5m";
     return null;
 }
 
@@ -553,6 +552,7 @@ fn combineSymbolPrefix(label: []const u8) ?[]const u8 {
 // Map a stored strategy code (as saved by bt_run) back to its display name.
 fn strategyDisplay(code: []const u8) []const u8 {
     if (std.mem.eql(u8, code, "RTH_VWAP")) return "RTH VWAP";
+    if (std.mem.eql(u8, code, "INTRADAY_MOM") or std.mem.eql(u8, code, "ZARA_MOMENTUM")) return "Zara Momentum";
     if (std.mem.eql(u8, code, "30M_BUY")) return "30m Buy";
     if (std.mem.eql(u8, code, "5M_ORB")) return "5m ORB";
     if (std.mem.eql(u8, code, "BUY_HOLD")) return "Buy & Hold";
@@ -622,12 +622,21 @@ fn compute(io: std.Io, p: Parsed) !CombineResult {
     const n = p.ids.len;
 
     const sources = try alloc.alloc(db.CombineSource, n);
+    for (sources) |*s| {
+        s.* = .{
+            .initial_bal = 0.0,
+            .strategy = "",
+            .symbol = "",
+            .instrument = "",
+            .trades = &.{},
+        };
+    }
     defer {
         for (sources) |s| {
-            alloc.free(s.strategy);
-            alloc.free(s.symbol);
-            alloc.free(s.instrument);
-            alloc.free(s.trades);
+            if (s.strategy.len > 0) alloc.free(s.strategy);
+            if (s.symbol.len > 0) alloc.free(s.symbol);
+            if (s.instrument.len > 0) alloc.free(s.instrument);
+            if (s.trades.len > 0) alloc.free(s.trades);
         }
         alloc.free(sources);
     }

@@ -1,7 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const http = @import("http.zig");
-const router = @import("router.zig");
+const http = @import("server/http.zig");
+const router = @import("server/router.zig");
 const settings = @import("settings.zig");
 const db = @import("db.zig");
 
@@ -14,7 +14,7 @@ extern "c" fn getenv(name: [*:0]const u8) ?[*:0]const u8;
 // separate port-4000 server. Still spawned only on Windows because the Bookmap
 // WebSocket (ws.zig/ws2_32) is Windows-only.
 fn marchServe(io: std.Io) void {
-    const march = @import("march_api.zig");
+    const march = @import("march/march_api.zig");
     march.init(io);
 }
 

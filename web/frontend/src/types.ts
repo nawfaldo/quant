@@ -89,7 +89,7 @@ export interface MonteCarloData {
 
 export interface Indicators {
   vwap: boolean
-  openingRange: boolean
+  noise_area: boolean
 }
 
 export interface MarchSettings {
@@ -128,7 +128,7 @@ export function makeDefaultPanelConfig(): LayoutPanelConfig {
     mode: 'latest',
     from: recentFrom,
     to: today,
-    indicators: { vwap: false, openingRange: false },
+    indicators: { vwap: false, noise_area: false },
   }
 }
 

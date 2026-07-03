@@ -49,12 +49,20 @@ pub const Trade = struct {
     exit_price: f64,
     pnl: f64,
     contracts: f64,
+    // Raw entry fill BEFORE this venue's spread/slippage was applied (i.e. the
+    // next-bar open the signal filled at). The nq book prices off `entry_price`
+    // (cost-adjusted); the fx book re-prices from its own feed and needs the
+    // spread-free reference so it never inherits nq's spread — see fx.zig's
+    // intrabar-stop reconstruction. Defaults to 0 for trades loaded from older
+    // DB rows (fx falls back to `entry_price` then).
+    entry_raw: f64 = 0,
 };
 
 // File-private (no `pub`). Used only inside this file.
 const Position = struct {
     side: Side,
     entry_price: f64,
+    entry_raw: f64,
     entry_ts: data.Ts,
     contracts: f64,
 };
@@ -88,9 +96,21 @@ pub fn usesContracts() bool {
     return usesContractsOf(instrument);
 }
 
+// Forex CFDs execute in 0.01-lot increments at every retail broker. Sizing
+// (base_lot × leverage × vol-target multiplier) is otherwise a free-floating
+// float, so without this a run can size a trade at 0.0001 or 0.8932 lots —
+// numbers no broker would ever fill, which makes the backtest unrealistic and
+// (for the live engine, see march_api.zig's liveVolume) would get the live
+// order rejected outright.
+const lot_step: f64 = 0.01;
+
+fn roundToLotStep(raw: f64) f64 {
+    return @max(lot_step, @round(raw / lot_step) * lot_step);
+}
+
 fn sizeFor(raw: f64, inst: Instrument) f64 {
     if (usesContractsOf(inst)) return @max(1.0, @round(raw));
-    return raw;
+    return roundToLotStep(raw);
 }
 
 // Human-readable instrument label — stored in the DB and shown in the report.
@@ -421,6 +441,7 @@ fn backtest(gpa: std.mem.Allocator, strat: anytype, bars: []const Bar, timestamp
                         .exit_price = cf.price,
                         .pnl = pnl,
                         .contracts = pos.contracts,
+                        .entry_raw = pos.entry_raw,
                     });
                     equity += pnl;
                     position = null;
@@ -464,13 +485,14 @@ fn backtest(gpa: std.mem.Allocator, strat: anytype, bars: []const Bar, timestamp
                 .exit_price = exit_fill,
                 .pnl = pnl,
                 .contracts = pos.contracts,
+                .entry_raw = pos.entry_raw,
             });
             equity += pnl;
         }
 
         const open_contracts = sizeFor(strat.contracts, cfg.instrument);
         const entry_fill = applyFillCost(next_open, new_side == .long, cfg.spread, cfg.slippage);
-        position = .{ .side = new_side, .entry_price = entry_fill, .entry_ts = next_ts, .contracts = open_contracts };
+        position = .{ .side = new_side, .entry_price = entry_fill, .entry_raw = next_open, .entry_ts = next_ts, .contracts = open_contracts };
     }
 
     // If we ended the loop still holding a position, close it at the final
@@ -487,6 +509,7 @@ fn backtest(gpa: std.mem.Allocator, strat: anytype, bars: []const Bar, timestamp
             .exit_price = exit_price,
             .pnl = pnl,
             .contracts = pos.contracts,
+            .entry_raw = pos.entry_raw,
         });
         equity += pnl;
     }
@@ -529,7 +552,14 @@ fn closeFill(strat: anytype, bars: []const Bar, timestamps: []const data.Ts, i: 
     if (comptime @hasField(@TypeOf(strat.*), "exit_fill")) {
         if (strat.exit_fill) |p| {
             strat.exit_fill = null;
-            return .{ .price = p, .ts = timestamps[i] };
+            // The exit_fill price is reached DURING bar i (e.g. zara's 16:00
+            // flatten quotes the bar's close), so stamp the exit at the bar's
+            // end — the next bar's timestamp — not its start. Stamping at the
+            // start puts a price on the chart up to a full bar before the
+            // market trades there, which draws the exit arrow in empty space
+            // on finer chart timeframes.
+            const ts: data.Ts = if (i + 1 < timestamps.len) timestamps[i + 1] else timestamps[i];
+            return .{ .price = p, .ts = ts };
         }
     }
     const price: f64 = if (i + 1 < bars.len) bars[i + 1].open else bars[i].close;
@@ -560,7 +590,7 @@ pub fn applyFillCost(raw: f64, buying: bool, sprd: f64, slip: f64) f64 {
 // warm-up only. Returns 0 when `from` is null (no warm-up). Timestamps are
 // "YYYY-MM-DD HH:MM" and `from` is "YYYY-MM-DD"; lexicographic order matches
 // chronological order, and a same-day bar sorts after the 10-char date prefix.
-fn realStartIndex(timestamps: []const data.Ts, from_opt: ?[]const u8) usize {
+pub fn realStartIndex(timestamps: []const data.Ts, from_opt: ?[]const u8) usize {
     const f = from_opt orelse return 0;
     for (timestamps, 0..) |ts, idx| {
         if (std.mem.order(u8, ts[0..], f) != .lt) return idx;

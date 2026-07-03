@@ -17,7 +17,7 @@ pub fn build(b: *std.Build) void {
         .linkage = .static,
     });
     sqlite.root_module.addCSourceFile(.{
-        .file = b.path("src/sqlite3.c"),
+        .file = b.path("src/vendor/sqlite3.c"),
         .flags = &.{
             "-DSQLITE_THREADSAFE=1",
             "-DSQLITE_DEFAULT_WAL_SYNCHRONOUS=1",
@@ -31,7 +31,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .link_libc = true,
     });
-    root_mod.addIncludePath(b.path("src")); // for sqlite3.h
+    root_mod.addIncludePath(b.path("src/vendor")); // for sqlite3.h
     root_mod.linkLibrary(sqlite);
 
     if (target.result.os.tag == .windows) {

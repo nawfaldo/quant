@@ -4,7 +4,7 @@ import {
   type IPrimitivePaneView, type IPrimitivePaneRenderer,
 } from 'lightweight-charts'
 import type { CanvasRenderingTarget2D } from 'fancy-canvas'
-import type { Trade, Bar } from '../types'
+import type { Trade } from '../types'
 
 const MAX_VISIBLE_LINES = 1000
 const TRADE_LOOKBACK    = 500
@@ -121,7 +121,7 @@ class TradeLinesRenderer implements IPrimitivePaneRenderer {
         drawStandardArrow(ctx, ex2, ey2, h, !isLong)  // exit: opposite
         if (drawText) {
           const v = pnl[i]
-          const gain = v >= 0 ? '+$' + v.toFixed(0) : '-$' + Math.abs(v).toFixed(0)
+          const gain = v >= 0 ? '+$' + v.toFixed(2) : '-$' + Math.abs(v).toFixed(2)
           const qtyStr = Number.isInteger(qty[i]) ? qty[i].toString() : qty[i].toFixed(2).replace(/\.?0+$/, '')
           ctx.fillText(`${qtyStr}  ${gain}`, ex1, ey1 - h - 2 * vpr)
         }
@@ -201,201 +201,6 @@ export class TradeLinesPrimitive implements ISeriesPrimitive {
   }
 }
 
-interface ORArea {
-  startTime: UTCTimestamp
-  endTime: UTCTimestamp
-  highBody: number
-  lowBody: number
-}
-
-interface ORBreakout {
-  time: UTCTimestamp
-  price: number
-}
-
-class OpeningRangeRenderer implements IPrimitivePaneRenderer {
-  primitive: OpeningRangePrimitive
-  series: ISeriesApi<'Candlestick'> | null
-  chart: IChartApiBase<Time> | null
-
-  constructor(primitive: OpeningRangePrimitive, series: ISeriesApi<'Candlestick'> | null, chart: IChartApiBase<Time> | null) {
-    this.primitive = primitive
-    this.series = series
-    this.chart = chart
-  }
-
-  draw(target: CanvasRenderingTarget2D) {
-    if (!this.primitive.visible) return
-    const s = this.series, ch = this.chart
-    if (!s || !ch) return
-    const ts = ch.timeScale()
-    const ranges = this.primitive.ranges
-    if (ranges.length === 0) return
-    
-    target.useBitmapCoordinateSpace(({ context: ctx, horizontalPixelRatio: hpr, verticalPixelRatio: vpr }) => {
-      ctx.save()
-      for (const r of ranges) {
-        const x1 = ts.timeToCoordinate(r.startTime)
-        const x2 = ts.timeToCoordinate(r.endTime)
-        const y1 = s.priceToCoordinate(r.highBody)
-        const y2 = s.priceToCoordinate(r.lowBody)
-        if (x1 === null || x2 === null || y1 === null || y2 === null) continue
-        
-        let left = Math.min(x1, x2) * hpr
-        let right = Math.max(x1, x2) * hpr
-        // Add padding so it covers the bars and is visible even if x1 === x2
-        const padding = 5 * hpr
-        left -= padding
-        right += padding
-        
-        const top = Math.min(y1, y2) * vpr
-        const bottom = Math.max(y1, y2) * vpr
-        
-        ctx.fillStyle = 'rgba(239, 68, 68, 0.35)'
-        ctx.fillRect(left, top, right - left, Math.max(1 * vpr, bottom - top))
-      }
-      
-      const range = ts.getVisibleRange()
-      if (!range) { ctx.restore(); return }
-      
-      const breakouts = this.primitive.breakouts
-      if (breakouts.length > 0) {
-        let lo = 0, hi = breakouts.length
-        while (lo < hi) {
-          const mid = (lo + hi) >>> 1
-          if (breakouts[mid].time < (range.from as number)) lo = mid + 1
-          else hi = mid
-        }
-        const startIdx = Math.max(0, lo - 100)
-        
-        let lo2 = lo, hi2 = breakouts.length
-        while (lo2 < hi2) {
-          const mid = (lo2 + hi2) >>> 1
-          if (breakouts[mid].time <= (range.to as number)) lo2 = mid + 1
-          else hi2 = mid
-        }
-        const endIdx = lo2
-        
-        if (endIdx - startIdx < 5000) {
-          ctx.fillStyle = '#22c55e'
-          const h = 4 * hpr
-          for (let i = startIdx; i < endIdx; i++) {
-            const b = breakouts[i]
-            const x = ts.timeToCoordinate(b.time)
-            const y = s.priceToCoordinate(b.price)
-            if (x === null || y === null) continue
-            
-            const cx = x * hpr
-            const cy = y * vpr - h - 2 * vpr // Position slightly above the close
-            ctx.beginPath()
-            ctx.moveTo(cx, cy + h)
-            ctx.lineTo(cx - h, cy - h)
-            ctx.lineTo(cx + h, cy - h)
-            ctx.fill()
-          }
-        }
-      }
-      
-      ctx.restore()
-    })
-  }
-}
-
-class OpeningRangeView implements IPrimitivePaneView {
-  primitive: OpeningRangePrimitive
-  constructor(primitive: OpeningRangePrimitive) { this.primitive = primitive }
-  renderer() { return new OpeningRangeRenderer(this.primitive, this.primitive.getSeries(), this.primitive.getChart()) }
-  zOrder() { return 'bottom' as const }
-}
-
-export class OpeningRangePrimitive implements ISeriesPrimitive {
-  private _series: ISeriesApi<'Candlestick'> | null = null
-  private _chart: IChartApiBase<Time> | null = null
-  private _requestUpdate: (() => void) | null = null
-  private _view = new OpeningRangeView(this)
-  
-  ranges: ORArea[] = []
-  breakouts: ORBreakout[] = []
-  visible: boolean = false
-
-  attached(p: SeriesAttachedParameter) {
-    this._series = p.series as ISeriesApi<'Candlestick'>
-    this._chart = p.chart
-    this._requestUpdate = p.requestUpdate
-  }
-  detached() { this._series = null; this._chart = null }
-  updateAllViews() { this._requestUpdate?.() }
-  paneViews() { return [this._view] }
-
-  getSeries() { return this._series }
-  getChart() { return this._chart }
-
-  setBars(bars: Bar[]) {
-    // Timestamps are stored as ET wall-clock baked into fake-UTC by the importer.
-    // Read them as UTC so we don't double-shift the already-ET values.
-    const formatter = new Intl.DateTimeFormat('en-US', {
-      timeZone: 'UTC',
-      hour: '2-digit', minute: '2-digit', hour12: false
-    })
-
-    this.ranges = []
-    this.breakouts = []
-
-    // Mirror the backtest strategy (strategies/30m_buy.zig) exactly so this
-    // indicator can verify it:
-    //   • Opening range is built from the FIRST FIVE bars (09:30–09:50), using
-    //     CLOSE prices: OR_high = max close, OR_low = min close. No wicks/bodies.
-    //   • The 09:55 bar is NOT part of the range — it is the single breakout
-    //     trigger. If close(09:55) > OR_high, the strategy enters at the OPEN of
-    //     the 10:00 bar. So the range box ends at 09:55; the entry sits on the
-    //     next bar (10:00), OUTSIDE the box.
-    let currentRange: Partial<ORArea> | null = null
-    let orHigh = -Infinity   // breakout reference: max CLOSE of first five bars
-    let bodyHigh = -Infinity // box top: highest body (no wick) of the range
-    let bodyLow = Infinity   // box bottom: lowest body (no wick) of the range
-
-    const reset = () => { currentRange = null; orHigh = -Infinity; bodyHigh = -Infinity; bodyLow = Infinity }
-
-    for (const b of bars) {
-      const timeStr = formatter.format(new Date((b.time as number) * 1000))
-
-      if (timeStr >= '09:30' && timeStr <= '09:50') {
-        // Range-defining bar (first five). Breakout level uses CLOSE; the red
-        // box spans the candle bodies (open/close extents, wicks excluded).
-        if (!currentRange) {
-          currentRange = { startTime: b.time, endTime: b.time, highBody: 0, lowBody: 0 }
-          orHigh = -Infinity; bodyHigh = -Infinity; bodyLow = Infinity
-        } else {
-          currentRange.endTime = b.time
-        }
-        orHigh = Math.max(orHigh, b.close)
-        bodyHigh = Math.max(bodyHigh, b.open, b.close)
-        bodyLow = Math.min(bodyLow, b.open, b.close)
-      } else if (timeStr === '09:55') {
-        // Single breakout trigger: close(09:55) > OR_high (max close of the first
-        // five bars). The box spans all six bodies (09:30–09:55), so the breakout
-        // candle's body high closes flush with the top of the box.
-        if (currentRange && orHigh !== -Infinity) {
-          bodyHigh = Math.max(bodyHigh, b.open, b.close)
-          bodyLow = Math.min(bodyLow, b.open, b.close)
-          currentRange.endTime = b.time
-          currentRange.highBody = bodyHigh
-          currentRange.lowBody = bodyLow
-          if (b.close > orHigh) {
-            this.ranges.push(currentRange as ORArea)
-            this.breakouts.push({ time: b.time as UTCTimestamp, price: b.close })
-          }
-        }
-        reset()
-      } else {
-        // Any other bar ends/discards an in-progress (incomplete) window.
-        reset()
-      }
-    }
-
-    this._requestUpdate?.()
-  }
-}
 
 function drawStandardArrow(ctx: CanvasRenderingContext2D, cx: number, cy: number, h: number, up: boolean) {
   const hSize = h * 1.2;
@@ -656,6 +461,156 @@ export class HistoricalTradesPrimitive implements ISeriesPrimitive {
 
   setTrades(trades: HistoricalTradeInfo[]) {
     this.trades = trades
+    this._requestUpdate?.()
+  }
+}
+
+export interface NoisePoint {
+  time: number
+  ub: number
+  lb: number
+}
+
+class NoiseAreaRenderer implements IPrimitivePaneRenderer {
+  primitive: NoiseAreaPrimitive
+  series: ISeriesApi<'Candlestick'> | null
+  chart: IChartApiBase<Time> | null
+
+  constructor(
+    primitive: NoiseAreaPrimitive,
+    series: ISeriesApi<'Candlestick'> | null,
+    chart: IChartApiBase<Time> | null,
+  ) {
+    this.primitive = primitive
+    this.series = series
+    this.chart = chart
+  }
+
+  draw(target: CanvasRenderingTarget2D) {
+    const p = this.primitive
+    const points = p.points
+    const s = this.series
+    const ch = this.chart
+    if (!points || points.length === 0 || !s || !ch) return
+
+    const ts = ch.timeScale()
+    const range = ts.getVisibleRange()
+    if (!range) return
+    const from = range.from as number
+    const to = range.to as number
+
+    // Filter points that are within or close to the visible range, splitting
+    // into segments whenever the time gap exceeds one 30m slot (overnight /
+    // weekend) so each session renders as its own band instead of one
+    // continuous polygon stretched across the close.
+    const segments: { x: number; y_ub: number; y_lb: number }[][] = []
+    let segment: { x: number; y_ub: number; y_lb: number }[] = []
+    let prevTime: number | null = null
+
+    for (const pt of points) {
+      if (pt.time < from - 86400) continue
+      if (pt.time > to + 86400) continue
+
+      const x = ts.timeToCoordinate(pt.time as UTCTimestamp)
+      const y_ub = s.priceToCoordinate(pt.ub)
+      const y_lb = s.priceToCoordinate(pt.lb)
+
+      if (x !== null && y_ub !== null && y_lb !== null) {
+        if (prevTime !== null && pt.time - prevTime > 1800) {
+          if (segment.length >= 2) segments.push(segment)
+          segment = []
+        }
+        segment.push({ x, y_ub, y_lb })
+        prevTime = pt.time
+      }
+    }
+    if (segment.length >= 2) segments.push(segment)
+
+    if (segments.length === 0) return
+
+    target.useBitmapCoordinateSpace(({ context: ctx, horizontalPixelRatio: hpr, verticalPixelRatio: vpr }) => {
+      ctx.save()
+
+      for (const seg of segments) {
+        // 1. Draw the filled area
+        ctx.beginPath()
+        // Move to the first upper point
+        ctx.moveTo(seg[0].x * hpr, seg[0].y_ub * vpr)
+        // Line to all upper points from left to right
+        for (let i = 1; i < seg.length; i++) {
+          ctx.lineTo(seg[i].x * hpr, seg[i].y_ub * vpr)
+        }
+        // Line to the last lower point
+        ctx.lineTo(seg[seg.length - 1].x * hpr, seg[seg.length - 1].y_lb * vpr)
+        // Line to all lower points from right to left
+        for (let i = seg.length - 2; i >= 0; i--) {
+          ctx.lineTo(seg[i].x * hpr, seg[i].y_lb * vpr)
+        }
+        ctx.closePath()
+        ctx.fillStyle = 'rgba(254, 240, 138, 0.25)' // light yellow-200 with 25% opacity
+        ctx.fill()
+
+        // 2. Draw upper boundary line (orange/yellow)
+        ctx.beginPath()
+        ctx.moveTo(seg[0].x * hpr, seg[0].y_ub * vpr)
+        for (let i = 1; i < seg.length; i++) {
+          ctx.lineTo(seg[i].x * hpr, seg[i].y_ub * vpr)
+        }
+        ctx.lineWidth = hpr * 1
+        ctx.strokeStyle = 'rgba(251, 191, 36, 0.7)' // amber-400 with 70% opacity
+        ctx.stroke()
+
+        // 3. Draw lower boundary line (orange/yellow)
+        ctx.beginPath()
+        ctx.moveTo(seg[0].x * hpr, seg[0].y_lb * vpr)
+        for (let i = 1; i < seg.length; i++) {
+          ctx.lineTo(seg[i].x * hpr, seg[i].y_lb * vpr)
+        }
+        ctx.lineWidth = hpr * 1
+        ctx.strokeStyle = 'rgba(251, 191, 36, 0.7)' // amber-400 with 70% opacity
+        ctx.stroke()
+      }
+
+      ctx.restore()
+    })
+  }
+}
+
+class NoiseAreaView implements IPrimitivePaneView {
+  primitive: NoiseAreaPrimitive
+  constructor(primitive: NoiseAreaPrimitive) { this.primitive = primitive }
+  renderer(): IPrimitivePaneRenderer {
+    return new NoiseAreaRenderer(
+      this.primitive,
+      this.primitive.getSeries(),
+      this.primitive.getChart(),
+    )
+  }
+  zOrder() { return 'normal' as const }
+}
+
+export class NoiseAreaPrimitive implements ISeriesPrimitive {
+  private _series: ISeriesApi<'Candlestick'> | null = null
+  private _chart: IChartApiBase<Time> | null = null
+  private _requestUpdate: (() => void) | null = null
+  private _view = new NoiseAreaView(this)
+
+  points: NoisePoint[] | null = null
+
+  attached(p: SeriesAttachedParameter) {
+    this._series = p.series as ISeriesApi<'Candlestick'>
+    this._chart = p.chart
+    this._requestUpdate = p.requestUpdate
+  }
+  detached() { this._series = null; this._chart = null }
+  updateAllViews() {}
+  paneViews() { return [this._view] }
+
+  getSeries() { return this._series }
+  getChart() { return this._chart }
+
+  setData(points: NoisePoint[] | null) {
+    this.points = points
     this._requestUpdate?.()
   }
 }

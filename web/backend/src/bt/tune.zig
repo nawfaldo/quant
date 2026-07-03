@@ -1,15 +1,14 @@
 const std = @import("std");
-const http = @import("http.zig");
-const engine = @import("bt/engine.zig");
-const data = @import("bt/data.zig");
-const sizing = @import("bt/sizings/vol_target.zig");
-const bt_run = @import("bt_run.zig");
+const http = @import("../server/http.zig");
+const engine = @import("engine.zig");
+const data = @import("data.zig");
+const sizing = @import("../sizings/vol_target.zig");
+const bt_run = @import("run.zig");
 const report = @import("tune_report.zig");
 const scoring = @import("tune_score.zig");
 
-const RthVwap = @import("bt/strategies/rth_vwap.zig").RthVwap;
-const ThirtyMinBuy = @import("bt/strategies/30m_buy.zig").ThirtyMinBuy;
-const Orb = @import("bt/strategies/5m_orb.zig").Orb;
+const RthVwap = @import("../strategies/rth_vwap.zig").RthVwap;
+const ZaraMomentum = @import("../strategies/zara_momentum.zig").ZaraMomentum;
 
 const alloc = std.heap.page_allocator;
 
@@ -150,9 +149,11 @@ pub fn handle(req: *http.Ctx) !void {
         return;
     };
 
-    // Sizing mode.
     const sizing_str = jsonStr(body, "sizing");
-    const sizing_mode: sizing.Mode = if (std.mem.eql(u8, sizing_str, "Vol Target")) .vol_target else .none;
+    const sizing_mode: sizing.Mode = if (std.mem.eql(u8, sizing_str, "Vol Target"))
+        .vol_target
+    else
+        .none;
 
     // Vol params — comma-separated lists for grid sweep.
     var vol_targets: [MAX_GRID]f64 = undefined;
@@ -311,14 +312,8 @@ fn runTuneAsync(ctx: *ThreadCtx) void {
             ctx.deinit();
             return;
         };
-    } else if (std.mem.eql(u8, ctx.strategy, "30m Buy")) {
-        runGrid(ThirtyMinBuy, ctx.io, combos, ctx.balance, ctx.sizing_mode, cfg) catch |err| {
-            setAsyncError(err);
-            ctx.deinit();
-            return;
-        };
-    } else if (std.mem.eql(u8, ctx.strategy, "5m ORB")) {
-        runGrid(Orb, ctx.io, combos, ctx.balance, ctx.sizing_mode, cfg) catch |err| {
+    } else if (std.mem.eql(u8, ctx.strategy, "Zara Momentum")) {
+        runGrid(ZaraMomentum, ctx.io, combos, ctx.balance, ctx.sizing_mode, cfg) catch |err| {
             setAsyncError(err);
             ctx.deinit();
             return;

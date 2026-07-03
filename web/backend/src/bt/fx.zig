@@ -12,7 +12,7 @@ const data = @import("data.zig");
 // coverage window are dropped ("don't trade outside the window").
 
 // Latency between the nq-bar signal becoming actionable and the fx fill.
-const LATENCY_MICROS: i64 = 100_000; // 100 ms
+const LATENCY_MICROS: i64 = 0;
 
 // Fixed full bid/ask spread applied around the tick mid (±half each side):
 // a buy fills at mid+0.10, a sell at mid-0.10  → 25910.00 → 25910.10.
@@ -22,6 +22,12 @@ const SPREAD: f64 = 0.2;
 // away, the fill is treated as missing (e.g. the bar sits at the edge of a
 // session gap) and the trade is dropped rather than filled across the gap.
 const MAX_GAP_MICROS: i64 = 5 * 60 * 1_000_000; // 5 minutes
+
+// How long, after an intrabar-stop entry fills, we scan fx ticks for the stop
+// level to be crossed before giving up and filling at the level itself. A
+// same-bar stop resolves within its own 5-minute bar, so 5 min covers the rest
+// of the entry bar even when the entry filled at the bar open. See LevelReq.
+const STOP_SCAN_MICROS: i64 = 5 * 60 * 1_000_000; // 5 minutes
 
 // Coverage window of fx_nq_ticks (inclusive day bounds). Trades whose fills fall
 // outside this are not executed.
@@ -38,30 +44,92 @@ pub const Repriced = struct {
     }
 };
 
-// One fill lookup: the instant we want a price for, which output slot it feeds,
-// and whether that leg is a buy (long entry / short exit) or a sell.
+// One TIME-based fill lookup: the instant we want a price for, which output slot
+// it feeds, and whether that leg is a buy (long entry / short exit) or a sell.
+// `level_idx` links an intrabar-stop entry to the level-based exit it arms once
+// this entry's fill price (and thus the fx stop level) is known.
 const Req = struct {
     target: i64, // unix micros (fake-UTC) of the desired fill
     slot: usize, // trade_index*2 + (0 = entry, 1 = exit)
     is_buy: bool,
+    level_idx: isize = -1, // >=0: on fill, arm levels[level_idx] off this fill's mid
     filled: bool = false,
     price: f64 = 0, // tick mid at the fill
     fill_ts: i64 = 0, // unix micros of the tick that filled it
 };
 
-// Streaming consumer: ticks arrive in ascending time order; requests are sorted
-// ascending by target. We advance a single pointer, assigning each request the
-// first tick whose timestamp reaches its target. O(ticks + reqs), O(reqs) memory.
+// A LEVEL-based exit for an intrabar stop (a trade whose entry and exit land on
+// the SAME bar — `entry_ts == exit_ts`). The native engine fills these at an
+// exact intrabar stop price the timestamp can't localise below the minute, so a
+// pure time lookup would snap both legs to the same tick and erase the loss
+// (the "$0 on a same candle" bug). Instead we reconstruct the stop on the fx
+// feed: once the paired entry fills at mid M, the fx stop sits at `M + dist`,
+// where `dist` is the RAW (spread-free) entry→stop distance from the nq book —
+// it transfers 1:1 because fx_nq tracks nq at a constant offset, and using the
+// spread-free distance keeps nq's spread out of the fx fill (only the fx spread
+// below applies). We then fill the exit at the first tick that crosses that
+// level — real fx price, timing, and slippage — falling back to the level
+// itself if the fx feed never reaches it within STOP_SCAN_MICROS.
+const LevelReq = struct {
+    slot: usize,
+    dist: f64, // native exit_price - entry_raw (signed)
+    long_stop: bool, // true: fill when mid <= level; false: when mid >= level
+    armed: bool = false,
+    level: f64 = 0,
+    entry_fill_ts: i64 = 0,
+    filled: bool = false,
+    price: f64 = 0,
+    fill_ts: i64 = 0,
+};
+
+// Streaming consumer: ticks arrive in ascending time order; time-based requests
+// are sorted ascending by target and matched with a single advancing pointer.
+// Level-based exits are armed when their entry fills, then watched each tick for
+// a crossing. O(ticks × active_levels + reqs); active_levels is ~1 in practice
+// (these strategies hold one position at a time).
 const Consumer = struct {
     reqs: []Req,
+    levels: []LevelReq,
     next: usize = 0,
 
     pub fn onTick(self: *Consumer, ts: i64, bid: f64, ask: f64) void {
+        // Guard against malformed quotes. The tick table stores bid == ask, but
+        // some rows have a NULL bid or ask, which `data.readF8` decodes as 0.
+        // A one-sided 0 halves the mid (e.g. bid 25508 / 2 = 12754) and would
+        // fabricate a ~$1748 PnL on the fill. Skip such ticks — the request is
+        // left for the next valid tick to fill.
+        if (bid <= 0 or ask <= 0) return;
         const mid = (bid + ask) * 0.5;
+
+        // Time-based fills (entries + non-intrabar exits). Arm any level-based
+        // exit paired with a just-filled entry, off that entry's mid.
         while (self.next < self.reqs.len and self.reqs[self.next].target <= ts) : (self.next += 1) {
-            self.reqs[self.next].filled = true;
-            self.reqs[self.next].price = mid;
-            self.reqs[self.next].fill_ts = ts;
+            const r = &self.reqs[self.next];
+            r.filled = true;
+            r.price = mid;
+            r.fill_ts = ts;
+            if (r.level_idx >= 0) {
+                const l = &self.levels[@intCast(r.level_idx)];
+                l.level = mid + l.dist;
+                l.entry_fill_ts = ts;
+                l.armed = true;
+            }
+        }
+
+        // Level-based intrabar-stop exits: fill on the first crossing tick, or
+        // fall back to the level once the scan window elapses.
+        for (self.levels) |*l| {
+            if (!l.armed or l.filled) continue;
+            const crossed = if (l.long_stop) mid <= l.level else mid >= l.level;
+            if (crossed) {
+                l.filled = true;
+                l.price = mid;
+                l.fill_ts = ts;
+            } else if (ts - l.entry_fill_ts > STOP_SCAN_MICROS) {
+                l.filled = true;
+                l.price = l.level; // fx feed never reached it → native-distance fallback
+                l.fill_ts = ts;
+            }
         }
     }
 };
@@ -84,18 +152,56 @@ pub fn reprice(io: std.Io, gpa: std.mem.Allocator, native: []const engine.Trade,
     var to_buf: [10]u8 = undefined;
     const fetch_to = nextDay(&to_buf, cap_exit);
 
-    // Build the fill requests (two per trade) and sort by target time.
-    const reqs = try gpa.alloc(Req, native.len * 2);
+    // Build the fill requests. Every trade has a time-based entry; its exit is
+    // time-based too UNLESS entry_ts == exit_ts (an intrabar same-bar stop),
+    // which instead gets a level-based exit reconstructed on the fx feed.
+    var n_intrabar: usize = 0;
+    for (native) |t| {
+        if (std.mem.eql(u8, t.entry_ts[0..], t.exit_ts[0..])) n_intrabar += 1;
+    }
+    const reqs = try gpa.alloc(Req, native.len * 2 - n_intrabar);
     defer gpa.free(reqs);
+    const levels = try gpa.alloc(LevelReq, n_intrabar);
+    defer gpa.free(levels);
+
+    var ri: usize = 0;
+    var li: usize = 0;
     for (native, 0..) |t, i| {
         const is_long = t.side == .long;
-        reqs[i * 2] = .{ .target = tsMicros(t.entry_ts) + LATENCY_MICROS, .slot = i * 2, .is_buy = is_long };
-        reqs[i * 2 + 1] = .{ .target = tsMicros(t.exit_ts) + LATENCY_MICROS, .slot = i * 2 + 1, .is_buy = !is_long };
+        const intrabar = std.mem.eql(u8, t.entry_ts[0..], t.exit_ts[0..]);
+        reqs[ri] = .{
+            .target = tsMicros(t.entry_ts) + LATENCY_MICROS,
+            .slot = i * 2,
+            .is_buy = is_long,
+            .level_idx = if (intrabar) @intCast(li) else -1,
+        };
+        ri += 1;
+        if (intrabar) {
+            // Stop distance from the RAW (spread-free) entry — never from
+            // `entry_price`, which carries nq's spread and would double-count it
+            // on top of the fx spread applied below. `entry_raw` is 0 only for
+            // trades loaded from older DB rows; fall back to `entry_price` then.
+            const raw_entry = if (t.entry_raw != 0) t.entry_raw else t.entry_price;
+            levels[li] = .{ .slot = i * 2 + 1, .dist = t.exit_price - raw_entry, .long_stop = is_long };
+            li += 1;
+        } else {
+            reqs[ri] = .{ .target = tsMicros(t.exit_ts) + LATENCY_MICROS, .slot = i * 2 + 1, .is_buy = !is_long };
+            ri += 1;
+        }
     }
     std.mem.sort(Req, reqs, {}, reqLess);
 
-    var consumer = Consumer{ .reqs = reqs };
+    var consumer = Consumer{ .reqs = reqs, .levels = levels };
     try data.streamFxTicks(io, gpa, fetch_from, fetch_to, &consumer);
+
+    // Any level exit still armed at end-of-stream never saw its crossing tick —
+    // fall back to the level (native-distance transfer) so it isn't dropped.
+    for (levels) |*l| {
+        if (l.armed and !l.filled) {
+            l.filled = true;
+            l.price = l.level;
+        }
+    }
 
     // Scatter results back to per-leg slots, marking gaps too wide as unfilled.
     const ok = try gpa.alloc(bool, native.len * 2);
@@ -105,6 +211,10 @@ pub fn reprice(io: std.Io, gpa: std.mem.Allocator, native: []const engine.Trade,
     for (reqs) |req| {
         ok[req.slot] = req.filled and (req.fill_ts - req.target) <= MAX_GAP_MICROS;
         px[req.slot] = req.price;
+    }
+    for (levels) |l| {
+        ok[l.slot] = l.filled; // gap is already gated by the paired entry's fill
+        px[l.slot] = l.price;
     }
 
     var out: std.ArrayList(engine.Trade) = .empty;
