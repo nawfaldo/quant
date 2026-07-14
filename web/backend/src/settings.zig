@@ -3,21 +3,21 @@ const builtin = @import("builtin");
 const c = @cImport(@cInclude("sqlite3.h"));
 
 const APP_DB_PATH = switch (builtin.os.tag) {
-    .macos   => "/Users/nawfaldo/Bunker/Quant/web/backend/app.db",
+    .macos => "/Users/nawfaldo/Bunker/Quant/web/backend/app.db",
     .windows => "C:/Users/andra/Desktop/quant/web/backend/app.db",
-    else     => "/mnt/c/Users/JawirGaming66/Quant/web/backend/app.db",
+    else => "/mnt/c/Users/JawirGaming66/Quant/web/backend/app.db",
 };
 
 const DEFAULT_FROM = "2026-01-01";
-const DEFAULT_TO   = "2026-04-30";
-const DEFAULT_TF   = "5m";
+const DEFAULT_TO = "2026-04-30";
+const DEFAULT_TF = "5m";
 
 // March page defaults (persisted under the same key/value settings table).
 const DEFAULT_MARCH_SYMBOL = "nq";
-const DEFAULT_MARCH_TF     = "1m";
-const DEFAULT_MARCH_FROM   = "2026-06-18";
-const DEFAULT_MARCH_TO     = "2026-06-25";
-const DEFAULT_MARCH_MODE   = "latest"; // "latest" (stream) | "range" (static)
+const DEFAULT_MARCH_TF = "1m";
+const DEFAULT_MARCH_FROM = "2026-06-18";
+const DEFAULT_MARCH_TO = "2026-06-25";
+const DEFAULT_MARCH_MODE = "latest"; // "latest" (stream) | "range" (static)
 const DEFAULT_MARCH_LAYOUT = "single";
 const DEFAULT_MARCH_BOTTOM_HEIGHT = "400";
 
@@ -27,59 +27,36 @@ fn spanOrEmpty(ptr: ?[*:0]const u8) []const u8 {
 
 pub fn init() !void {
     var db: ?*c.sqlite3 = null;
-    if (c.sqlite3_open_v2(APP_DB_PATH, &db,
-        c.SQLITE_OPEN_READWRITE | c.SQLITE_OPEN_CREATE | c.SQLITE_OPEN_FULLMUTEX, null) != c.SQLITE_OK)
+    if (c.sqlite3_open_v2(APP_DB_PATH, &db, c.SQLITE_OPEN_READWRITE | c.SQLITE_OPEN_CREATE | c.SQLITE_OPEN_FULLMUTEX, null) != c.SQLITE_OK)
         return error.DbOpenFailed;
     defer _ = c.sqlite3_close(db);
     _ = c.sqlite3_busy_timeout(db, 5000);
 
-    if (c.sqlite3_exec(db,
-        "CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
-        null, null, null) != c.SQLITE_OK) return error.CreateFailed;
+    if (c.sqlite3_exec(db, "CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)", null, null, null) != c.SQLITE_OK) return error.CreateFailed;
 
-    const seed_rc = c.sqlite3_exec(db,
-        "INSERT OR IGNORE INTO settings (key, value) VALUES ('from_date', '" ++ DEFAULT_FROM ++ "')",
-        null, null, null);
+    const seed_rc = c.sqlite3_exec(db, "INSERT OR IGNORE INTO settings (key, value) VALUES ('from_date', '" ++ DEFAULT_FROM ++ "')", null, null, null);
     if (seed_rc != c.SQLITE_OK) {
         std.debug.print("settings seed failed rc={d}: {s}\n", .{ seed_rc, c.sqlite3_errmsg(db) });
         return error.SeedFailed;
     }
 
-    if (c.sqlite3_exec(db,
-        "INSERT OR IGNORE INTO settings (key, value) VALUES ('to_date', '" ++ DEFAULT_TO ++ "')",
-        null, null, null) != c.SQLITE_OK) return error.SeedFailed;
+    if (c.sqlite3_exec(db, "INSERT OR IGNORE INTO settings (key, value) VALUES ('to_date', '" ++ DEFAULT_TO ++ "')", null, null, null) != c.SQLITE_OK) return error.SeedFailed;
 
-    if (c.sqlite3_exec(db,
-        "INSERT OR IGNORE INTO settings (key, value) VALUES ('default_timeframe', '" ++ DEFAULT_TF ++ "')",
-        null, null, null) != c.SQLITE_OK) return error.SeedFailed;
+    if (c.sqlite3_exec(db, "INSERT OR IGNORE INTO settings (key, value) VALUES ('default_timeframe', '" ++ DEFAULT_TF ++ "')", null, null, null) != c.SQLITE_OK) return error.SeedFailed;
 
-    if (c.sqlite3_exec(db,
-        "INSERT OR IGNORE INTO settings (key, value) VALUES ('march_symbol', '" ++ DEFAULT_MARCH_SYMBOL ++ "')",
-        null, null, null) != c.SQLITE_OK) return error.SeedFailed;
+    if (c.sqlite3_exec(db, "INSERT OR IGNORE INTO settings (key, value) VALUES ('march_symbol', '" ++ DEFAULT_MARCH_SYMBOL ++ "')", null, null, null) != c.SQLITE_OK) return error.SeedFailed;
 
-    if (c.sqlite3_exec(db,
-        "INSERT OR IGNORE INTO settings (key, value) VALUES ('march_tf', '" ++ DEFAULT_MARCH_TF ++ "')",
-        null, null, null) != c.SQLITE_OK) return error.SeedFailed;
+    if (c.sqlite3_exec(db, "INSERT OR IGNORE INTO settings (key, value) VALUES ('march_tf', '" ++ DEFAULT_MARCH_TF ++ "')", null, null, null) != c.SQLITE_OK) return error.SeedFailed;
 
-    if (c.sqlite3_exec(db,
-        "INSERT OR IGNORE INTO settings (key, value) VALUES ('march_from', '" ++ DEFAULT_MARCH_FROM ++ "')",
-        null, null, null) != c.SQLITE_OK) return error.SeedFailed;
+    if (c.sqlite3_exec(db, "INSERT OR IGNORE INTO settings (key, value) VALUES ('march_from', '" ++ DEFAULT_MARCH_FROM ++ "')", null, null, null) != c.SQLITE_OK) return error.SeedFailed;
 
-    if (c.sqlite3_exec(db,
-        "INSERT OR IGNORE INTO settings (key, value) VALUES ('march_to', '" ++ DEFAULT_MARCH_TO ++ "')",
-        null, null, null) != c.SQLITE_OK) return error.SeedFailed;
+    if (c.sqlite3_exec(db, "INSERT OR IGNORE INTO settings (key, value) VALUES ('march_to', '" ++ DEFAULT_MARCH_TO ++ "')", null, null, null) != c.SQLITE_OK) return error.SeedFailed;
 
-    if (c.sqlite3_exec(db,
-        "INSERT OR IGNORE INTO settings (key, value) VALUES ('march_mode', '" ++ DEFAULT_MARCH_MODE ++ "')",
-        null, null, null) != c.SQLITE_OK) return error.SeedFailed;
+    if (c.sqlite3_exec(db, "INSERT OR IGNORE INTO settings (key, value) VALUES ('march_mode', '" ++ DEFAULT_MARCH_MODE ++ "')", null, null, null) != c.SQLITE_OK) return error.SeedFailed;
 
-    if (c.sqlite3_exec(db,
-        "INSERT OR IGNORE INTO settings (key, value) VALUES ('march_layout', '" ++ DEFAULT_MARCH_LAYOUT ++ "')",
-        null, null, null) != c.SQLITE_OK) return error.SeedFailed;
+    if (c.sqlite3_exec(db, "INSERT OR IGNORE INTO settings (key, value) VALUES ('march_layout', '" ++ DEFAULT_MARCH_LAYOUT ++ "')", null, null, null) != c.SQLITE_OK) return error.SeedFailed;
 
-    if (c.sqlite3_exec(db,
-        "INSERT OR IGNORE INTO settings (key, value) VALUES ('march_bottom_height', '" ++ DEFAULT_MARCH_BOTTOM_HEIGHT ++ "')",
-        null, null, null) != c.SQLITE_OK) return error.SeedFailed;
+    if (c.sqlite3_exec(db, "INSERT OR IGNORE INTO settings (key, value) VALUES ('march_bottom_height', '" ++ DEFAULT_MARCH_BOTTOM_HEIGHT ++ "')", null, null, null) != c.SQLITE_OK) return error.SeedFailed;
 }
 
 // Returns the configured default timeframe (e.g. "5m"), read from app.db into
@@ -87,14 +64,12 @@ pub fn init() !void {
 // a request omits the `tf` query param.
 pub fn defaultTf(buf: []u8) []const u8 {
     var db: ?*c.sqlite3 = null;
-    if (c.sqlite3_open_v2(APP_DB_PATH, &db,
-        c.SQLITE_OPEN_READONLY | c.SQLITE_OPEN_FULLMUTEX, null) != c.SQLITE_OK)
+    if (c.sqlite3_open_v2(APP_DB_PATH, &db, c.SQLITE_OPEN_READONLY | c.SQLITE_OPEN_FULLMUTEX, null) != c.SQLITE_OK)
         return DEFAULT_TF;
     defer _ = c.sqlite3_close(db);
 
     var stmt: ?*c.sqlite3_stmt = null;
-    if (c.sqlite3_prepare_v2(db,
-        "SELECT value FROM settings WHERE key = 'default_timeframe'", -1, &stmt, null) != c.SQLITE_OK)
+    if (c.sqlite3_prepare_v2(db, "SELECT value FROM settings WHERE key = 'default_timeframe'", -1, &stmt, null) != c.SQLITE_OK)
         return DEFAULT_TF;
     defer _ = c.sqlite3_finalize(stmt);
 
@@ -112,17 +87,15 @@ pub const DateRange = struct { from: []const u8, to: []const u8 };
 // the candles route to bound the QuestDB scan to the configured window.
 pub fn dateRange(from_buf: []u8, to_buf: []u8) DateRange {
     var from: []const u8 = DEFAULT_FROM;
-    var to:   []const u8 = DEFAULT_TO;
+    var to: []const u8 = DEFAULT_TO;
 
     var db: ?*c.sqlite3 = null;
-    if (c.sqlite3_open_v2(APP_DB_PATH, &db,
-        c.SQLITE_OPEN_READONLY | c.SQLITE_OPEN_FULLMUTEX, null) != c.SQLITE_OK)
+    if (c.sqlite3_open_v2(APP_DB_PATH, &db, c.SQLITE_OPEN_READONLY | c.SQLITE_OPEN_FULLMUTEX, null) != c.SQLITE_OK)
         return .{ .from = from, .to = to };
     defer _ = c.sqlite3_close(db);
 
     var stmt: ?*c.sqlite3_stmt = null;
-    if (c.sqlite3_prepare_v2(db,
-        "SELECT key, value FROM settings WHERE key IN ('from_date', 'to_date')", -1, &stmt, null) != c.SQLITE_OK)
+    if (c.sqlite3_prepare_v2(db, "SELECT key, value FROM settings WHERE key IN ('from_date', 'to_date')", -1, &stmt, null) != c.SQLITE_OK)
         return .{ .from = from, .to = to };
     defer _ = c.sqlite3_finalize(stmt);
 
@@ -142,8 +115,7 @@ pub fn dateRange(from_buf: []u8, to_buf: []u8) DateRange {
 
 pub fn get(a: std.mem.Allocator) ![]const u8 {
     var db: ?*c.sqlite3 = null;
-    if (c.sqlite3_open_v2(APP_DB_PATH, &db,
-        c.SQLITE_OPEN_READONLY | c.SQLITE_OPEN_FULLMUTEX, null) != c.SQLITE_OK)
+    if (c.sqlite3_open_v2(APP_DB_PATH, &db, c.SQLITE_OPEN_READONLY | c.SQLITE_OPEN_FULLMUTEX, null) != c.SQLITE_OK)
         return error.DbOpenFailed;
     defer _ = c.sqlite3_close(db);
 
@@ -154,14 +126,14 @@ pub fn get(a: std.mem.Allocator) ![]const u8 {
 
     // Copy strings out of SQLite memory before finalize.
     var from_buf: [32]u8 = undefined;
-    var to_buf:   [32]u8 = undefined;
-    var tf_buf:   [16]u8 = undefined;
-    var from_len: usize  = 0;
-    var to_len:   usize  = 0;
-    var tf_len:   usize  = 0;
+    var to_buf: [32]u8 = undefined;
+    var tf_buf: [16]u8 = undefined;
+    var from_len: usize = 0;
+    var to_len: usize = 0;
+    var tf_len: usize = 0;
     var from_set = false;
-    var to_set   = false;
-    var tf_set   = false;
+    var to_set = false;
+    var tf_set = false;
 
     while (c.sqlite3_step(stmt) == c.SQLITE_ROW) {
         const key = spanOrEmpty(c.sqlite3_column_text(stmt, 0));
@@ -185,10 +157,11 @@ pub fn get(a: std.mem.Allocator) ![]const u8 {
     }
 
     const from = if (from_set) from_buf[0..from_len] else DEFAULT_FROM;
-    const to   = if (to_set)   to_buf[0..to_len]     else DEFAULT_TO;
-    const tf   = if (tf_set)   tf_buf[0..tf_len]     else DEFAULT_TF;
+    const to = if (to_set) to_buf[0..to_len] else DEFAULT_TO;
+    const tf = if (tf_set) tf_buf[0..tf_len] else DEFAULT_TF;
 
-    return std.fmt.allocPrint(a,
+    return std.fmt.allocPrint(
+        a,
         "{{\"from_date\":\"{s}\",\"to_date\":\"{s}\",\"default_timeframe\":\"{s}\"}}",
         .{ from, to, tf },
     );
@@ -196,8 +169,7 @@ pub fn get(a: std.mem.Allocator) ![]const u8 {
 
 pub fn save(from_date: []const u8, to_date: []const u8) !void {
     var db: ?*c.sqlite3 = null;
-    if (c.sqlite3_open_v2(APP_DB_PATH, &db,
-        c.SQLITE_OPEN_READWRITE | c.SQLITE_OPEN_FULLMUTEX, null) != c.SQLITE_OK)
+    if (c.sqlite3_open_v2(APP_DB_PATH, &db, c.SQLITE_OPEN_READWRITE | c.SQLITE_OPEN_FULLMUTEX, null) != c.SQLITE_OK)
         return error.DbOpenFailed;
     defer _ = c.sqlite3_close(db);
 
@@ -221,8 +193,7 @@ pub fn save(from_date: []const u8, to_date: []const u8) !void {
 
 pub fn marchGet(a: std.mem.Allocator) ![]const u8 {
     var db: ?*c.sqlite3 = null;
-    if (c.sqlite3_open_v2(APP_DB_PATH, &db,
-        c.SQLITE_OPEN_READONLY | c.SQLITE_OPEN_FULLMUTEX, null) != c.SQLITE_OK)
+    if (c.sqlite3_open_v2(APP_DB_PATH, &db, c.SQLITE_OPEN_READONLY | c.SQLITE_OPEN_FULLMUTEX, null) != c.SQLITE_OK)
         return error.DbOpenFailed;
     defer _ = c.sqlite3_close(db);
 
@@ -231,19 +202,19 @@ pub fn marchGet(a: std.mem.Allocator) ![]const u8 {
         return error.PrepFailed;
     defer _ = c.sqlite3_finalize(stmt);
 
-    var symbol_buf: [8]u8  = undefined;
-    var tf_buf:     [8]u8  = undefined;
-    var from_buf:   [16]u8 = undefined;
-    var to_buf:     [16]u8 = undefined;
-    var mode_buf:   [8]u8  = undefined;
+    var symbol_buf: [8]u8 = undefined;
+    var tf_buf: [8]u8 = undefined;
+    var from_buf: [16]u8 = undefined;
+    var to_buf: [16]u8 = undefined;
+    var mode_buf: [8]u8 = undefined;
     var bottom_open_buf: [8]u8 = undefined;
     var layout_buf: [16]u8 = undefined;
     var bottom_height_buf: [8]u8 = undefined;
     var symbol: []const u8 = DEFAULT_MARCH_SYMBOL;
-    var tf:     []const u8 = DEFAULT_MARCH_TF;
-    var from:   []const u8 = DEFAULT_MARCH_FROM;
-    var to:     []const u8 = DEFAULT_MARCH_TO;
-    var mode:   []const u8 = DEFAULT_MARCH_MODE;
+    var tf: []const u8 = DEFAULT_MARCH_TF;
+    var from: []const u8 = DEFAULT_MARCH_FROM;
+    var to: []const u8 = DEFAULT_MARCH_TO;
+    var mode: []const u8 = DEFAULT_MARCH_MODE;
     var bottom_open: []const u8 = "true";
     var layout: []const u8 = DEFAULT_MARCH_LAYOUT;
     var bottom_height: []const u8 = DEFAULT_MARCH_BOTTOM_HEIGHT;
@@ -279,7 +250,8 @@ pub fn marchGet(a: std.mem.Allocator) ![]const u8 {
         }
     }
 
-    return std.fmt.allocPrint(a,
+    return std.fmt.allocPrint(
+        a,
         "{{\"symbol\":\"{s}\",\"tf\":\"{s}\",\"from\":\"{s}\",\"to\":\"{s}\",\"mode\":\"{s}\",\"bottomOpen\":\"{s}\",\"layout\":\"{s}\",\"bottomHeight\":\"{s}\"}}",
         .{ symbol, tf, from, to, mode, bottom_open, layout, bottom_height },
     );
@@ -292,14 +264,12 @@ pub fn marchGet(a: std.mem.Allocator) ![]const u8 {
 
 pub fn marchLayoutsGet(a: std.mem.Allocator) ![]const u8 {
     var db: ?*c.sqlite3 = null;
-    if (c.sqlite3_open_v2(APP_DB_PATH, &db,
-        c.SQLITE_OPEN_READONLY | c.SQLITE_OPEN_FULLMUTEX, null) != c.SQLITE_OK)
+    if (c.sqlite3_open_v2(APP_DB_PATH, &db, c.SQLITE_OPEN_READONLY | c.SQLITE_OPEN_FULLMUTEX, null) != c.SQLITE_OK)
         return error.DbOpenFailed;
     defer _ = c.sqlite3_close(db);
 
     var stmt: ?*c.sqlite3_stmt = null;
-    if (c.sqlite3_prepare_v2(db,
-        "SELECT value FROM settings WHERE key = 'march_layouts'", -1, &stmt, null) != c.SQLITE_OK)
+    if (c.sqlite3_prepare_v2(db, "SELECT value FROM settings WHERE key = 'march_layouts'", -1, &stmt, null) != c.SQLITE_OK)
         return error.PrepFailed;
     defer _ = c.sqlite3_finalize(stmt);
 
@@ -312,8 +282,7 @@ pub fn marchLayoutsGet(a: std.mem.Allocator) ![]const u8 {
 pub fn marchLayoutsSave(blob: []const u8) !void {
     if (blob.len == 0) return;
     var db: ?*c.sqlite3 = null;
-    if (c.sqlite3_open_v2(APP_DB_PATH, &db,
-        c.SQLITE_OPEN_READWRITE | c.SQLITE_OPEN_FULLMUTEX, null) != c.SQLITE_OK)
+    if (c.sqlite3_open_v2(APP_DB_PATH, &db, c.SQLITE_OPEN_READWRITE | c.SQLITE_OPEN_FULLMUTEX, null) != c.SQLITE_OK)
         return error.DbOpenFailed;
     defer _ = c.sqlite3_close(db);
 
@@ -327,10 +296,49 @@ pub fn marchLayoutsSave(blob: []const u8) !void {
     if (c.sqlite3_step(stmt) != c.SQLITE_DONE) return error.SaveFailed;
 }
 
+// ── March workspace ─────────────────────────────────────────────────────────
+// A versioned JSON document keyed by `march_workspace`. Its tabs own the panel
+// layouts (and therefore symbol, timeframe, dates, and indicators), selected
+// environment, and visible backtests. Keeping this opaque lets the frontend
+// evolve the workspace without schema migrations for every visual control.
+
+pub fn marchWorkspaceGet(a: std.mem.Allocator) ![]const u8 {
+    var db: ?*c.sqlite3 = null;
+    if (c.sqlite3_open_v2(APP_DB_PATH, &db, c.SQLITE_OPEN_READONLY | c.SQLITE_OPEN_FULLMUTEX, null) != c.SQLITE_OK)
+        return error.DbOpenFailed;
+    defer _ = c.sqlite3_close(db);
+
+    var stmt: ?*c.sqlite3_stmt = null;
+    if (c.sqlite3_prepare_v2(db, "SELECT value FROM settings WHERE key = 'march_workspace'", -1, &stmt, null) != c.SQLITE_OK)
+        return error.PrepFailed;
+    defer _ = c.sqlite3_finalize(stmt);
+
+    if (c.sqlite3_step(stmt) != c.SQLITE_ROW) return a.dupe(u8, "null");
+    const val = spanOrEmpty(c.sqlite3_column_text(stmt, 0));
+    if (val.len == 0) return a.dupe(u8, "null");
+    return a.dupe(u8, val);
+}
+
+pub fn marchWorkspaceSave(blob: []const u8) !void {
+    if (blob.len == 0) return;
+    var db: ?*c.sqlite3 = null;
+    if (c.sqlite3_open_v2(APP_DB_PATH, &db, c.SQLITE_OPEN_READWRITE | c.SQLITE_OPEN_FULLMUTEX, null) != c.SQLITE_OK)
+        return error.DbOpenFailed;
+    defer _ = c.sqlite3_close(db);
+
+    var stmt: ?*c.sqlite3_stmt = null;
+    const sql = "INSERT OR REPLACE INTO settings (key, value) VALUES ('march_workspace', ?)";
+    if (c.sqlite3_prepare_v2(db, sql, -1, &stmt, null) != c.SQLITE_OK)
+        return error.PrepFailed;
+    defer _ = c.sqlite3_finalize(stmt);
+
+    _ = c.sqlite3_bind_text(stmt, 1, blob.ptr, @intCast(blob.len), null);
+    if (c.sqlite3_step(stmt) != c.SQLITE_DONE) return error.SaveFailed;
+}
+
 pub fn marchSave(symbol: []const u8, tf: []const u8, from: []const u8, to: []const u8, mode: []const u8, bottom_open: []const u8, layout: []const u8, bottom_height: []const u8) !void {
     var db: ?*c.sqlite3 = null;
-    if (c.sqlite3_open_v2(APP_DB_PATH, &db,
-        c.SQLITE_OPEN_READWRITE | c.SQLITE_OPEN_FULLMUTEX, null) != c.SQLITE_OK)
+    if (c.sqlite3_open_v2(APP_DB_PATH, &db, c.SQLITE_OPEN_READWRITE | c.SQLITE_OPEN_FULLMUTEX, null) != c.SQLITE_OK)
         return error.DbOpenFailed;
     defer _ = c.sqlite3_close(db);
 
@@ -342,10 +350,10 @@ pub fn marchSave(symbol: []const u8, tf: []const u8, from: []const u8, to: []con
 
     const pairs = [_]struct { k: [*:0]const u8, v: []const u8 }{
         .{ .k = "march_symbol", .v = symbol },
-        .{ .k = "march_tf",     .v = tf },
-        .{ .k = "march_from",   .v = from },
-        .{ .k = "march_to",     .v = to },
-        .{ .k = "march_mode",   .v = mode },
+        .{ .k = "march_tf", .v = tf },
+        .{ .k = "march_from", .v = from },
+        .{ .k = "march_to", .v = to },
+        .{ .k = "march_mode", .v = mode },
         .{ .k = "march_bottom_open", .v = bottom_open },
         .{ .k = "march_layout", .v = layout },
         .{ .k = "march_bottom_height", .v = bottom_height },

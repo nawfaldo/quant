@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo } from 'react'
 import type { Trade } from '../types'
 import { computeStats, bucketBy, entryYear, entryWeekday, entryHour, weekdayLabel, hourLabel, type TradeStats } from '../lib/tradeStats'
 
@@ -65,8 +65,10 @@ function buildRows(trades: Trade[], axis: Axis, initialBalance: number): Row[] {
 }
 
 export default function Splicing({ trades, initialBalance }: Props) {
-  const [axis, setAxis] = useState<Axis>('side')
-  const rows = useMemo(() => buildRows(trades, axis, initialBalance), [trades, axis, initialBalance])
+  const breakdowns = useMemo(
+    () => AXES.map((axis) => ({ axis, rows: buildRows(trades, axis.id, initialBalance) })),
+    [trades, initialBalance],
+  )
 
   if (trades.length === 0) {
     return <div className="text-sm text-gray-500">No trades to break down.</div>
@@ -74,57 +76,47 @@ export default function Splicing({ trades, initialBalance }: Props) {
 
   return (
     <div className="w-full max-w-5xl mx-auto flex flex-col gap-5">
-      {/* Axis selector */}
-      <div className="flex items-center gap-0.5 bg-gray-900 rounded-lg p-0.5 border border-gray-800/80 self-start">
-        {AXES.map((a) => (
-          <button
-            key={a.id}
-            onClick={() => setAxis(a.id)}
-            className={`px-3 py-1 transition-all duration-150 text-xs font-medium rounded-md select-none cursor-pointer ${
-              axis === a.id ? 'bg-gray-700 text-white shadow-sm' : 'text-gray-500 hover:text-gray-200 hover:bg-gray-800/70'
-            }`}
-          >
-            {a.label}
-          </button>
-        ))}
-      </div>
-
-      <div className="bg-gray-900/40 rounded-lg border border-gray-800/50 p-4 overflow-x-auto">
-        <table className="w-full border-collapse font-mono text-xs text-right">
-          <thead>
-            <tr className="text-gray-500 border-b border-gray-800/40">
-              <th className="text-left pb-2 font-semibold">{AXES.find((a) => a.id === axis)!.label}</th>
-              <th className="pb-2 font-semibold pr-4">Net P&amp;L</th>
-              <th className="pb-2 font-semibold pr-4">Net %</th>
-              <th className="pb-2 font-semibold pr-4">Trades</th>
-              <th className="pb-2 font-semibold pr-4">Win Rate</th>
-              <th className="pb-2 font-semibold pr-4">Profit Factor</th>
-              <th className="pb-2 font-semibold">Max DD</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((r) => {
-              const s = r.stats
-              const thin = s.numTrades < LOW_CONFIDENCE
-              return (
-                <tr
-                  key={r.key}
-                  className={`border-b border-gray-800/20 last:border-b-0 ${thin ? 'opacity-40' : 'hover:bg-gray-800/20'}`}
-                  title={thin ? `Only ${s.numTrades} trades — too few to trust` : undefined}
-                >
-                  <td className="text-left py-2 text-gray-300 font-medium">{r.label}</td>
-                  <td className={`py-2 pr-4 ${s.netPnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{fmt$(s.netPnl)}</td>
-                  <td className={`py-2 pr-4 ${s.netPct >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{fmtPct(s.netPct)}</td>
-                  <td className="py-2 pr-4 text-gray-350">{s.numTrades}</td>
-                  <td className={`py-2 pr-4 ${s.winRate >= 50 ? 'text-emerald-400' : 'text-gray-300'}`}>{fmtPct(s.winRate)}</td>
-                  <td className={`py-2 pr-4 ${s.profitFactor >= 1 ? 'text-emerald-400' : 'text-red-400'}`}>{fmtPf(s.profitFactor)}</td>
-                  <td className="py-2 text-red-400">{fmtPct(s.maxDrawdownPct)}</td>
+      {breakdowns.map(({ axis, rows }) => (
+        <section key={axis.id} className="flex flex-col gap-2">
+          <h2 className="text-xs font-semibold tracking-wider text-gray-300 uppercase select-none">{axis.label}</h2>
+          <div className="border border-[#212124] bg-[#1A1A1E] overflow-hidden shadow-2xl shadow-black/40 w-full select-text">
+            <table className="min-w-full text-right border-collapse text-xs font-mono">
+              <thead>
+                <tr className="bg-[#28282D] border-b border-[#212124] text-gray-400 font-medium tracking-wide text-[10px] uppercase select-none">
+                  <th className="text-left py-3 pl-6 font-semibold">{axis.label}</th>
+                  <th className="py-3 px-3 font-semibold">Net P&amp;L</th>
+                  <th className="py-3 px-3 font-semibold">Net %</th>
+                  <th className="py-3 px-3 font-semibold">Trades</th>
+                  <th className="py-3 px-3 font-semibold">Win Rate</th>
+                  <th className="py-3 px-3 font-semibold">Profit Factor</th>
+                  <th className="py-3 pr-6 font-semibold">Max DD</th>
                 </tr>
-              )
-            })}
-          </tbody>
-        </table>
-      </div>
+              </thead>
+              <tbody>
+                {rows.map((r) => {
+                  const s = r.stats
+                  const thin = s.numTrades < LOW_CONFIDENCE
+                  return (
+                    <tr
+                      key={r.key}
+                      className={`border-b border-[#212124] last:border-0 text-gray-300 ${thin ? 'opacity-40' : 'hover:bg-[#28282D]/20'}`}
+                      title={thin ? `Only ${s.numTrades} trades — too few to trust` : undefined}
+                    >
+                      <td className="text-left py-3.5 pl-6 text-gray-200 font-semibold">{r.label}</td>
+                      <td className={`py-3.5 px-3 ${s.netPnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{fmt$(s.netPnl)}</td>
+                      <td className={`py-3.5 px-3 ${s.netPct >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{fmtPct(s.netPct)}</td>
+                      <td className="py-3.5 px-3 text-gray-350">{s.numTrades}</td>
+                      <td className={`py-3.5 px-3 ${s.winRate >= 50 ? 'text-emerald-400' : 'text-gray-350'}`}>{fmtPct(s.winRate)}</td>
+                      <td className={`py-3.5 px-3 ${s.profitFactor >= 1 ? 'text-emerald-400' : 'text-red-400'}`}>{fmtPf(s.profitFactor)}</td>
+                      <td className="py-3.5 pr-6 text-red-400">{fmtPct(s.maxDrawdownPct)}</td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      ))}
     </div>
   )
 }

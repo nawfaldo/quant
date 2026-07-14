@@ -4,7 +4,7 @@ const data = @import("bt/data.zig");
 
 // Strategies live under strategies/ — the same code the backtester and the live
 // march engine run (no more copy-pasted duplicates).
-const RthVwap = @import("strategies/rth_vwap.zig").RthVwap;
+const NightDrift = @import("strategies/idk/night_drift.zig").NightDrift;
 
 // ── Signal runner ─────────────────────────────────────────────────────────────
 //
@@ -12,7 +12,7 @@ const RthVwap = @import("strategies/rth_vwap.zig").RthVwap;
 // to stdout. The Python side spawns this process and communicates over pipes.
 //
 // Protocol (line-based, UTF-8):
-//   → STRATEGY rth_vwap
+//   → STRATEGY night_drift
 //   → CONFIG key=value key=value  (contracts=0.1 leverage=1)
 //   → BAR 2024-01-15 09:30,17500.50,17510.00,17498.00,17505.30,1234
 //   ← LONG                        (or SHORT, FLAT, CLOSE)
@@ -21,11 +21,11 @@ const RthVwap = @import("strategies/rth_vwap.zig").RthVwap;
 //   → QUIT
 
 const Strategy = union(enum) {
-    rth_vwap: RthVwap,
+    night_drift: NightDrift,
 
     fn update(self: *Strategy, bar: engine.Bar, ts: data.Ts) engine.Signal {
         return switch (self.*) {
-            .rth_vwap => |*s| s.update(bar, ts),
+            .night_drift => |*s| s.update(bar, ts),
         };
     }
 };
@@ -56,8 +56,8 @@ pub fn main(init: std.process.Init) !void {
 
         if (std.mem.startsWith(u8, line, "STRATEGY ")) {
             const name = line["STRATEGY ".len..];
-            if (std.mem.eql(u8, name, "rth_vwap")) {
-                strat = .{ .rth_vwap = .{} };
+            if (std.mem.eql(u8, name, "night_drift")) {
+                strat = .{ .night_drift = .{} };
             } else {
                 try w.print("ERROR unknown strategy: {s}\n", .{name});
                 try w.flush();
@@ -204,12 +204,12 @@ fn parseConfig(strat: *Strategy, config_str: []const u8) void {
             if (std.mem.eql(u8, key, "contracts")) {
                 const v = std.fmt.parseFloat(f64, val_str) catch continue;
                 switch (strat.*) {
-                    .rth_vwap => |*s| s.contracts = v,
+                    .night_drift => |*s| s.contracts = v,
                 }
             } else if (std.mem.eql(u8, key, "leverage")) {
                 const v = std.fmt.parseFloat(f64, val_str) catch continue;
                 switch (strat.*) {
-                    .rth_vwap => |*s| {
+                    .night_drift => |*s| {
                         s.contracts *= v;
                         s.leverage = v;
                     },

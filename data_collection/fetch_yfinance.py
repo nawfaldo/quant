@@ -244,6 +244,7 @@ def main() -> None:
     """Main execution function."""
     parser = argparse.ArgumentParser(description="Yahoo Finance data collection and storage.")
     parser.add_argument("--skip-clear", action="store_true", help="Skip clearing database tables before fetching.")
+    parser.add_argument("--full-period", action="store_true", help="Fetch maximum history allowed by Yahoo Finance (and 1d from 2009).")
     args = parser.parse_args()
 
     # 1. Clear database tables first if not requested to skip
@@ -253,14 +254,26 @@ def main() -> None:
     now = pd.Timestamp.now(tz="America/New_York")
 
     # Timeframe limits in days
-    lookback_days = {
-        "1m": 29,
-        "5m": 59,
-        "15m": 59,
-        "30m": 59,
-        "1h": 365,
-        "1d": 365,
-    }
+    if args.full_period:
+        lookback_days = {
+            "1m": 29,
+            "5m": 59,
+            "15m": 59,
+            "30m": 59,
+            "1h": 729,
+            "4h": 729,
+            "1d": 365,  # will be overridden by 2009-01-01 start date
+        }
+    else:
+        lookback_days = {
+            "1m": 29,
+            "5m": 59,
+            "15m": 59,
+            "30m": 59,
+            "1h": 365,
+            "4h": 365,
+            "1d": 365,
+        }
 
     # 2. Process direct yfinance timeframes
     timeframes = ["1m", "5m", "15m", "30m", "1h", "1d"]
@@ -270,7 +283,10 @@ def main() -> None:
         logger.info(f"--- Processing timeframe {tf} ---")
 
         # Determine start date
-        limit_dt = now - pd.Timedelta(days=lookback_days[tf])
+        if args.full_period and tf == "1d":
+            limit_dt = pd.Timestamp("2009-01-01", tz="America/New_York")
+        else:
+            limit_dt = now - pd.Timedelta(days=lookback_days[tf])
         T_max_tf = get_max_timestamp(target_table)
 
         if T_max_tf is None:
@@ -313,7 +329,7 @@ def main() -> None:
     target_table_4h = f"yf_{config.BASE_TABLE_NAME}_{tf_4h}"
     logger.info(f"--- Processing resampled timeframe {tf_4h} ---")
 
-    limit_dt_4h = now - pd.Timedelta(days=365)
+    limit_dt_4h = now - pd.Timedelta(days=lookback_days["4h"])
     T_max_4h = get_max_timestamp(target_table_4h)
 
     # If incremental, we start querying 1h data from slightly before the last 4h timestamp

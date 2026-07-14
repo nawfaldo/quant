@@ -12,6 +12,7 @@ export interface AppContextType {
   allTrades: Trade[]
   allFxTrades: Trade[]
   toggleId: (id: number) => void
+  setVisibleIds: React.Dispatch<React.SetStateAction<Set<number>>>
   marchSymbol: 'nq' | 'es'
   setMarchSymbol: (sym: 'nq' | 'es') => void
   marchTf: TF
@@ -23,6 +24,8 @@ export interface AppContextType {
   marchToDate: string
   handleMarchApplyRange: (from: string, to: string) => void
   handleMarchLatest: (from: string) => void
+  selectedEnvironmentId: number | null
+  setSelectedEnvironmentId: (id: number | null) => void
   selectedAccountId: number | null
   setSelectedAccountId: (id: number | null) => void
   marchAccountModalOpen: boolean
@@ -38,6 +41,7 @@ export interface AppContextType {
   marchBottomHeight: number
   setMarchBottomHeight: (h: number) => void
   marchLayouts: MarchLayouts
+  setMarchLayouts: React.Dispatch<React.SetStateAction<MarchLayouts>>
   updateMarchPanel: (layout: string, index: number, patch: Partial<LayoutPanelConfig>) => void
   activeMarchPanel: { layout: string; index: number } | null
   setActiveMarchPanel: (p: { layout: string; index: number } | null) => void
@@ -51,6 +55,10 @@ export interface AppContextType {
   setTestErrors: React.Dispatch<React.SetStateAction<Record<string, string>>>
   tuneResults: Record<string, TuneResult>
   setTuneResults: React.Dispatch<React.SetStateAction<Record<string, TuneResult>>>
+  testLoading: Record<string, boolean>
+  setTestLoading: React.Dispatch<React.SetStateAction<Record<string, boolean>>>
+  testTuneProgress: Record<string, { progress: number; total: number }>
+  setTestTuneProgress: React.Dispatch<React.SetStateAction<Record<string, { progress: number; total: number }>>>
 }
 
 export const AppContext = createContext<AppContextType | null>(null)

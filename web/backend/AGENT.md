@@ -40,9 +40,8 @@ backend/
     ├── settings.zig   # app.db key/value settings (incl. march settings + layouts; shared)
     ├── root.zig       # package convention file
     ├── sizings/       # vol_target.zig (shared: bt handlers + live march)
-    ├── strategies/    # rth_vwap, zara_momentum (backtest-facing); 30m_buy, min_loop
-    │                  #   (+ *_config.zig, live-facing). Import ../bt/engine + ../sizings.
-    │                  #   trade_filter.zig: shared day/hour entry exclusion (see below).
+    ├── strategies/    # one folder per environment (currently idk/)
+    │   └── idk/       # night_drift + noise_momentum; each module owns its config
     ├── vendor/        # sqlite3.c/.h — bundled SQLite amalgamation
     ├── server/        # HTTP/server infra
     │   ├── http.zig       # cross-platform HTTP/1.1 server + Ctx (request/response adapter)
@@ -56,11 +55,14 @@ backend/
         ├── engine.zig / data.zig   # SHARED core: Bar/Ts/Signal types + backtest engine
         ├── montecarlo.zig          #   (backtest AND live march)
         ├── fx.zig                  # FX conversion overlay
+        ├── deep_momentum.zig       # replays Python-trained signal artifacts (see below)
         ├── run.zig / tune.zig / combine.zig   # HTTP handlers → engine
         └── tune_report.zig / tune_score.zig            # tuning helpers
 ```
 
-**One strategy codebase.** `strategies/` + `sizings/` are the single source of truth: the backtest handlers (`bt/run`/`tune`/`combine`) and the live march engine (`march/march_api.zig`, `signal_runner.zig`) all `@import` the same strategy files, so live and backtest logic can never drift. `rth_vwap` and `zara_momentum` are wired into the Test page; `30m_buy` (OrbBuy) and `min_loop` are live-only. Live-tunable parameters that must NOT change backtest output (order size, leverage, vol-target) live in `strategies/*_config.zig` and are applied at construction in `march_api.zig` (`makeRthVwap`) / read as struct defaults (OrbBuy).
+**One strategy codebase.** `strategies/` + `sizings/` are the single source of truth: the backtest handlers (`bt/run`/`tune`/`combine`) and the live march engine (`march/march_api.zig`, `signal_runner.zig`) import strategy files from this directory. `night_drift`, `noise_momentum`, and `market_intraday_momentum` are wired into the Test page; `night_drift` is wired into march live trading. Each strategy's configuration lives in the same module as the implementation. Live-only values are applied by march when it constructs the strategy and must not change backtest defaults.
+
+**Deep Momentum is the exception.** It is not a Zig strategy: the model is trained offline in `web/python/` (TensorFlow) and the backend only *replays* the exported signals. See `web/python/AGENT.md` and the section below.
 
 `march.db` lives at `web/backend/march.db` (absolute path in `db.zig`). The Python side (`march/`, port 5001) is unchanged — it still receives `/execute` from `march_api.zig`.
 
@@ -73,7 +75,10 @@ backend/
 | GET | `/api/vwap/bin` | Binary RTH VWAP, computed on demand from OHLCV |
 | GET | `/api/backtests` | JSON list of backtests from SQLite |
 | GET | `/api/trades/:id` | Binary trades for a backtest from SQLite |
+| GET | `/api/deep-momentum/model` | Active Deep Momentum training manifest (JSON, straight from the artifact) |
 | OPTIONS | `*` | CORS preflight |
+
+(Not exhaustive — `router.zig` also dispatches `/api/run`, `/api/tune/*`, `/api/combine*`, `/api/montecarlo/*`, `/api/settings`, `/api/vix`, and the `/api/march/*` family.)
 
 ## Binary wire formats
 
@@ -122,14 +127,34 @@ try list.append(allocator, byte);
 const owned = try list.toOwnedSlice(allocator);
 ```
 
-### Hardcoded trade filters (`strategies/trade_filter.zig`)
-`rth_vwap.zig` and `zara_momentum.zig` each declare hardcoded exclusion lists near the top of the file:
-```zig
-const filter_day: []const []const u8 = &.{};    // e.g. &.{ "Monday", "Tuesday" }
-const filter_hour: []const []const u8 = &.{};   // e.g. &.{ "09.00", "12.00" } — only the HH part is matched
-const filter_close_open: bool = false;          // true ⇒ flatten immediately on a filtered bar
+### Deep Momentum: a replayed Python artifact (`bt/deep_momentum.zig`)
+The model (Lim/Zohren/Roberts *Deep Momentum Networks* — an LSTM trained to maximise Sharpe) is trained **outside this process** by `web/python/`. **The backend never loads TensorFlow.** It reads the exported signals and replays them through the normal backtest accounting.
+
+Artifact resolution — first root that exists wins, relative to the process CWD:
 ```
-These are **exclusion** lists, not allowlists: a listed day/hour blocks new entries and flips; an empty list means that filter is off. `filter_close_open` controls what happens to a position that's already open when a filtered bar arrives — `false` (default) lets it exit normally (VWAP flip / trailing stop / EOD flatten); `true` closes it immediately on that bar. Exits, the trailing stop, and the 16:00 EOD flatten are never blocked by the entry filter itself. Since these are compile-time constants inside the shared strategy files, they apply identically to backtests and the live march engine — edit the file and rebuild to change them.
+../python/artifacts/deep_momentum/latest.json   →  {"run_id": "<id>"}
+python/artifacts/deep_momentum/latest.json
+   └── <run_id>/manifest.json   # served verbatim by GET /api/deep-momentum/model
+   └── <run_id>/signals.bin     # strictly out-of-sample positions
+```
+
+`signals.bin` (all little-endian):
+- Header: `"DMN1"` | `u16 version (1)` | `u16 symbol_count` | `u32 row_count`
+- Symbol table, `symbol_count` × : `u16 id` | `u8 name_len` | `name_len` ASCII bytes (ids strictly ascending)
+- Row (44 B): `u16 symbol_id, i64 unix_seconds, f64 raw_position, f64 exposure, f64 volatility, f64 close, u16 fold_year`
+
+`raw_position` is the network's tanh output in `[-1, 1]`; `exposure` is that position after volatility scaling (`raw × (0.15/√252) / volatility`), i.e. the fraction of equity to hold. Futures round `equity × exposure / (close × point_value)` to whole contracts, so a small signal rounds to flat.
+
+Run it via `/api/run` with `strategy = "Deep Momentum"` (dispatched in `bt/run.zig`). Errors worth knowing:
+
+| Error | Meaning |
+|-------|---------|
+| `ModelUnavailable` | no `latest.json` under either root — nothing has been trained yet |
+| `UnsupportedSymbol` | the artifact has no signals for that symbol |
+| `NoCoverage` | the requested date range falls outside the artifact's out-of-sample window |
+| `StaleArtifact` | a bar's QuestDB `close` no longer matches the close recorded in the artifact (or a timestamp went missing) |
+
+`StaleArtifact` is a deliberate guard, not a bug: it means the daily table was re-imported or adjusted after training, so the signals no longer correspond to the prices they'd be replayed against. **Retrain rather than work around it.**
 
 ### Adding a new route
 Add an `if` branch in `router.zig:onRequest`:

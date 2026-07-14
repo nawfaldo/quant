@@ -65,4 +65,22 @@ pub fn build(b: *std.Build) void {
 
     const run_step = b.step("run", "Run the backend (port 8080)");
     run_step.dependOn(&run_cmd.step);
+
+    const engine_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/bt/engine.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    const strategy_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/strategy_tests.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    const test_step = b.step("test", "Run backend unit tests");
+    test_step.dependOn(&b.addRunArtifact(engine_tests).step);
+    test_step.dependOn(&b.addRunArtifact(strategy_tests).step);
 }

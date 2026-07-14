@@ -326,7 +326,8 @@ pub fn buildMarkdown(a: std.mem.Allocator, combos: []const Combo, meta: Meta) ![
         const row = try std.fmt.allocPrint(a, "| {d} | {d:.2} | {d:.2} | {d:.3} | {d:.0} | {d:.0} | {d} | {d:.2} | {d:.2} | {d:.2} | {d:.2} | {d:.2} |\n", .{
             i + 1,            fin(c.base_lot),   fin(c.leverage),
             fin(c.vol_target), fin(c.vol_halflife), fin(c.vol_max_mult),
-            c.vol_min_days,   fin(c.return_pct), fin(c.sharpe),
+            c.vol_min_days,
+            fin(c.return_pct), fin(c.sharpe),
             fin(c.profit_factor), fin(c.drawdown), fin(c.score),
         });
         defer a.free(row);

@@ -31,29 +31,50 @@ const sizing = @import("../sizings/vol_target.zig");
 const http = @import("../server/http.zig");
 const questdb = @import("../server/questdb.zig");
 
-const RthVwap = @import("../strategies/rth_vwap.zig").RthVwap;
-
-// Live-tunable RTH-VWAP sizing (lots/leverage/vol-target). The shared bt
-// strategy carries neutral backtest defaults, so the live parameters are
-// applied here at construction (makeRthVwap) rather than baked into the struct.
-const rth_cfg = @import("../strategies/rth_vwap_config.zig").config;
+const night_drift = @import("../strategies/idk/night_drift.zig");
+const NightDrift = night_drift.NightDrift;
+const night_drift_cfg = night_drift.config;
 
 // ── Strategy registry (global in-process state) ────────────────────────────────
 
-const StrategyTag = enum { rth_vwap };
+const StrategyTag = enum { night_drift };
 
 const StrategyInstance = union(StrategyTag) {
-    rth_vwap: RthVwap,
+    night_drift: NightDrift,
 
     fn update(self: *StrategyInstance, bar: engine.Bar, ts: data.Ts) engine.Signal {
         return switch (self.*) {
-            .rth_vwap => |*s| s.update(bar, ts),
+            .night_drift => |*s| s.update(bar, ts),
+        };
+    }
+
+    fn updateLiveTick(self: *StrategyInstance, price: f64, ts: data.Ts) engine.Signal {
+        return switch (self.*) {
+            .night_drift => |*s| s.updateLiveTick(price, ts),
+        };
+    }
+
+    fn takeLiveFill(self: *StrategyInstance, signal: engine.Signal, fallback: f64) f64 {
+        return switch (self.*) {
+            .night_drift => |*s| switch (signal) {
+                .long, .short => blk: {
+                    const price = s.entry_fill orelse fallback;
+                    s.entry_fill = null;
+                    break :blk price;
+                },
+                .close => blk: {
+                    const price = s.exit_fill orelse fallback;
+                    s.exit_fill = null;
+                    break :blk price;
+                },
+                .flat => fallback,
+            },
         };
     }
 
     fn liveVolume(self: *const StrategyInstance) f64 {
         const raw = switch (self.*) {
-            .rth_vwap => |*s| s.contracts * s.leverage,
+            .night_drift => |*s| s.contracts * s.leverage,
         };
         return roundToLotStep(raw);
     }
@@ -81,6 +102,7 @@ var g_strategy_count: usize = 0;
 var g_mutex = std.Io.Mutex.init;
 
 var g_prev_signals: [MAX_STRATEGIES]engine.Signal = [_]engine.Signal{.flat} ** MAX_STRATEGIES;
+var g_latest_vix_close: f64 = 0.0;
 
 // ── Strategy slot helpers ──────────────────────────────────────────────────────
 
@@ -93,20 +115,17 @@ fn findSlot(name: []const u8) ?usize {
 }
 
 fn tagFromName(name: []const u8) ?StrategyTag {
-    if (std.mem.eql(u8, name, "rth_vwap")) return .rth_vwap;
+    if (std.mem.eql(u8, name, "night_drift")) return .night_drift;
     return null;
 }
 
-// Build a live RTH-VWAP instance from the march sizing config. The shared bt
-// strategy defaults are neutral (1 lot, no vol targeting), so the live lots,
-// leverage, and vol-target params are applied here. The strategy's own update()
-// still reads self.contracts/vol at signal time exactly as in the backtest.
-fn makeRthVwap() RthVwap {
+fn makeNightDrift() NightDrift {
     return .{
-        .contracts = rth_cfg.contracts,
-        .leverage = rth_cfg.leverage,
-        .sizing_mode = rth_cfg.sizing_mode,
-        .vol = rth_cfg.vol,
+        .contracts = night_drift_cfg.contracts,
+        .live_fixed_contracts = night_drift_cfg.contracts,
+        .leverage = night_drift_cfg.leverage,
+        .sizing_mode = night_drift_cfg.sizing_mode,
+        .vol = night_drift_cfg.vol,
     };
 }
 
@@ -125,12 +144,25 @@ fn activateStrategy(io: std.Io, name: []const u8) void {
         break :blk idx;
     };
     g_strategies[slot] = switch (tag) {
-        .rth_vwap => .{ .rth_vwap = makeRthVwap() },
+        .night_drift => .{ .night_drift = makeNightDrift() },
     };
     g_prev_signals[slot] = .flat;
 
     if (g_strategies[slot]) |*inst| switch (inst.*) {
-        .rth_vwap => |*s| if (s.sizing_mode == .vol_target) warmupVolTarget(io, &s.vol),
+        .night_drift => |*s| {
+            warmupNightDrift(io, s);
+            if (s.sizing_mode == .vol_target) {
+                var sym_buf: [32]u8 = undefined;
+                const sqlite = db.open() catch return;
+                defer db.close(sqlite);
+                const sym_len = db.firstActiveSymbolForStrategy(sqlite, name, &sym_buf) orelse blk: {
+                    @memcpy(sym_buf[0..2], "nq");
+                    break :blk @as(usize, 2);
+                };
+                const symbol = sym_buf[0..sym_len];
+                warmupVolTarget(io, symbol, &s.vol);
+            }
+        },
     };
 }
 
@@ -153,9 +185,7 @@ fn nameToBuf(name: []const u8) struct { buf: [64]u8, len: usize } {
 
 fn callPythonExecute(io: std.Io, action: []const u8, volume: f64, strategy: [64]u8, strategy_len: usize, trade_id: i64, closed_trade_id: i64) void {
     var body_buf: [256]u8 = undefined;
-    const body = std.fmt.bufPrint(&body_buf,
-        "{{\"action\":\"{s}\",\"volume\":{d},\"strategy\":\"{s}\",\"trade_id\":{d},\"closed_trade_id\":{d}}}",
-        .{ action, volume, strategy[0..strategy_len], trade_id, closed_trade_id }) catch return;
+    const body = std.fmt.bufPrint(&body_buf, "{{\"action\":\"{s}\",\"volume\":{d},\"strategy\":\"{s}\",\"trade_id\":{d},\"closed_trade_id\":{d}}}", .{ action, volume, strategy[0..strategy_len], trade_id, closed_trade_id }) catch return;
 
     const addr = std.Io.net.IpAddress.parse("127.0.0.1", 5001) catch return;
     var stream = addr.connect(io, .{ .mode = .stream }) catch return;
@@ -171,15 +201,20 @@ fn callPythonExecute(io: std.Io, action: []const u8, volume: f64, strategy: [64]
 
 // ── QuestDB daily closes warm-up (cross-platform via questdb.zig) ─────────────
 
-fn fetchDailyCloses(io: std.Io, out: []f64) usize {
+fn fetchDailyCloses(io: std.Io, symbol: []const u8, out: []f64) usize {
     const alloc = std.heap.page_allocator;
-    const reader = questdb.open(io, alloc, "SELECT close FROM nq_1d ORDER BY timestamp") catch return 0;
+    const sql = std.fmt.allocPrint(alloc, "SELECT close FROM {s}_1d ORDER BY timestamp", .{symbol}) catch return 0;
+    defer alloc.free(sql);
+    const reader = questdb.open(io, alloc, sql) catch return 0;
     defer reader.deinit();
 
     var count: usize = 0;
     var skip_header = true;
     while (reader.nextLine()) |line| {
-        if (skip_header) { skip_header = false; continue; }
+        if (skip_header) {
+            skip_header = false;
+            continue;
+        }
         if (count >= out.len) break;
         out[count] = std.fmt.parseFloat(f64, line) catch continue;
         count += 1;
@@ -187,85 +222,189 @@ fn fetchDailyCloses(io: std.Io, out: []f64) usize {
     return count;
 }
 
-fn warmupVolTarget(io: std.Io, vol: *sizing.VolTarget) void {
+fn warmupVolTarget(io: std.Io, symbol: []const u8, vol: *sizing.VolTarget) void {
     var closes: [8192]f64 = undefined;
-    const n = fetchDailyCloses(io, &closes);
+    const n = fetchDailyCloses(io, symbol, &closes);
     for (closes[0..n]) |c| vol.onBar(c, true);
     std.debug.print(
-        "[SIZING] vol_target warmed from {d} nq_1d closes (needs > {d} returns to scale)\n",
-        .{ n, vol.min_days },
+        "[SIZING] vol_target warmed from {d} {s}_1d closes (needs > {d} returns to scale)\n",
+        .{ n, symbol, vol.min_days },
     );
+}
+
+fn latestTableDate(io: std.Io, table: []const u8) ?[10]u8 {
+    const alloc = std.heap.page_allocator;
+    const sql = std.fmt.allocPrint(alloc, "SELECT max(timestamp) FROM {s}", .{table}) catch return null;
+    defer alloc.free(sql);
+    const reader = questdb.open(io, alloc, sql) catch return null;
+    defer reader.deinit();
+    _ = reader.nextLine(); // CSV header
+    const raw = reader.nextLine() orelse return null;
+    const line = std.mem.trim(u8, raw, "\"\r\n ");
+    if (line.len < 10) return null;
+    var out: [10]u8 = undefined;
+    @memcpy(&out, line[0..10]);
+    return out;
+}
+
+fn refreshLatestVix(io: std.Io) void {
+    const alloc = std.heap.page_allocator;
+    const reader = questdb.open(io, alloc, "SELECT close FROM vix_1d ORDER BY timestamp DESC LIMIT 1") catch return;
+    defer reader.deinit();
+    _ = reader.nextLine(); // CSV header
+    const raw = reader.nextLine() orelse return;
+    const line = std.mem.trim(u8, raw, "\"\r\n ");
+    const value = std.fmt.parseFloat(f64, line) catch return;
+    if (value > 0.0) g_latest_vix_close = value;
+}
+
+fn warmupNightDrift(io: std.Io, strat: *NightDrift) void {
+    const latest = latestTableDate(io, "nq_1m") orelse {
+        refreshLatestVix(io);
+        return;
+    };
+    const from = dayOffsetString(latest, -45) orelse {
+        refreshLatestVix(io);
+        return;
+    };
+    const alloc = std.heap.page_allocator;
+    const dataset = data.fetch(io, alloc, engine.columnsFor(NightDrift), .{
+        .table = "nq_1m",
+        .from = &from,
+    }) catch |err| {
+        std.debug.print("[NIGHT_DRIFT] warm-up fetch failed: {any}\n", .{err});
+        refreshLatestVix(io);
+        return;
+    };
+    defer dataset.deinit();
+
+    for (dataset.bars, dataset.timestamps) |bar, ts| {
+        if (bar.vix_close > 0.0) g_latest_vix_close = bar.vix_close;
+        const signal = strat.update(bar, ts);
+        // Warm-up reconstructs indicators/session state but never creates a
+        // broker action. Discarding an entry also clears its simulated holding
+        // state, preventing a historical trade from leaking into live startup.
+        if (signal == .long or signal == .short) strat.onDiscardedSignal(signal);
+        strat.entry_fill = null;
+        strat.exit_fill = null;
+    }
+    refreshLatestVix(io);
+    std.debug.print("[NIGHT_DRIFT] warmed from {d} nq_1m bars; VIX={d:.2}\n", .{ dataset.bars.len, g_latest_vix_close });
+}
+
+fn dayOffsetString(day: [10]u8, offset: i64) ?[10]u8 {
+    const y = std.fmt.parseInt(i64, day[0..4], 10) catch return null;
+    const m = std.fmt.parseInt(i64, day[5..7], 10) catch return null;
+    const d = std.fmt.parseInt(i64, day[8..10], 10) catch return null;
+    const c = civilFromDays(daysFromCivil(y, m, d) + offset);
+    var out: [10]u8 = undefined;
+    _ = std.fmt.bufPrint(&out, "{d:0>4}-{d:0>2}-{d:0>2}", .{ c.y, c.m, c.d }) catch return null;
+    return out;
+}
+
+fn daysFromCivil(y_in: i64, m: i64, d: i64) i64 {
+    const y = if (m <= 2) y_in - 1 else y_in;
+    const era = @divFloor(if (y >= 0) y else y - 399, @as(i64, 400));
+    const yoe = y - era * 400;
+    const mp = if (m > 2) m - 3 else m + 9;
+    const doy = @divFloor(153 * mp + 2, @as(i64, 5)) + d - 1;
+    const doe = yoe * 365 + @divFloor(yoe, 4) - @divFloor(yoe, 100) + doy;
+    return era * 146097 + doe - 719468;
+}
+
+fn civilFromDays(z_in: i64) struct { y: i64, m: i64, d: i64 } {
+    const z = z_in + 719468;
+    const era = @divFloor(if (z >= 0) z else z - 146096, @as(i64, 146097));
+    const doe = z - era * 146097;
+    const yoe = @divFloor(doe - @divFloor(doe, 1460) + @divFloor(doe, 36524) - @divFloor(doe, 146096), @as(i64, 365));
+    const y = yoe + era * 400;
+    const doy = doe - (365 * yoe + @divFloor(yoe, 4) - @divFloor(yoe, 100));
+    const mp = @divFloor(5 * doy + 2, @as(i64, 153));
+    const d = doy - @divFloor(153 * mp + 2, @as(i64, 5)) + 1;
+    const m = if (mp < 10) mp + 3 else mp - 9;
+    return .{ .y = y + @as(i64, if (m <= 2) 1 else 0), .m = m, .d = d };
 }
 
 // ── JSON helpers ──────────────────────────────────────────────────────────────
 
 fn writeStrategiesJson(buf: []u8, strategies: []db.Strategy, count: usize) []u8 {
     var pos: usize = 0;
-    buf[pos] = '['; pos += 1;
+    buf[pos] = '[';
+    pos += 1;
     for (strategies[0..count], 0..) |s, i| {
-        if (i > 0) { buf[pos] = ','; pos += 1; }
-        const piece = std.fmt.bufPrint(buf[pos..],
-            "{{\"name\":\"{s}\",\"active\":{s}}}",
-            .{ s.name[0..s.name_len], if (s.active) "true" else "false" }) catch break;
+        if (i > 0) {
+            buf[pos] = ',';
+            pos += 1;
+        }
+        const piece = std.fmt.bufPrint(buf[pos..], "{{\"name\":\"{s}\",\"active\":{s}}}", .{ s.name[0..s.name_len], if (s.active) "true" else "false" }) catch break;
         pos += piece.len;
     }
-    buf[pos] = ']'; pos += 1;
+    buf[pos] = ']';
+    pos += 1;
     return buf[0..pos];
 }
 
 fn writeAccountsJson(buf: []u8, accounts: []db.Mt5Account, count: usize) []u8 {
     var pos: usize = 0;
-    buf[pos] = '['; pos += 1;
+    buf[pos] = '[';
+    pos += 1;
     for (accounts[0..count], 0..) |a, i| {
-        if (i > 0) { buf[pos] = ','; pos += 1; }
-        const piece = std.fmt.bufPrint(buf[pos..],
-            "{{\"id\":{d},\"name\":\"{s}\",\"login\":\"{s}\",\"server\":\"{s}\"}}",
-            .{ a.id, a.name[0..a.name_len], a.login[0..a.login_len], a.server[0..a.server_len] }) catch break;
+        if (i > 0) {
+            buf[pos] = ',';
+            pos += 1;
+        }
+        const piece = std.fmt.bufPrint(buf[pos..], "{{\"id\":{d},\"name\":\"{s}\",\"login\":\"{s}\",\"server\":\"{s}\"}}", .{ a.id, a.name[0..a.name_len], a.login[0..a.login_len], a.server[0..a.server_len] }) catch break;
         pos += piece.len;
     }
-    buf[pos] = ']'; pos += 1;
+    buf[pos] = ']';
+    pos += 1;
     return buf[0..pos];
 }
 
 fn writeAccountStrategiesJson(buf: []u8, items: []db.AccountStrategy, count: usize) []u8 {
     var pos: usize = 0;
-    buf[pos] = '['; pos += 1;
+    buf[pos] = '[';
+    pos += 1;
     for (items[0..count], 0..) |s, i| {
-        if (i > 0) { buf[pos] = ','; pos += 1; }
-        const piece = std.fmt.bufPrint(buf[pos..],
-            "{{\"id\":{d},\"strategy\":\"{s}\",\"symbol\":\"{s}\",\"active\":{s}}}",
-            .{ s.id, s.strategy[0..s.strategy_len], s.symbol[0..s.symbol_len], if (s.active) "true" else "false" }) catch break;
+        if (i > 0) {
+            buf[pos] = ',';
+            pos += 1;
+        }
+        const piece = std.fmt.bufPrint(buf[pos..], "{{\"id\":{d},\"strategy\":\"{s}\",\"symbol\":\"{s}\",\"active\":{s}}}", .{ s.id, s.strategy[0..s.strategy_len], s.symbol[0..s.symbol_len], if (s.active) "true" else "false" }) catch break;
         pos += piece.len;
     }
-    buf[pos] = ']'; pos += 1;
+    buf[pos] = ']';
+    pos += 1;
     return buf[0..pos];
 }
 
 fn writeLiveTradesJson(buf: []u8, trades: []db.LiveTrade, count: usize) []u8 {
     var pos: usize = 0;
-    buf[pos] = '['; pos += 1;
+    buf[pos] = '[';
+    pos += 1;
     for (trades[0..count], 0..) |t, i| {
-        if (i > 0) { buf[pos] = ','; pos += 1; }
-        const piece = std.fmt.bufPrint(buf[pos..],
-            "{{\"id\":{d},\"strategy_name\":\"{s}\",\"side\":\"{s}\",\"contract\":{d:.4},\"zig_entry_price\":{d:.4},\"zig_close_price\":{d:.4},\"mt5_entry_price\":{d:.4},\"mt5_close_price\":{d:.4},\"zig_open_time\":\"{s}\",\"zig_close_time\":\"{s}\",\"mt5_open_time\":\"{s}\",\"mt5_close_time\":\"{s}\"}}",
-            .{
-                t.id,
-                t.strategy_name[0..t.strategy_name_len],
-                t.side[0..t.side_len],
-                t.contract,
-                t.zig_entry_price,
-                t.zig_close_price,
-                t.mt5_entry_price,
-                t.mt5_close_price,
-                t.zig_open_time[0..t.zig_open_time_len],
-                t.zig_close_time[0..t.zig_close_time_len],
-                t.mt5_open_time[0..t.mt5_open_time_len],
-                t.mt5_close_time[0..t.mt5_close_time_len],
-            }
-        ) catch break;
+        if (i > 0) {
+            buf[pos] = ',';
+            pos += 1;
+        }
+        const piece = std.fmt.bufPrint(buf[pos..], "{{\"id\":{d},\"strategy_name\":\"{s}\",\"side\":\"{s}\",\"contract\":{d:.4},\"zig_entry_price\":{d:.4},\"zig_close_price\":{d:.4},\"mt5_entry_price\":{d:.4},\"mt5_close_price\":{d:.4},\"zig_open_time\":\"{s}\",\"zig_close_time\":\"{s}\",\"mt5_open_time\":\"{s}\",\"mt5_close_time\":\"{s}\"}}", .{
+            t.id,
+            t.strategy_name[0..t.strategy_name_len],
+            t.side[0..t.side_len],
+            t.contract,
+            t.zig_entry_price,
+            t.zig_close_price,
+            t.mt5_entry_price,
+            t.mt5_close_price,
+            t.zig_open_time[0..t.zig_open_time_len],
+            t.zig_close_time[0..t.zig_close_time_len],
+            t.mt5_open_time[0..t.mt5_open_time_len],
+            t.mt5_close_time[0..t.mt5_close_time_len],
+        }) catch break;
         pos += piece.len;
     }
-    buf[pos] = ']'; pos += 1;
+    buf[pos] = ']';
+    pos += 1;
     return buf[0..pos];
 }
 
@@ -287,11 +426,11 @@ fn parseBarJson(json: []const u8) ?ParsedBar {
     if (ts_len < 16) return null;
     @memcpy(&result.ts, ts_str[0..16]);
 
-    bar.open   = jsonNum(json, "open")   orelse return null;
-    bar.high   = jsonNum(json, "high")   orelse return null;
-    bar.low    = jsonNum(json, "low")    orelse return null;
-    bar.close  = jsonNum(json, "close")  orelse return null;
-    const vol  = jsonNum(json, "volume") orelse 0.0;
+    bar.open = jsonNum(json, "open") orelse return null;
+    bar.high = jsonNum(json, "high") orelse return null;
+    bar.low = jsonNum(json, "low") orelse return null;
+    bar.close = jsonNum(json, "close") orelse return null;
+    const vol = jsonNum(json, "volume") orelse 0.0;
     bar.volume = @intFromFloat(vol);
     result.bar = bar;
     return result;
@@ -444,15 +583,23 @@ fn parseTicks(payload: []const u8, ticks: []ParsedTick) usize {
         const obj = payload[brace..obj_end];
 
         var sym_buf: [16]u8 = undefined;
-        if (jsonStr(obj, "sym", &sym_buf)) |sym_len| {
-            if (sym_len != 2 or sym_buf[0] != 'N' or sym_buf[1] != 'Q') {
-                pos = obj_end;
-                continue;
-            }
+        const sym_len = jsonStr(obj, "sym", &sym_buf) orelse {
+            pos = obj_end;
+            continue;
+        };
+        if (sym_len != 2 or sym_buf[0] != 'N' or sym_buf[1] != 'Q') {
+            pos = obj_end;
+            continue;
         }
 
-        const ts_f = jsonNum(obj, "ts") orelse { pos = obj_end; continue; };
-        const price = jsonNum(obj, "price") orelse { pos = obj_end; continue; };
+        const ts_f = jsonNum(obj, "ts") orelse {
+            pos = obj_end;
+            continue;
+        };
+        const price = jsonNum(obj, "price") orelse {
+            pos = obj_end;
+            continue;
+        };
         const size = jsonNum(obj, "size") orelse 1.0;
 
         ticks[count] = .{
@@ -467,7 +614,32 @@ fn parseTicks(payload: []const u8, ticks: []ParsedTick) usize {
     return count;
 }
 
-fn feedCompletedBar(io: std.Io, bar: engine.Bar, bar_start: i64, strat_name: []const u8) void {
+fn publishLiveSignal(io: std.Io, slot: usize, inst: *StrategyInstance, signal: engine.Signal, fallback_price: f64, ts: data.Ts, strat_name: []const u8) void {
+    const execution_price = inst.takeLiveFill(signal, fallback_price);
+    const volume = inst.liveVolume();
+    g_strategies[slot] = inst.*;
+
+    const prev = g_prev_signals[slot];
+    if (signal == prev) return;
+    g_prev_signals[slot] = signal;
+    const db_res = handleTradeDbLogging(strat_name, prev, signal, volume, execution_price, ts);
+    const sig_str: []const u8 = switch (signal) {
+        .long => "long",
+        .short => "short",
+        .flat => "flat",
+        .close => "close",
+    };
+    std.debug.print("[WS] {s} -> {s} (vol={d}, price={d:.4}, open_id={d}, close_id={d})\n", .{ strat_name, sig_str, volume, execution_price, db_res.open_id, db_res.close_id });
+    switch (signal) {
+        .long, .short, .close => {
+            const sn = nameToBuf(strat_name);
+            _ = std.Thread.spawn(.{}, callPythonExecute, .{ io, sig_str, volume, sn.buf, sn.len, db_res.open_id, db_res.close_id }) catch {};
+        },
+        .flat => {},
+    }
+}
+
+fn feedCompletedBar(io: std.Io, source_bar: engine.Bar, bar_start: i64, strat_name: []const u8) void {
     const ts = unixSecsToTs(bar_start);
 
     g_mutex.lockUncancelable(io);
@@ -475,30 +647,24 @@ fn feedCompletedBar(io: std.Io, bar: engine.Bar, bar_start: i64, strat_name: []c
 
     const slot = findSlot(strat_name) orelse return;
     var inst = g_strategies[slot] orelse return;
-
+    var bar = source_bar;
+    if (std.mem.eql(u8, ts[11..16], "18:00")) refreshLatestVix(io);
+    bar.vix_close = g_latest_vix_close;
     const signal = inst.update(bar, ts);
-    const volume = inst.liveVolume();
-    g_strategies[slot] = inst;
+    publishLiveSignal(io, slot, &inst, signal, bar.close, ts, strat_name);
+}
 
-    const prev = g_prev_signals[slot];
-    if (signal != prev) {
-        g_prev_signals[slot] = signal;
-        const db_res = handleTradeDbLogging(strat_name, prev, signal, volume, bar.close, ts);
-        const sig_str: []const u8 = switch (signal) {
-            .long => "long",
-            .short => "short",
-            .flat => "flat",
-            .close => "close",
-        };
-        std.debug.print("[WS] {s} -> {s} (vol={d}, open_id={d}, close_id={d})\n", .{ strat_name, sig_str, volume, db_res.open_id, db_res.close_id });
-        switch (signal) {
-            .long, .short, .close => {
-                const sn = nameToBuf(strat_name);
-                _ = std.Thread.spawn(.{}, callPythonExecute, .{ io, sig_str, volume, sn.buf, sn.len, db_res.open_id, db_res.close_id }) catch {};
-            },
-            .flat => {},
-        }
-    }
+fn feedLiveTick(io: std.Io, tick: ParsedTick, strat_name: []const u8) void {
+    const tick_secs = @divFloor(tick.ts_nanos, @as(i64, 1_000_000_000));
+    const ts = unixSecsToTs(tick_secs);
+
+    g_mutex.lockUncancelable(io);
+    defer g_mutex.unlock(io);
+
+    const slot = findSlot(strat_name) orelse return;
+    var inst = g_strategies[slot] orelse return;
+    const signal = inst.updateLiveTick(tick.price, ts);
+    publishLiveSignal(io, slot, &inst, signal, tick.price, ts, strat_name);
 }
 
 // ── WebSocket tick feed (Windows-only: Bookmap live-push on :8765) ────────────
@@ -553,8 +719,9 @@ fn wsClientLoop(io: std.Io) void {
                         const tick_secs = @divFloor(tick.ts_nanos, @as(i64, 1_000_000_000));
 
                         if (builder_1m.onTick(tick.price, tick.size, tick_secs)) |c| {
-                            feedCompletedBar(io, c.bar, c.bar_start, "rth_vwap");
+                            feedCompletedBar(io, c.bar, c.bar_start, "night_drift");
                         }
+                        feedLiveTick(io, tick, "night_drift");
                     }
                 },
                 else => {},
@@ -682,9 +849,9 @@ pub fn handleRequest(req: *http.Ctx) !bool {
         g_strategies[slot] = inst;
 
         const sig_str: []const u8 = switch (signal) {
-            .long  => "long",
+            .long => "long",
             .short => "short",
-            .flat  => "flat",
+            .flat => "flat",
             .close => "close",
         };
 

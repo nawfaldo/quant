@@ -5,7 +5,7 @@ import type { Trade } from '../types'
 // (net P&L, win rate, profit factor, max drawdown), so any subset (long/short, a
 // single year, weekday, hour) can be scored on its own.
 //
-// Timezone note: Trade.et/xt are fake-UTC ET epoch seconds (see frontend CLAUDE.md
+// Timezone note: Trade.et/xt are fake-UTC ET epoch seconds (see frontend AGENT.md
 // "Timezone model"). The bucketing keys below therefore use getUTC* methods so a
 // trade lands in the ET hour/weekday/year it actually happened in — never apply a
 // named timezone here, that would double-shift it.

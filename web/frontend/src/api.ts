@@ -1,4 +1,4 @@
-import { BACKEND_URL, type Backtest, type Trade, type MarchSettings, type MarchLayouts, type MonteCarloData } from './types'
+import { BACKEND_URL, type Backtest, type Trade, type MarchSettings, type MarchLayouts, type MarchWorkspace, type MonteCarloData, type Environment, type EnvironmentRule, type EnvironmentStrategy, type CreateEnvironmentInput } from './types'
 import type { UTCTimestamp } from 'lightweight-charts'
 
 const HEADER_BYTES = 8
@@ -30,6 +30,38 @@ export async function fetchBacktestFx(id: number): Promise<FxResult | null> {
 }
 
 
+// Daily VIX closes from the backend's vix_1d table (imported by
+// data_collection/fetch_vix.py). Wire format is compact JSON pairs
+// [[epoch_secs, close], ...]; timestamps are fake-UTC ET like everything else.
+export interface VixPoint {
+  t: number // epoch seconds (fake-UTC ET)
+  c: number // VIX close
+}
+
+export async function fetchVix(from?: string, to?: string): Promise<VixPoint[]> {
+  const params = new URLSearchParams()
+  if (from) params.set('from', from)
+  if (to) params.set('to', to)
+  const qs = params.toString()
+  const res = await fetch(`${BACKEND_URL}/api/vix${qs ? `?${qs}` : ''}`)
+  if (!res.ok) throw new Error(`Backend error: ${res.status}`)
+  const data: [number, number][] = await res.json()
+  return data.map(([t, c]) => ({ t, c }))
+}
+
+export interface DatabaseSummaryItem {
+  name: 'ES' | 'NQ' | 'VIX'
+  bytes: number
+  firstDate: string
+  lastDate: string
+}
+
+export async function fetchDatabaseSummary(): Promise<DatabaseSummaryItem[]> {
+  const res = await fetch(`${BACKEND_URL}/api/database/summary`)
+  if (!res.ok) throw new Error(`Backend error: ${res.status}`)
+  return res.json()
+}
+
 export async function fetchMarchSettings(): Promise<MarchSettings> {
   const res = await fetch(`${BACKEND_URL}/api/march/settings`)
   if (!res.ok) throw new Error(`Backend error: ${res.status}`)
@@ -56,6 +88,97 @@ export async function saveMarchLayouts(m: MarchLayouts): Promise<void> {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(m),
   })
+}
+
+export async function fetchMarchWorkspace(): Promise<MarchWorkspace | null> {
+  const res = await fetch(`${BACKEND_URL}/api/march/workspace`)
+  if (!res.ok) throw new Error(`Backend error: ${res.status}`)
+  return res.json()
+}
+
+export async function saveMarchWorkspace(workspace: MarchWorkspace): Promise<void> {
+  const res = await fetch(`${BACKEND_URL}/api/march/workspace`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(workspace),
+  })
+  if (!res.ok) throw new Error(`Backend error: ${res.status}`)
+}
+
+export async function fetchEnvironments(): Promise<Environment[]> {
+  const res = await fetch(`${BACKEND_URL}/api/environments`)
+  if (!res.ok) throw new Error(`Backend error: ${res.status}`)
+  return res.json()
+}
+
+export async function fetchEnvironmentStrategies(environmentId: number): Promise<EnvironmentStrategy[]> {
+  const res = await fetch(`${BACKEND_URL}/api/environments/${environmentId}/strategies`)
+  if (!res.ok) throw new Error(`Backend error: ${res.status}`)
+  return res.json()
+}
+
+export async function fetchEnvironmentRules(environmentId: number): Promise<EnvironmentRule[]> {
+  const res = await fetch(`${BACKEND_URL}/api/environments/${environmentId}/rules`)
+  if (!res.ok) throw new Error(`Backend error: ${res.status}`)
+  return res.json()
+}
+
+export async function createEnvironmentRule(environmentId: number, input: Omit<EnvironmentRule, 'id'>): Promise<void> {
+  const res = await fetch(`${BACKEND_URL}/api/environments/${environmentId}/rules`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ type: input.type, value: String(input.value) }),
+  })
+  if (!res.ok) {
+    let detail = `Backend error: ${res.status}`
+    try { const data = await res.json(); if (data?.error) detail = data.error } catch { /* keep status */ }
+    throw new Error(detail)
+  }
+}
+
+export async function updateEnvironmentRule(environmentId: number, input: Omit<EnvironmentRule, 'id'>): Promise<void> {
+  const res = await fetch(`${BACKEND_URL}/api/environments/${environmentId}/rules`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ type: input.type, value: String(input.value) }),
+  })
+  if (!res.ok) {
+    let detail = `Backend error: ${res.status}`
+    try { const data = await res.json(); if (data?.error) detail = data.error } catch { /* keep status */ }
+    throw new Error(detail)
+  }
+}
+
+export async function deleteEnvironmentRule(environmentId: number, type: string): Promise<void> {
+  const res = await fetch(`${BACKEND_URL}/api/environments/${environmentId}/rules`, {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ type }),
+  })
+  if (!res.ok) {
+    let detail = `Backend error: ${res.status}`
+    try { const data = await res.json(); if (data?.error) detail = data.error } catch { /* keep status */ }
+    throw new Error(detail)
+  }
+}
+
+export async function createEnvironment(input: CreateEnvironmentInput): Promise<number> {
+  const res = await fetch(`${BACKEND_URL}/api/environments`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    // The backend uses its small shared string-field parser, so send the
+    // boolean and numeric form values as strings.
+    body: JSON.stringify({ ...input, isMt5: input.isMt5 ? 'true' : 'false' }),
+  })
+  if (!res.ok) {
+    let detail = `Backend error: ${res.status}`
+    try {
+      const data = await res.json()
+      if (data?.error) detail = data.error
+    } catch { /* keep the status message */ }
+    throw new Error(detail)
+  }
+  return (await res.json()).id as number
 }
 
 const MC_MAGIC = 0x4D435054
@@ -109,6 +232,7 @@ export async function fetchMonteCarloData(id: number): Promise<MonteCarloData> {
 // resampling — all live, no DB round-trip.
 
 export interface RunParams {
+  environmentId: string
   strategy: string
   symbol: string
   initialBalance: string
@@ -121,8 +245,6 @@ export interface RunParams {
   volMinDays?: string
   fromDate: string
   toDate: string
-  spread: string
-  slippage: string
 }
 
 // The report half of /api/run mirrors the saved-backtest shape, minus the DB-only
@@ -227,7 +349,7 @@ export async function runBacktest(params: RunParams): Promise<RunResult> {
     let detail = `Backend error: ${res.status}`
     try {
       const j = await res.json()
-      if (j?.error) detail = j.error
+      if (j?.detail || j?.error) detail = j.detail || j.error
     } catch { /* keep default */ }
     throw new Error(detail)
   }
@@ -254,7 +376,7 @@ export async function saveRun(params: RunParams): Promise<number> {
     let detail = `Backend error: ${res.status}`
     try {
       const j = await res.json()
-      if (j?.error) detail = j.error
+      if (j?.detail || j?.error) detail = j.detail || j.error
     } catch { /* keep default */ }
     throw new Error(detail)
   }
@@ -263,6 +385,7 @@ export async function saveRun(params: RunParams): Promise<number> {
 }
 
 export interface CombineParams {
+  environmentId: string
   ids: number[]
   initialBalance: string
   fromDate: string
@@ -327,6 +450,7 @@ export interface TuneResult {
 }
 
 export interface TuneParams {
+  environmentId: string
   strategy: string
   symbol: string
   initialBalance: string
@@ -339,8 +463,6 @@ export interface TuneParams {
   volMinDays?: string
   fromDate: string
   toDate: string
-  spread: string
-  slippage: string
 }
 
 export async function runTune(params: TuneParams): Promise<TuneResult> {
@@ -573,7 +695,11 @@ export async function setAccountStrategyActive(
 
 // Known strategy names that can be attached to an account. Mirrors the Zig
 // registry (StrategyTag in web/backend/src/march/api.zig).
-export const KNOWN_MARCH_STRATEGIES = ['rth_vwap', 'orb_buy', 'min_loop'] as const
+export const KNOWN_MARCH_STRATEGIES = ['night_drift', 'min_loop'] as const
+
+export function displayStrategyName(strategy: string): string {
+  return strategy === 'night_drift' ? 'Night Drift' : strategy
+}
 
 export interface LiveTrade {
   id: number
@@ -595,4 +721,3 @@ export async function fetchLiveTradeHistory(): Promise<LiveTrade[]> {
   if (!res.ok) throw new Error(`March API error: ${res.status}`)
   return res.json()
 }
-

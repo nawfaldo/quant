@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import {
   fetchActivePositions,
   fetchLiveTradeHistory,
+  displayStrategyName,
   type LiveTrade,
 } from "../api";
 
@@ -378,9 +379,9 @@ export default function ActivePositionsTable() {
                               <td className="py-3.5 px-3 font-mono text-xs text-gray-300 truncate">
                                 <span
                                   className="font-semibold text-gray-200 block truncate"
-                                  title={t.strategy_name}
+                                  title={displayStrategyName(t.strategy_name)}
                                 >
-                                  {t.strategy_name}
+                                  {displayStrategyName(t.strategy_name)}
                                 </span>
                               </td>
 

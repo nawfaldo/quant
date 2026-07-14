@@ -1,5 +1,9 @@
 @import "tailwindcss";
 
+:root {
+  color-scheme: dark;
+}
+
 #tv-attr-logo { display: none !important; }
 
 .no-scrollbar::-webkit-scrollbar {
@@ -8,4 +12,448 @@
 .no-scrollbar {
   -ms-overflow-style: none;
   scrollbar-width: none;
+}
+
+/* Dark, translucent segmented controls for the Test result views. */
+.liquid-glass-tabs {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 4px;
+  border: 1px solid rgb(255 255 255 / 18%);
+  border-radius: 9999px;
+  background:
+    linear-gradient(135deg, rgb(71 85 105 / 30%), rgb(15 23 42 / 24%)),
+    rgb(2 6 23 / 28%);
+  box-shadow:
+    0 10px 28px rgb(0 0 0 / 30%),
+    0 2px 7px rgb(0 0 0 / 20%),
+    inset 0 1px 0 rgb(255 255 255 / 20%),
+    inset 0 -1px 0 rgb(0 0 0 / 30%);
+  -webkit-backdrop-filter: blur(24px) saturate(170%);
+  backdrop-filter: blur(24px) saturate(170%);
+}
+
+.liquid-glass-tab {
+  position: relative;
+  z-index: 1;
+  min-height: 30px;
+  padding: 0 12px;
+  border: 1px solid transparent;
+  border-radius: 9999px;
+  color: rgb(203 213 225);
+  font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: -0.01em;
+  cursor: pointer;
+  user-select: none;
+  transition: color 160ms ease, background-color 160ms ease, border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+}
+
+.liquid-glass-tab-label {
+  display: block;
+}
+
+.liquid-glass-tab-active {
+  color: rgb(255 255 255);
+}
+
+.liquid-glass-tabs-animated .liquid-glass-tab-active .liquid-glass-tab-label {
+  animation: liquid-glass-label-in 460ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.liquid-glass-tab:hover {
+  color: rgb(255 255 255);
+}
+
+.liquid-glass-tab:focus-visible {
+  outline: 2px solid rgb(59 130 246 / 70%);
+  outline-offset: 2px;
+}
+
+.liquid-glass-tab:active {
+  transform: scale(0.97);
+}
+
+.liquid-glass-tabs-indicator {
+  position: absolute;
+  z-index: 0;
+  top: 4px;
+  bottom: 4px;
+  left: 0;
+  opacity: 0;
+  pointer-events: none;
+  will-change: transform, width;
+}
+
+.liquid-glass-tabs-animated .liquid-glass-tabs-indicator {
+  transition: transform 380ms cubic-bezier(0.22, 0.8, 0.2, 1), width 380ms cubic-bezier(0.22, 0.8, 0.2, 1), opacity 120ms ease;
+}
+
+.liquid-glass-tabs-indicator-surface {
+  position: absolute;
+  inset: 0;
+  border-color: rgb(255 255 255 / 22%);
+  border: 1px solid rgb(255 255 255 / 22%);
+  border-radius: 9999px;
+  background: linear-gradient(145deg, rgb(100 116 139 / 38%), rgb(30 41 59 / 36%));
+  box-shadow:
+    0 3px 9px rgb(0 0 0 / 32%),
+    inset 0 1px 0 rgb(255 255 255 / 20%);
+}
+
+.liquid-glass-tabs-animated .liquid-glass-tabs-indicator-surface {
+  animation: liquid-glass-selection-pop 520ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.liquid-glass-tabs-indicator-ready {
+  opacity: 1;
+}
+
+.liquid-glass-tabs-blue-active .liquid-glass-tabs-indicator-surface {
+  border-color: rgb(147 197 253 / 58%);
+  background: linear-gradient(145deg, rgb(59 130 246 / 62%), rgb(29 78 216 / 52%));
+  box-shadow:
+    0 4px 12px rgb(37 99 235 / 38%),
+    inset 0 1px 0 rgb(255 255 255 / 30%);
+}
+
+@keyframes liquid-glass-selection-pop {
+  0% {
+    opacity: 0.68;
+    scale: 0.9;
+    filter: brightness(0.84) saturate(0.9);
+  }
+  48% {
+    opacity: 1;
+    scale: 1.12;
+    filter: brightness(1.18) saturate(1.14);
+  }
+  100% {
+    opacity: 1;
+    scale: 1;
+    filter: brightness(1) saturate(1);
+  }
+}
+
+@keyframes liquid-glass-label-in {
+  0% {
+    opacity: 0.48;
+    transform: translateY(3px) scale(0.88);
+    filter: blur(2px);
+  }
+  58% {
+    opacity: 1;
+    transform: translateY(-1px) scale(1.055);
+    filter: blur(0);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    filter: blur(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .liquid-glass-tabs-indicator,
+  .liquid-glass-tab-label {
+    transition-duration: 0ms;
+    animation-duration: 0ms;
+  }
+}
+
+.liquid-glass-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgb(255 255 255 / 18%);
+  border-radius: 0.75rem;
+  background:
+    linear-gradient(135deg, rgb(71 85 105 / 30%), rgb(15 23 42 / 24%)),
+    rgb(2 6 23 / 28%);
+  box-shadow:
+    0 10px 28px rgb(0 0 0 / 30%),
+    0 2px 7px rgb(0 0 0 / 20%),
+    inset 0 1px 0 rgb(255 255 255 / 20%),
+    inset 0 -1px 0 rgb(0 0 0 / 30%);
+  -webkit-backdrop-filter: blur(24px) saturate(170%);
+  backdrop-filter: blur(24px) saturate(170%);
+  color: rgb(156 163 175);
+  transition: all 160ms cubic-bezier(0.16, 1, 0.3, 1);
+  cursor: pointer;
+}
+
+.liquid-glass-btn:hover {
+  color: rgb(255 255 255);
+  border-color: rgb(255 255 255 / 30%);
+  background:
+    linear-gradient(135deg, rgb(85 100 120 / 35%), rgb(20 30 52 / 30%)),
+    rgb(2 6 23 / 34%);
+  box-shadow:
+    0 12px 32px rgb(0 0 0 / 35%),
+    0 3px 9px rgb(0 0 0 / 25%),
+    inset 0 1px 0 rgb(255 255 255 / 25%),
+    inset 0 -1px 0 rgb(0 0 0 / 25%);
+  transform: scale(1.05);
+}
+
+.liquid-glass-btn-no-grow:hover {
+  transform: none;
+}
+
+.liquid-glass-btn-rounded-lg {
+  border-radius: 0.5rem;
+}
+
+.liquid-glass-btn:active {
+  transform: scale(0.95);
+}
+
+.liquid-glass-btn:disabled {
+  opacity: 0.55;
+}
+
+.liquid-glass-btn:disabled:hover,
+.liquid-glass-btn:disabled:active {
+  color: rgb(156 163 175);
+  border-color: rgb(255 255 255 / 18%);
+  background:
+    linear-gradient(135deg, rgb(71 85 105 / 30%), rgb(15 23 42 / 24%)),
+    rgb(2 6 23 / 28%);
+  box-shadow:
+    0 10px 28px rgb(0 0 0 / 30%),
+    0 2px 7px rgb(0 0 0 / 20%),
+    inset 0 1px 0 rgb(255 255 255 / 20%),
+    inset 0 -1px 0 rgb(0 0 0 / 30%);
+  transform: none;
+}
+
+.liquid-glass-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgb(255 255 255 / 18%);
+  border-radius: 0.75rem;
+  background:
+    linear-gradient(135deg, rgb(71 85 105 / 30%), rgb(15 23 42 / 24%)),
+    rgb(2 6 23 / 28%);
+  box-shadow:
+    0 10px 28px rgb(0 0 0 / 30%),
+    0 2px 7px rgb(0 0 0 / 20%),
+    inset 0 1px 0 rgb(255 255 255 / 20%),
+    inset 0 -1px 0 rgb(0 0 0 / 30%);
+  -webkit-backdrop-filter: blur(24px) saturate(170%);
+  backdrop-filter: blur(24px) saturate(170%);
+  color: rgb(229 231 235);
+}
+
+.liquid-glass-breadcrumb-indicator {
+  position: absolute;
+  z-index: 0;
+  top: 2px;
+  bottom: 2px;
+  left: 0;
+  pointer-events: none;
+  transition: transform 380ms cubic-bezier(0.22, 0.8, 0.2, 1), width 380ms cubic-bezier(0.22, 0.8, 0.2, 1);
+}
+
+.liquid-glass-breadcrumb-indicator-surface {
+  position: absolute;
+  inset: 0;
+  border: 1px solid rgb(255 255 255 / 18%);
+  border-radius: 0.75rem;
+  background:
+    linear-gradient(145deg, rgb(100 116 139 / 38%), rgb(30 41 59 / 36%));
+  box-shadow:
+    0 3px 9px rgb(0 0 0 / 32%),
+    inset 0 1px 0 rgb(255 255 255 / 20%);
+  animation: liquid-glass-selection-pop 520ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.liquid-glass-breadcrumb-label-active {
+  display: block;
+  animation: liquid-glass-label-in 460ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.liquid-glass-dropdown {
+  border: 1px solid rgb(255 255 255 / 18%);
+  background:
+    linear-gradient(135deg, rgb(71 85 105 / 30%), rgb(15 23 42 / 24%)),
+    rgb(2 6 23 / 28%);
+  box-shadow:
+    0 10px 28px rgb(0 0 0 / 30%),
+    0 2px 7px rgb(0 0 0 / 20%),
+    inset 0 1px 0 rgb(255 255 255 / 20%),
+    inset 0 -1px 0 rgb(0 0 0 / 30%);
+  -webkit-backdrop-filter: blur(24px) saturate(170%);
+  backdrop-filter: blur(24px) saturate(170%);
+}
+
+.liquid-glass-dropdown-arrow {
+  border-left: 1px solid rgb(255 255 255 / 18%);
+  border-bottom: 1px solid rgb(255 255 255 / 18%);
+  background: rgb(24 33 53 / 70%);
+  -webkit-backdrop-filter: blur(24px) saturate(170%);
+  backdrop-filter: blur(24px) saturate(170%);
+}
+
+/* The March layout picker sits over the chart, so it uses a lighter tint than
+   the standard dropdown surface to keep the chart visible through the glass. */
+.march-panel-layout-popup {
+  background:
+    linear-gradient(135deg, rgb(100 116 139 / 14%), rgb(15 23 42 / 12%)),
+    rgb(2 6 23 / 14%);
+}
+
+.march-panel-layout-popup-arrow {
+  border-right: 1px solid rgb(255 255 255 / 18%);
+  border-bottom: 1px solid rgb(255 255 255 / 18%);
+  background:
+    linear-gradient(135deg, rgb(100 116 139 / 14%), rgb(15 23 42 / 12%)),
+    rgb(2 6 23 / 14%);
+  -webkit-backdrop-filter: blur(24px) saturate(170%);
+  backdrop-filter: blur(24px) saturate(170%);
+}
+
+/* March chart header controls use the same refractive, layered surface as the
+   liquid tabs while retaining native select and text-input behavior. */
+.march-liquid-select,
+.march-liquid-date {
+  position: relative;
+  border: 1px solid rgb(148 163 184 / 20%);
+  background:
+    linear-gradient(135deg, rgb(71 85 105 / 32%), rgb(15 23 42 / 24%)),
+    rgb(2 6 23 / 36%);
+  box-shadow:
+    0 10px 28px rgb(0 0 0 / 30%),
+    0 2px 7px rgb(0 0 0 / 20%),
+    inset 0 1px 0 rgb(255 255 255 / 19%),
+    inset 0 -1px 0 rgb(0 0 0 / 32%);
+  -webkit-backdrop-filter: blur(24px) saturate(170%);
+  backdrop-filter: blur(24px) saturate(170%);
+  transition: border-color 160ms ease, box-shadow 160ms ease, background-color 160ms ease;
+}
+
+.march-liquid-select {
+  height: 32px;
+  border-radius: 0.75rem;
+}
+
+.march-liquid-select:focus-within {
+  border-color: rgb(191 219 254 / 44%);
+  box-shadow:
+    0 10px 28px rgb(0 0 0 / 30%),
+    0 0 0 3px rgb(59 130 246 / 13%),
+    inset 0 1px 0 rgb(255 255 255 / 24%),
+    inset 0 -1px 0 rgb(0 0 0 / 28%);
+}
+
+.march-liquid-date:focus-within {
+  border-color: rgb(191 219 254 / 44%);
+  box-shadow:
+    0 10px 28px rgb(0 0 0 / 30%),
+    0 0 0 3px rgb(59 130 246 / 13%),
+    inset 0 1px 0 rgb(255 255 255 / 24%),
+    inset 0 -1px 0 rgb(0 0 0 / 28%);
+}
+
+.march-liquid-select:hover {
+  border-color: rgb(226 232 240 / 30%);
+  background:
+    linear-gradient(135deg, rgb(85 100 120 / 37%), rgb(20 30 52 / 30%)),
+    rgb(2 6 23 / 40%);
+}
+
+.march-liquid-date:hover {
+  border-color: rgb(226 232 240 / 30%);
+  background:
+    linear-gradient(135deg, rgb(85 100 120 / 37%), rgb(20 30 52 / 30%)),
+    rgb(2 6 23 / 40%);
+}
+
+.march-liquid-select-input {
+  width: auto;
+  field-sizing: content;
+  height: 100%;
+  padding: 0 0.85rem;
+  appearance: none;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: rgb(226 232 240);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.march-liquid-select-input option {
+  background: rgb(15 23 42);
+  color: rgb(226 232 240);
+}
+
+.march-liquid-date {
+  display: flex;
+  align-items: center;
+  min-height: 32px;
+  padding: 3px 0.85rem;
+  border-radius: 0.75rem;
+}
+
+.march-liquid-date-range {
+  display: inline-flex;
+  align-items: center;
+  height: 32px;
+  isolation: isolate;
+}
+
+.march-liquid-date-from-group {
+  display: inline-flex;
+  align-items: center;
+  height: 32px;
+}
+
+.march-liquid-date-from {
+  z-index: 1;
+}
+
+.march-liquid-date-to {
+  z-index: 1;
+}
+
+.march-liquid-date input {
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  font-size: 0.8125rem;
+  line-height: 1;
+}
+
+.march-liquid-date-separator {
+  position: relative;
+  z-index: 2;
+  display: block;
+  width: 10px;
+  height: 10px;
+  flex: 0 0 10px;
+  margin: 0 0 0 -1px;
+  clip-path: polygon(0 0, 100% 50%, 0 100%);
+  background: rgb(255 255 255 / 26%);
+  -webkit-backdrop-filter: blur(24px) saturate(170%);
+  backdrop-filter: blur(24px) saturate(170%);
+  user-select: none;
+}
+
+.march-liquid-date-separator::after {
+  content: "";
+  position: absolute;
+  inset: 1px 2px 1px 1px;
+  clip-path: polygon(0 0, 100% 50%, 0 100%);
+  background:
+    linear-gradient(135deg, rgb(71 85 105 / 42%), rgb(15 23 42 / 34%)),
+    rgb(24 33 53 / 72%);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 18%);
 }

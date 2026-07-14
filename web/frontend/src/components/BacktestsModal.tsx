@@ -11,9 +11,10 @@ interface Props {
   loadingIds: Set<number>
   onToggle: (id: number) => void
   activeSymbol: string
+  environmentId: number | null
 }
 
-export default function BacktestsModal({ open, onClose, visibleIds, loadingIds, onToggle, activeSymbol }: Props) {
+export default function BacktestsModal({ open, onClose, visibleIds, loadingIds, onToggle, activeSymbol, environmentId }: Props) {
   const { data: backtests, isLoading, isError } = useQuery({
     queryKey: ['backtests'],
     queryFn: fetchBacktests,
@@ -29,6 +30,12 @@ export default function BacktestsModal({ open, onClose, visibleIds, loadingIds, 
   }, [open, onClose])
 
   if (!open) return null
+
+  const filteredBacktests = backtests?.filter(
+    (backtest) =>
+      backtest.environment_id === environmentId &&
+      backtest.symbol.toLowerCase() === activeSymbol.toLowerCase(),
+  )
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -46,7 +53,13 @@ export default function BacktestsModal({ open, onClose, visibleIds, loadingIds, 
         <div className="overflow-y-auto px-3 pb-3 space-y-1 mt-3">
           {isLoading && <div className="text-xs text-gray-600 text-center py-6">Loading…</div>}
           {isError && <div className="text-xs text-red-400 text-center py-6">Failed to load backtests</div>}
-          {backtests?.filter(b => b.symbol.toLowerCase() === activeSymbol.toLowerCase()).map(b => (
+          {!isLoading && !isError && environmentId === null && (
+            <div className="text-xs text-gray-600 text-center py-6">Select an environment first</div>
+          )}
+          {!isLoading && !isError && environmentId !== null && filteredBacktests?.length === 0 && (
+            <div className="text-xs text-gray-600 text-center py-6">No backtests for this environment and symbol</div>
+          )}
+          {filteredBacktests?.map(b => (
             <BacktestRow
               key={b.id}
               backtest={b}

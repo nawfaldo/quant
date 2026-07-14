@@ -58,6 +58,7 @@ fn statusText(code: u16) []const u8 {
     return switch (code) {
         200 => "200 OK",
         400 => "400 Bad Request",
+        409 => "409 Conflict",
         404 => "404 Not Found",
         405 => "405 Method Not Allowed",
         500 => "500 Internal Server Error",

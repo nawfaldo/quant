@@ -1,15 +1,18 @@
 import { useState, useMemo, useEffect, useRef } from "react";
-import EquityChart from "./EquityChart";
-import MonteCarloChart from "./MonteCarloChart";
-import Splicing from "./Splicing";
+import EquityChart from "../components/EquityChart";
+import MonteCarloChart from "../components/MonteCarloChart";
+import Splicing from "../components/Splicing";
+import LiquidGlassTabs from "../components/LiquidGlassTabs";
+import Volatility from "../components/Volatility";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { runBacktest, saveRun, combineBacktests, saveCombine, fetchBacktests, runTune, fetchTuneStatus, type RunParams, type TuneResult } from "../api";
+import { runBacktest, saveRun, combineBacktests, saveCombine, fetchBacktests, fetchEnvironments, fetchEnvironmentStrategies, runTune, fetchTuneStatus, type RunParams, type TuneResult } from "../api";
 import { useApp } from "../context/AppContext";
 
 interface TestTab {
   id: string;
   title: string;
   selectedCommand: string;
+  selectedEnvironmentId: string;
   selectedStrategy: string;
   selectedSymbol: string;
   initialBalance: string;
@@ -22,11 +25,9 @@ interface TestTab {
   volHalflife: string;
   volMaxMult: string;
   volMinDays: string;
-  spread: string;
-  slippage: string;
   hasResult: boolean;
   isSaved: boolean;
-  activeTab: "analysis" | "equity" | "splicing" | "monte-carlo";
+  activeTab: "analysis" | "equity" | "splicing" | "volatility" | "monte-carlo";
   combineBacktestIds: string[];
 }
 
@@ -47,6 +48,10 @@ function fmtDate(ts: string) {
   return ts ? ts.split(" ")[0] : "";
 }
 
+function questionLabel(label: string, filled: boolean) {
+  return filled ? label : `${label}?`;
+}
+
 function Section({
   title,
   children,
@@ -59,7 +64,7 @@ function Section({
       <h3 className="text-[10px] font-semibold tracking-widest uppercase text-gray-500 mb-2 select-none">
         {title}
       </h3>
-      <div className="bg-gray-900/40 rounded-lg border border-gray-800/50 px-4 py-1">
+      <div className="bg-[#1A1A1E] border border-[#212124] px-4 py-1">
         {children}
       </div>
     </div>
@@ -86,7 +91,18 @@ function StatRow({
 }
 
 export default function TestPage() {
-  const { testResults: results, setTestResults: setResults, testErrors: errors, setTestErrors: setErrors, tuneResults, setTuneResults } = useApp()
+  const {
+    testResults: results,
+    setTestResults: setResults,
+    testErrors: errors,
+    setTestErrors: setErrors,
+    tuneResults,
+    setTuneResults,
+    testLoading,
+    setTestLoading,
+    testTuneProgress,
+    setTestTuneProgress,
+  } = useApp()
 
   const [tabs, setTabs] = useState<TestTab[]>(() => {
     const saved = sessionStorage.getItem("test_page_tabs");
@@ -107,7 +123,13 @@ export default function TestPage() {
             if (migrated.leverage === undefined) {
               migrated.leverage = "";
             }
+            if (migrated.selectedEnvironmentId === undefined) {
+              migrated.selectedEnvironmentId = "";
+            }
+            delete migrated.instrument;
             delete migrated.mimMode;
+            delete migrated.spread;
+            delete migrated.slippage;
             if (migrated.combineBacktestIds === undefined) {
               migrated.combineBacktestIds = [
                 migrated.combineFirstBacktestId || "",
@@ -128,6 +150,7 @@ export default function TestPage() {
         id: "tab-1",
         title: "Backtest 1",
         selectedCommand: "",
+        selectedEnvironmentId: "",
         selectedStrategy: "",
         selectedSymbol: "",
         initialBalance: "",
@@ -140,8 +163,6 @@ export default function TestPage() {
         volHalflife: "",
         volMaxMult: "",
         volMinDays: "",
-        spread: "",
-        slippage: "",
         hasResult: false,
         isSaved: false,
         activeTab: "analysis",
@@ -155,8 +176,6 @@ export default function TestPage() {
     return saved || "tab-1";
   });
 
-  const [isLoading, setIsLoading] = useState(false);
-  const [tuneProgress, setTuneProgress] = useState<{ progress: number, total: number } | null>(null);
   // Which execution view the result panel shows: native (nq fills) or the
   // fx-re-priced book (signals from nq bars, fills from fx_nq_ticks).
   const [execView, setExecView] = useState<"native" | "fx">("native");
@@ -168,6 +187,12 @@ export default function TestPage() {
   const { data: backtests } = useQuery({
     queryKey: ["backtests"],
     queryFn: fetchBacktests,
+    staleTime: Infinity,
+  });
+
+  const { data: environments = [], isLoading: isEnvironmentsLoading } = useQuery({
+    queryKey: ["environments"],
+    queryFn: fetchEnvironments,
     staleTime: Infinity,
   });
 
@@ -186,6 +211,7 @@ export default function TestPage() {
 
   const {
     selectedCommand,
+    selectedEnvironmentId,
     selectedStrategy,
     selectedSymbol,
     initialBalance,
@@ -198,49 +224,58 @@ export default function TestPage() {
     volHalflife,
     volMaxMult,
     volMinDays,
-    spread,
-    slippage,
-    hasResult,
+    hasResult: savedHasResult,
     isSaved,
     activeTab,
     combineBacktestIds,
   } = activeTabObj;
 
   const commands = ["Run", "Tune", "Combine"];
-  const strategies = ["RTH VWAP", "Zara Momentum"];
-  const symbols = ["NQ", "GBPUSD", "EURUSD"];
-  const sizingOptions = ["None", "Vol Target"];
+  // Internally sized strategies can't use the generic position-sizing tuner.
+  const symbols = ["NQ", "ES"];
+  const selectedEnvironment = environments.find(
+    (environment) => String(environment.id) === selectedEnvironmentId,
+  );
+  // Paper-sized strategies don't expose Base Lot / Leverage steps. The
+  // generic Sizing step (None / Vol Target) has been removed from the
+  // wizard entirely — sizing always defaults to "" (backend treats that as
+  // .none, see backend/src/bt/run.zig).
 
   const isCommandFilled = selectedCommand !== "";
   const isRunOrTune = selectedCommand === "Run" || selectedCommand === "Tune";
-  const showStrategy = isRunOrTune;
+  const isEnvironmentFilled = selectedEnvironment !== undefined;
+  const { data: environmentStrategies = [], isLoading: isStrategiesLoading } = useQuery({
+    queryKey: ["environment-strategies", selectedEnvironmentId],
+    queryFn: () => fetchEnvironmentStrategies(Number(selectedEnvironmentId)),
+    enabled: isEnvironmentFilled,
+    staleTime: Infinity,
+  });
+  const strategies = selectedCommand === "Tune"
+    ? environmentStrategies.filter((strategy) => strategy.id === "night_drift")
+    : environmentStrategies;
+  // Internally sized strategies own their lot/leverage calculation.
+  const isNightDrift = selectedStrategy === "Night Drift";
+  const isPaperSized =
+    isNightDrift ||
+    selectedStrategy.startsWith("Noise Momentum");
+  const showEnvironment = isCommandFilled;
+  const showStrategy = isRunOrTune && isEnvironmentFilled;
   const showSymbol = showStrategy && selectedStrategy !== "";
   const showBalanceAndLot = showSymbol && selectedSymbol !== "";
-  const showSizing = showBalanceAndLot && initialBalance.trim() !== "" && baseLot.trim() !== "";
-
-  // Sizing branches:
-  const showVolParams = showSizing && sizing === "Vol Target";
-  const allVolParamsSet =
-    showVolParams &&
-    volTarget.trim() !== "" &&
-    volHalflife.trim() !== "" &&
-    volMaxMult.trim() !== "" &&
-    volMinDays.trim() !== "";
 
   const showDate =
-    (showSizing && sizing === "None") ||
-    (showVolParams && allVolParamsSet);
+    showBalanceAndLot &&
+    initialBalance.trim() !== "" &&
+    (isPaperSized || baseLot.trim() !== "");
 
-  const showSpreadAndSlippage = showDate && fromDate.trim() !== "" && toDate.trim() !== "";
+  const showActions = showDate && fromDate.trim() !== "" && toDate.trim() !== "";
 
   // Circles dynamic fill state
-  const isStrategyFilled = selectedStrategy !== "";
+  const isStrategyFilled = strategies.some((strategy) => strategy.name === selectedStrategy);
   const isSymbolFilled = selectedSymbol !== "";
-  const isBalanceAndLotFilled = initialBalance.trim() !== "" && baseLot.trim() !== "";
-  const isSizingFilled = sizing !== "";
-  const isVolParamsFilled = allVolParamsSet;
+  const isBalanceAndLotFilled =
+    initialBalance.trim() !== "" && (isPaperSized || baseLot.trim() !== "");
   const isDateFilled = fromDate.trim() !== "" && toDate.trim() !== "";
-  const isSpreadAndSlippageFilled = spread.trim() !== "" && slippage.trim() !== "";
 
   const getTabTitle = (strategy: string, symbol: string, fallback: string) => {
     if (strategy && symbol) return `${strategy} (${symbol})`;
@@ -260,6 +295,7 @@ export default function TestPage() {
       id: nextId,
       title: `Backtest ${tabs.length + 1}`,
       selectedCommand: "",
+      selectedEnvironmentId: "",
       selectedStrategy: "",
       selectedSymbol: "",
       initialBalance: "",
@@ -272,8 +308,6 @@ export default function TestPage() {
       volHalflife: "",
       volMaxMult: "",
       volMinDays: "",
-      spread: "",
-      slippage: "",
       hasResult: false,
       isSaved: false,
       activeTab: "analysis",
@@ -346,9 +380,38 @@ export default function TestPage() {
   const activeResult = results[activeTabId] ?? null;
   const activeError = errors[activeTabId] ?? null;
   const activeTuneResult: TuneResult | null = tuneResults[activeTabId] ?? null;
+  // A result may finish after the Test route was unmounted. Its tab metadata is
+  // persisted locally, but the result itself lives in AppContext, so derive the
+  // visible state from both sources.
+  const hasStoredResult = activeResult !== null || activeTuneResult !== null;
+  const hasResult = savedHasResult || hasStoredResult;
+  const isLoading = testLoading[activeTabId] ?? false;
+  const tuneProgress = testTuneProgress[activeTabId] ?? null;
+
+  const setTabLoading = (tabId: string, loading: boolean) => {
+    setTestLoading((prev) => {
+      if (loading) return { ...prev, [tabId]: true };
+      const next = { ...prev };
+      delete next[tabId];
+      return next;
+    });
+  };
+
+  const setTabTuneProgress = (
+    tabId: string,
+    progress: { progress: number; total: number } | null,
+  ) => {
+    setTestTuneProgress((prev) => {
+      if (progress) return { ...prev, [tabId]: progress };
+      const next = { ...prev };
+      delete next[tabId];
+      return next;
+    });
+  };
 
   // The current tab's wizard inputs as a backtest run request.
   const buildRunParams = (): RunParams => ({
+    environmentId: selectedEnvironmentId,
     strategy: selectedCommand === "Run" ? selectedStrategy : selectedCommand,
     symbol: selectedSymbol,
     initialBalance,
@@ -361,13 +424,6 @@ export default function TestPage() {
     volMinDays,
     fromDate,
     toDate,
-    // Cost fields are trimmed, and an empty value is sent as an explicit "0"
-    // rather than "". The backend treats a missing/blank spread or slippage as
-    // its built-in default (spread = 4.0 pt), which silently and drastically
-    // changes results — a winning run can flip to a big loss with no indication.
-    // Coercing here guarantees the UI always runs with the cost the user sees.
-    spread: spread.trim() || "0",
-    slippage: slippage.trim() || "0",
   });
 
   const handleSeeResult = async () => {
@@ -389,11 +445,12 @@ export default function TestPage() {
       delete next[tabId];
       return next;
     });
-    setIsLoading(true);
+    setTabLoading(tabId, true);
 
     if (selectedCommand === "Combine") {
       try {
         const result = await combineBacktests({
+          environmentId: selectedEnvironmentId,
           ids: combineBacktestIds.map(Number),
           initialBalance,
           fromDate,
@@ -409,7 +466,7 @@ export default function TestPage() {
           [tabId]: e instanceof Error ? e.message : "Combine failed",
         }));
       } finally {
-        setIsLoading(false);
+        setTabLoading(tabId, false);
       }
       return;
     }
@@ -429,12 +486,13 @@ export default function TestPage() {
       const volMinDaysN = hasVol ? parseListLen(volMinDays, 1) : 1;
       const estimatedTotal = baseLotsN * leveragesN * volTargetsN * volHalflifesN * volMaxMultsN * volMinDaysN;
 
-      setTuneProgress({ progress: 0, total: estimatedTotal });
+      setTabTuneProgress(tabId, { progress: 0, total: estimatedTotal });
 
       let progressInterval: any;
 
       try {
         await runTune({
+          environmentId: selectedEnvironmentId,
           strategy: selectedStrategy,
           symbol: selectedSymbol,
           initialBalance,
@@ -447,10 +505,6 @@ export default function TestPage() {
           volMinDays,
           fromDate,
           toDate,
-          // Same cost coercion as buildRunParams: never let a blank spread fall
-          // back to the backend's 4.0 default (see buildRunParams comment).
-          spread: spread.trim() || "0",
-          slippage: slippage.trim() || "0",
         });
 
         progressInterval = setInterval(async () => {
@@ -462,18 +516,18 @@ export default function TestPage() {
               setTabs((prev) =>
                 prev.map((t) => (t.id === tabId ? { ...t, hasResult: true } : t))
               );
-              setIsLoading(false);
-              setTuneProgress(null);
+              setTabLoading(tabId, false);
+              setTabTuneProgress(tabId, null);
             } else if (status.status === "failed") {
               clearInterval(progressInterval);
               setErrors((prev) => ({
                 ...prev,
                 [tabId]: status.error || "Tune failed",
               }));
-              setIsLoading(false);
-              setTuneProgress(null);
+              setTabLoading(tabId, false);
+              setTabTuneProgress(tabId, null);
             } else {
-              setTuneProgress({
+              setTabTuneProgress(tabId, {
                 progress: status.progress ?? 0,
                 total: status.total ?? estimatedTotal,
               });
@@ -487,8 +541,8 @@ export default function TestPage() {
           ...prev,
           [tabId]: e instanceof Error ? e.message : "Tune failed",
         }));
-        setIsLoading(false);
-        setTuneProgress(null);
+        setTabLoading(tabId, false);
+        setTabTuneProgress(tabId, null);
       }
       return;
     }
@@ -506,7 +560,7 @@ export default function TestPage() {
         [tabId]: e instanceof Error ? e.message : "Run failed",
       }));
     } finally {
-      setIsLoading(false);
+      setTabLoading(tabId, false);
     }
   };
 
@@ -517,6 +571,7 @@ export default function TestPage() {
     if (selectedCommand === "Combine") {
       try {
         await saveCombine({
+          environmentId: selectedEnvironmentId,
           ids: combineBacktestIds.map(Number),
           initialBalance,
           fromDate,
@@ -546,7 +601,7 @@ export default function TestPage() {
       setTabs((prev) =>
         prev.map((t) => (t.id === tabId ? { ...t, isSaved: true } : t))
       );
-      // Refresh the StatsPage backtest list so the new run shows up.
+      // Refresh the DatabasePage backtest list so the new run shows up.
       queryClient.invalidateQueries({ queryKey: ["backtests"] });
     } catch (e) {
       setErrors((prev) => ({
@@ -566,7 +621,7 @@ export default function TestPage() {
     <div className="flex-1 flex flex-col min-h-0 bg-gray-950 text-white">
       
       {/* Chrome Browser-like Tab Selection (Dark Theme & Left Aligned) */}
-      <div className="flex items-end bg-[#161616] pl-0 pr-4 pt-2 border-b border-gray-800/60 flex-wrap gap-0.5 shrink-0 select-none">
+      <div className="flex items-end bg-[#121214] pl-0 pr-4 pt-2 border-b border-[#212124] flex-wrap gap-0.5 shrink-0 select-none">
         {tabs.map((tab, idx) => {
           const isActive = tab.id === activeTabId;
           const tabNumber = idx + 1;
@@ -588,7 +643,7 @@ export default function TestPage() {
               <div
                 className="absolute inset-0 transition-colors duration-150"
                 style={{
-                  backgroundColor: isActive ? "#374151" : "#27272a",
+                  backgroundColor: isActive ? "#212124" : "#27272a",
                   clipPath: "polygon(12px 0%, calc(100% - 12px) 0%, 100% 100%, 0% 100%)",
                 }}
               />
@@ -596,7 +651,7 @@ export default function TestPage() {
               <div
                 className="absolute inset-[1px] bottom-0 transition-colors duration-150"
                 style={{
-                  backgroundColor: isActive ? "#1f2937" : "#0f0f12",
+                  backgroundColor: isActive ? "#1A1A1E" : "#0f0f12",
                   clipPath: "polygon(11px 0%, calc(100% - 11px) 0%, 100% 100%, 0% 100%)",
                 }}
               />
@@ -617,7 +672,7 @@ export default function TestPage() {
                       e.stopPropagation();
                       closeTab(tab.id);
                     }}
-                    className={`absolute right-3.5 w-3.5 h-3.5 rounded-full flex items-center justify-center transition-colors text-[9px] font-bold ${
+                    className={`absolute right-3.5 w-3.5 h-3.5 rounded-full flex items-center justify-center transition-all text-[9px] font-bold opacity-0 group-hover:opacity-100 duration-150 ${
                       isActive 
                         ? "text-gray-400 hover:text-white hover:bg-gray-700/50" 
                         : "text-gray-650 hover:text-white hover:bg-gray-800/50"
@@ -644,30 +699,31 @@ export default function TestPage() {
       <div className="flex-1 flex flex-row min-h-0 bg-gray-900/10">
         
         {/* Left Column: Wizard Config */}
-        <div className="w-[550px] shrink-0 flex flex-col min-h-0">
-          <div className="flex-1 overflow-y-auto no-scrollbar p-8 flex flex-col gap-6">
+        <div className="w-[550px] shrink-0 flex flex-col min-h-0 bg-[#1A1A1E]">
+          <div className="flex-1 overflow-y-auto no-scrollbar pt-8 pr-8 pb-8 pl-[18px] flex flex-col gap-6">
             
             {/* Row 0: Command */}
             <div className="flex gap-4 items-start relative">
               {/* Left Timeline */}
               <div className="relative flex flex-col items-center w-4 shrink-0 self-stretch">
                 <div className={`w-3.5 h-3.5 rounded-full border z-10 absolute top-[31px] transition-colors duration-200 ${
-                  isCommandFilled ? "bg-gray-600 border-gray-500" : "bg-gray-950 border-gray-600"
+                  isCommandFilled ? "bg-gray-600 border-[#3A3A3E]" : "bg-[#28282D] border-[#3A3A3E]"
                 }`} />
-                {(showStrategy || selectedCommand === "Combine") && (
-                  <div className="absolute top-[45px] bottom-[-55px] w-[1px] bg-gray-600 z-0" />
+                {showEnvironment && (
+                  <div className="absolute top-[45px] bottom-[-55px] w-[2px] bg-[#3A3A3E] z-0" />
                 )}
               </div>
               {/* Right Content */}
               <div className="flex flex-col gap-1.5 h-[54px] justify-end">
                 <span className="text-xs font-semibold tracking-wider text-gray-400 uppercase select-none">
-                  Command?
+                  {questionLabel("Command", isCommandFilled)}
                 </span>
                 <select
                   value={selectedCommand}
                   onChange={(e) => {
                     updateActiveTab({
                       selectedCommand: e.target.value,
+                      selectedEnvironmentId: "",
                       selectedStrategy: "",
                       selectedSymbol: "",
                       initialBalance: "",
@@ -680,15 +736,13 @@ export default function TestPage() {
                       volMinDays: "",
                       fromDate: "",
                       toDate: "",
-                      spread: "",
-                      slippage: "",
                       hasResult: false,
                       isSaved: false,
                       title: "Backtest",
                       combineBacktestIds: ["", ""],
                     });
                   }}
-                  className="bg-gray-900 border border-gray-800/80 text-xs font-medium text-gray-200 rounded-lg px-2.5 py-1.5 outline-none cursor-pointer hover:border-gray-700 transition-colors shrink-0 w-48 h-8"
+                  className="bg-[#121214] border border-[#212124] text-xs font-medium text-gray-200 px-2.5 py-1.5 outline-none cursor-pointer hover:border-gray-700 transition-colors shrink-0 w-48 h-8"
                 >
                   <option value="" disabled>Select command...</option>
                   {commands.map((cmd) => (
@@ -700,22 +754,72 @@ export default function TestPage() {
               </div>
             </div>
 
+            {/* Row 1: Environment */}
+            {showEnvironment && (
+              <div className="flex gap-4 items-start relative">
+                <div className="relative flex flex-col items-center w-4 shrink-0 self-stretch">
+                  <div className={`w-3.5 h-3.5 rounded-full border z-10 absolute top-[31px] transition-colors duration-200 ${
+                    isEnvironmentFilled ? "bg-gray-600 border-[#3A3A3E]" : "bg-[#28282D] border-[#3A3A3E]"
+                  }`} />
+                  {isEnvironmentFilled && (
+                    <div className="absolute top-[45px] bottom-[-55px] w-[2px] bg-[#3A3A3E] z-0" />
+                  )}
+                </div>
+                <div className="flex flex-col gap-1.5 h-[54px] justify-end">
+                  <span className="text-xs font-semibold tracking-wider text-gray-400 uppercase select-none">
+                    {questionLabel("Environment", isEnvironmentFilled)}
+                  </span>
+                  <select
+                    value={selectedEnvironmentId}
+                    onChange={(e) => {
+                      updateActiveTab({
+                        selectedEnvironmentId: e.target.value,
+                        selectedStrategy: "",
+                        selectedSymbol: "",
+                        initialBalance: "",
+                        baseLot: "",
+                        leverage: "",
+                        sizing: "",
+                        volTarget: "",
+                        volHalflife: "",
+                        volMaxMult: "",
+                        volMinDays: "",
+                        fromDate: "",
+                        toDate: "",
+                        hasResult: false,
+                        isSaved: false,
+                        title: "Backtest",
+                      });
+                    }}
+                    className="bg-[#121214] border border-[#212124] text-xs font-medium text-gray-200 px-2.5 py-1.5 outline-none cursor-pointer hover:border-gray-700 transition-colors shrink-0 w-48 h-8"
+                  >
+                    <option value="" disabled>{isEnvironmentsLoading ? "Loading environments..." : "Select environment..."}</option>
+                    {environments.map((environment) => (
+                      <option key={environment.id} value={environment.id}>
+                        {environment.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            )}
+
             {/* Row 1 (Alternative for Combine): Initial Balance */}
-            {selectedCommand === "Combine" && (
+            {selectedCommand === "Combine" && isEnvironmentFilled && (
               <div className="flex gap-4 items-start relative">
                 {/* Left Timeline */}
                 <div className="relative flex flex-col items-center w-4 shrink-0 self-stretch">
                   <div className={`w-3.5 h-3.5 rounded-full border z-10 absolute top-[31px] transition-colors duration-200 ${
-                    initialBalance.trim() !== "" ? "bg-gray-600 border-gray-500" : "bg-gray-950 border-gray-600"
+                    initialBalance.trim() !== "" ? "bg-gray-600 border-[#3A3A3E]" : "bg-[#28282D] border-[#3A3A3E]"
                   }`} />
                   {initialBalance.trim() !== "" && (
-                    <div className="absolute top-[45px] bottom-[-55px] w-[1px] bg-gray-600 z-0" />
+                    <div className="absolute top-[45px] bottom-[-55px] w-[2px] bg-[#3A3A3E] z-0" />
                   )}
                 </div>
                 {/* Right Content */}
                 <div className="flex flex-col gap-1.5 h-[54px] justify-end">
                   <span className="text-xs font-semibold tracking-wider text-gray-400 uppercase select-none">
-                    Initial Balance?
+                    {questionLabel("Initial Balance", initialBalance.trim() !== "")}
                   </span>
                   <input
                     type="text"
@@ -726,28 +830,28 @@ export default function TestPage() {
                       });
                     }}
                     placeholder="e.g. 100000"
-                    className="bg-gray-900 border border-gray-800/80 text-xs font-medium text-gray-200 rounded-lg px-2.5 py-1.5 outline-none hover:border-gray-700 focus:border-blue-500/80 transition-colors shrink-0 w-48 h-8 font-mono"
+                    className="bg-[#121214] border border-[#212124] text-xs font-medium text-gray-200 px-2.5 py-1.5 outline-none hover:border-gray-700 transition-colors shrink-0 w-48 h-8 font-mono"
                   />
                 </div>
               </div>
             )}
 
             {/* Row 1.5 (Alternative for Combine): Date Selection */}
-            {selectedCommand === "Combine" && initialBalance.trim() !== "" && (
+            {selectedCommand === "Combine" && isEnvironmentFilled && initialBalance.trim() !== "" && (
               <div className="flex gap-4 items-start relative">
                 {/* Left Timeline */}
                 <div className="relative flex flex-col items-center w-4 shrink-0 self-stretch">
                   <div className={`w-3.5 h-3.5 rounded-full border z-10 absolute top-[31px] transition-colors duration-200 ${
-                    isDateFilled ? "bg-gray-600 border-gray-500" : "bg-gray-950 border-gray-600"
+                    isDateFilled ? "bg-gray-600 border-[#3A3A3E]" : "bg-[#28282D] border-[#3A3A3E]"
                   }`} />
                   {isDateFilled && (
-                    <div className="absolute top-[45px] bottom-[-55px] w-[1px] bg-gray-600 z-0" />
+                    <div className="absolute top-[45px] bottom-[-55px] w-[2px] bg-[#3A3A3E] z-0" />
                   )}
                 </div>
                 {/* Right Content */}
                 <div className="flex flex-col gap-1.5 h-[54px] justify-end">
                   <span className="text-xs font-semibold tracking-wider text-gray-400 uppercase select-none">
-                    Date?
+                    {questionLabel("Date", isDateFilled)}
                   </span>
                   <div className="flex items-center gap-4 relative">
                     <input
@@ -761,7 +865,7 @@ export default function TestPage() {
                         });
                       }}
                       placeholder="From (YYYY-MM-DD)"
-                      className="bg-gray-900 border border-gray-800/80 text-xs font-medium text-gray-200 rounded-lg px-2.5 py-1.5 outline-none hover:border-gray-700 focus:border-blue-500/80 transition-colors w-48 h-8 font-mono"
+                      className="bg-[#121214] border border-[#212124] text-xs font-medium text-gray-200 px-2.5 py-1.5 outline-none hover:border-gray-700 transition-colors w-48 h-8 font-mono"
                     />
                     <span className="absolute left-[192px] w-4 text-center text-gray-600 select-none font-light">
                       -
@@ -777,14 +881,14 @@ export default function TestPage() {
                         });
                       }}
                       placeholder="To (YYYY-MM-DD)"
-                      className="bg-gray-900 border border-gray-800/80 text-xs font-medium text-gray-200 rounded-lg px-2.5 py-1.5 outline-none hover:border-gray-700 focus:border-blue-500/80 transition-colors w-48 h-8 font-mono"
+                      className="bg-[#121214] border border-[#212124] text-xs font-medium text-gray-200 px-2.5 py-1.5 outline-none hover:border-gray-700 transition-colors w-48 h-8 font-mono"
                     />
                   </div>
                 </div>
               </div>
             )}
 
-            {selectedCommand === "Combine" && initialBalance.trim() !== "" && isDateFilled && (
+            {selectedCommand === "Combine" && isEnvironmentFilled && initialBalance.trim() !== "" && isDateFilled && (
               <>
                 {combineBacktestIds.map((btId, index) => {
                   const isLast = index === combineBacktestIds.length - 1;
@@ -800,19 +904,19 @@ export default function TestPage() {
                       {/* Left Timeline */}
                       <div className="relative flex flex-col items-center w-4 shrink-0 self-stretch">
                         <div className={`w-3.5 h-3.5 rounded-full border z-10 absolute top-[31px] transition-colors duration-200 flex items-center justify-center text-[9px] font-bold ${
-                          isFilled ? "bg-gray-600 border-gray-500 text-white" : "bg-gray-950 border-gray-600 text-gray-500"
+                          isFilled ? "bg-gray-600 border-[#3A3A3E] text-white" : "bg-[#28282D] border-[#3A3A3E] text-gray-500"
                         }`}>
                           {!isFirst && isLast && isFilled && "✓"}
                         </div>
                         {/* Draw connector line down if the item is filled and NOT the last strategy */}
                         {isFilled && !isLast && (
-                          <div className="absolute top-[45px] bottom-[-55px] w-[1px] bg-gray-600 z-0" />
+                          <div className="absolute top-[45px] bottom-[-55px] w-[2px] bg-[#3A3A3E] z-0" />
                         )}
                       </div>
                       {/* Right Content */}
                       <div className="flex flex-col gap-1.5 h-[54px] justify-end">
                         <span className="text-xs font-semibold tracking-wider text-gray-400 uppercase select-none">
-                          {index === 0 ? "First Strategy?" : index === 1 ? "Second Strategy?" : `Strategy ${index + 1}?`}
+                          {questionLabel(index === 0 ? "First Strategy" : index === 1 ? "Second Strategy" : `Strategy ${index + 1}`, isFilled)}
                         </span>
                         <div className="flex items-center gap-2">
                           <select
@@ -824,7 +928,7 @@ export default function TestPage() {
                                 combineBacktestIds: newIds,
                               });
                             }}
-                            className="bg-gray-900 border border-gray-800/80 text-xs font-medium text-gray-200 rounded-lg px-2.5 py-1.5 outline-none cursor-pointer hover:border-gray-700 transition-colors shrink-0 w-48 h-8 font-mono"
+                            className="bg-[#121214] border border-[#212124] text-xs font-medium text-gray-200 px-2.5 py-1.5 outline-none cursor-pointer hover:border-gray-700 transition-colors shrink-0 w-48 h-8 font-mono"
                           >
                             <option value="" disabled>Select backtest...</option>
                             {backtests?.map((bt) => (
@@ -880,9 +984,10 @@ export default function TestPage() {
                       {/* Right Content */}
                       <div className="flex items-center gap-4 pl-0">
                         <button
+                          type="button"
                           disabled={isLoading}
                           onClick={handleSeeResult}
-                          className="bg-blue-600 hover:bg-blue-500 active:bg-blue-700 disabled:bg-blue-800 disabled:cursor-wait text-white text-xs font-semibold tracking-wide py-2 rounded-lg transition-all duration-150 shadow-lg shadow-blue-900/30 cursor-pointer w-48 h-8 flex items-center justify-center gap-1.5 select-none shrink-0"
+                          className="liquid-glass-btn liquid-glass-btn-no-grow disabled:cursor-wait text-xs font-semibold tracking-wide px-4 py-2 w-48 h-8 gap-1.5 select-none shrink-0"
                         >
                           {isLoading ? (
                             <>
@@ -929,7 +1034,7 @@ export default function TestPage() {
                                   <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 8.25l-4.72-4.72a.75.75 0 00-.53-.22H5.25A2.25 2.25 0 003 5.5v13.5A2.25 2.25 0 005.25 21.25h13.5A2.25 2.25 0 0021 19V8.78a.75.75 0 00-.22-.53z" />
                                   <path strokeLinecap="round" strokeLinejoin="round" d="M6 3v6h8V3M9 21v-8h6v8" />
                                 </svg>
-                                Save?
+                                Save
                               </>
                             )}
                           </button>
@@ -946,16 +1051,16 @@ export default function TestPage() {
                 {/* Left Timeline */}
                 <div className="relative flex flex-col items-center w-4 shrink-0 self-stretch">
                   <div className={`w-3.5 h-3.5 rounded-full border z-10 absolute top-[31px] transition-colors duration-200 ${
-                    isStrategyFilled ? "bg-gray-600 border-gray-500" : "bg-gray-950 border-gray-600"
+                    isStrategyFilled ? "bg-gray-600 border-[#3A3A3E]" : "bg-[#28282D] border-[#3A3A3E]"
                   }`} />
                   {isStrategyFilled && (
-                    <div className="absolute top-[45px] bottom-[-55px] w-[1px] bg-gray-600 z-0" />
+                    <div className="absolute top-[45px] bottom-[-55px] w-[2px] bg-[#3A3A3E] z-0" />
                   )}
                 </div>
                 {/* Right Content */}
                 <div className="flex flex-col gap-1.5 h-[54px] justify-end">
                   <span className="text-xs font-semibold tracking-wider text-gray-400 uppercase select-none">
-                    Strategy?
+                    {questionLabel("Strategy", isStrategyFilled)}
                   </span>
                   <select
                     value={selectedStrategy}
@@ -974,19 +1079,19 @@ export default function TestPage() {
                         volMinDays: "",
                         fromDate: "",
                         toDate: "",
-                        spread: "",
-                        slippage: "",
                         hasResult: false,
                         isSaved: false,
                         title: getTabTitle(stratVal, "", "Backtest")
                       });
                     }}
-                    className="bg-gray-900 border border-gray-800/80 text-xs font-medium text-gray-200 rounded-lg px-2.5 py-1.5 outline-none cursor-pointer hover:border-gray-700 transition-colors shrink-0 w-48 h-8"
+                    className="bg-[#121214] border border-[#212124] text-xs font-medium text-gray-200 px-2.5 py-1.5 outline-none cursor-pointer hover:border-gray-700 transition-colors shrink-0 w-48 h-8"
                   >
-                    <option value="" disabled>Select strategy...</option>
+                    <option value="" disabled>
+                      {isStrategiesLoading ? "Loading strategies..." : strategies.length === 0 ? "No strategies in this environment" : "Select strategy..."}
+                    </option>
                     {strategies.map((strategy) => (
-                      <option key={strategy} value={strategy}>
-                        {strategy}
+                      <option key={strategy.id} value={strategy.name}>
+                        {strategy.name}
                       </option>
                     ))}
                   </select>
@@ -1000,49 +1105,51 @@ export default function TestPage() {
                 {/* Left Timeline */}
                 <div className="relative flex flex-col items-center w-4 shrink-0 self-stretch">
                   <div className={`w-3.5 h-3.5 rounded-full border z-10 absolute top-[31px] transition-colors duration-200 ${
-                    isSymbolFilled ? "bg-gray-600 border-gray-500" : "bg-gray-950 border-gray-600"
+                    isSymbolFilled ? "bg-gray-600 border-[#3A3A3E]" : "bg-[#28282D] border-[#3A3A3E]"
                   }`} />
                   {showBalanceAndLot && (
-                    <div className="absolute top-[45px] bottom-[-55px] w-[1px] bg-gray-600 z-0" />
+                    <div className="absolute top-[45px] bottom-[-55px] w-[2px] bg-[#3A3A3E] z-0" />
                   )}
                 </div>
                 {/* Right Content */}
-                <div className="flex flex-col gap-1.5 h-[54px] justify-end">
-                  <span className="text-xs font-semibold tracking-wider text-gray-400 uppercase select-none">
-                    Symbol?
-                  </span>
-                  <select
-                    value={selectedSymbol}
-                    onChange={(e) => {
-                      const symVal = e.target.value;
-                      updateActiveTab({
-                        selectedSymbol: symVal,
-                        initialBalance: "",
-                        baseLot: "",
-                        leverage: "",
-                        sizing: "",
-                        volTarget: "",
-                        volHalflife: "",
-                        volMaxMult: "",
-                        volMinDays: "",
-                        fromDate: "",
-                        toDate: "",
-                        spread: "",
-                        slippage: "",
-                        hasResult: false,
-                        isSaved: false,
-                        title: getTabTitle(selectedStrategy, symVal, "Backtest")
-                      });
-                    }}
-                    className="bg-gray-900 border border-gray-800/80 text-xs font-medium text-gray-200 rounded-lg px-2.5 py-1.5 outline-none cursor-pointer hover:border-gray-700 transition-colors shrink-0 w-48 h-8"
-                  >
-                    <option value="" disabled>Select symbol...</option>
-                    {symbols.map((symbol) => (
-                      <option key={symbol} value={symbol}>
-                        {symbol}
+                <div className="flex flex-row items-end gap-4 h-[54px]">
+                  <div className="flex flex-col gap-1.5">
+                    <span className="text-xs font-semibold tracking-wider text-gray-400 uppercase select-none">
+                      {questionLabel("Symbol", isSymbolFilled)}
+                    </span>
+                    <select
+                      value={selectedSymbol}
+                      onChange={(e) => {
+                        const symVal = e.target.value;
+                        updateActiveTab({
+                          selectedSymbol: symVal,
+                          initialBalance: "",
+                          baseLot: "",
+                          leverage: "",
+                          sizing: "",
+                          volTarget: "",
+                          volHalflife: "",
+                          volMaxMult: "",
+                          volMinDays: "",
+                          fromDate: "",
+                          toDate: "",
+                          hasResult: false,
+                          isSaved: false,
+                          title: getTabTitle(selectedStrategy, symVal, "Backtest")
+                        });
+                      }}
+                      className="bg-[#121214] border border-[#212124] text-xs font-medium text-gray-200 px-2.5 py-1.5 outline-none cursor-pointer hover:border-gray-700 transition-colors shrink-0 w-48 h-8"
+                    >
+                      <option value="" disabled>
+                        Select symbol...
                       </option>
-                    ))}
-                  </select>
+                      {symbols.map((symbol) => (
+                        <option key={symbol} value={symbol}>
+                          {symbol}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
               </div>
             )}
@@ -1053,10 +1160,10 @@ export default function TestPage() {
                 {/* Left Timeline */}
                 <div className="relative flex flex-col items-center w-4 shrink-0 self-stretch">
                   <div className={`w-3.5 h-3.5 rounded-full border z-10 absolute top-[31px] transition-colors duration-200 ${
-                    isBalanceAndLotFilled ? "bg-gray-600 border-gray-500" : "bg-gray-950 border-gray-600"
+                    isBalanceAndLotFilled ? "bg-gray-600 border-[#3A3A3E]" : "bg-[#28282D] border-[#3A3A3E]"
                   }`} />
-                  {showSizing && (
-                    <div className="absolute top-[45px] bottom-[-55px] w-[1px] bg-gray-600 z-0" />
+                  {showDate && (
+                    <div className="absolute top-[45px] bottom-[-55px] w-[2px] bg-[#3A3A3E] z-0" />
                   )}
                 </div>
                 {/* Right Content */}
@@ -1065,7 +1172,7 @@ export default function TestPage() {
                   <div className="flex flex-col gap-4">
                     <div className="flex flex-col gap-1.5">
                       <span className="text-xs font-semibold tracking-wider text-gray-400 uppercase select-none">
-                        Initial Balance?
+                        {questionLabel("Initial Balance", initialBalance.trim() !== "")}
                       </span>
                       <input
                         type="text"
@@ -1078,205 +1185,72 @@ export default function TestPage() {
                           });
                         }}
                         placeholder="e.g. 100000"
-                        className="bg-gray-900 border border-gray-800/80 text-xs font-medium text-gray-200 rounded-lg px-2.5 py-1.5 outline-none hover:border-gray-700 focus:border-blue-500/80 transition-colors shrink-0 w-48 h-8 font-mono"
+                        className="bg-[#121214] border border-[#212124] text-xs font-medium text-gray-200 px-2.5 py-1.5 outline-none hover:border-gray-700 transition-colors shrink-0 w-48 h-8 font-mono"
                       />
                     </div>
 
+                    {!isPaperSized && (
+                      <div className="flex flex-col gap-1.5">
+                        <span className="text-xs font-semibold tracking-wider text-gray-400 uppercase select-none">
+                          {questionLabel("Leverage", leverage.trim() !== "")}
+                        </span>
+                        <input
+                          type="text"
+                          value={leverage}
+                          onChange={(e) => {
+                            updateActiveTab({
+                              leverage: e.target.value,
+                              hasResult: false,
+                              isSaved: false,
+                            });
+                          }}
+                          placeholder="e.g. 1 (default)"
+                          className="bg-[#121214] border border-[#212124] text-xs font-medium text-gray-200 px-2.5 py-1.5 outline-none hover:border-gray-700 transition-colors shrink-0 w-48 h-8 font-mono"
+                        />
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Right Column: omitted for strategies with paper sizing. */}
+                  {!isPaperSized && (
                     <div className="flex flex-col gap-1.5">
                       <span className="text-xs font-semibold tracking-wider text-gray-400 uppercase select-none">
-                        Leverage?
+                        {questionLabel("Base Lot", baseLot.trim() !== "")}
                       </span>
                       <input
                         type="text"
-                        value={leverage}
+                        value={baseLot}
                         onChange={(e) => {
                           updateActiveTab({
-                            leverage: e.target.value,
+                            baseLot: e.target.value,
                             hasResult: false,
                             isSaved: false,
                           });
                         }}
-                        placeholder="e.g. 1 (default)"
-                        className="bg-gray-900 border border-gray-800/80 text-xs font-medium text-gray-200 rounded-lg px-2.5 py-1.5 outline-none hover:border-gray-700 focus:border-blue-500/80 transition-colors shrink-0 w-48 h-8 font-mono"
+                        placeholder="e.g. 1"
+                        className="bg-[#121214] border border-[#212124] text-xs font-medium text-gray-200 px-2.5 py-1.5 outline-none hover:border-gray-700 transition-colors shrink-0 w-48 h-8 font-mono"
                       />
                     </div>
-                  </div>
-
-                  {/* Right Column: Base Lot */}
-                  <div className="flex flex-col gap-1.5">
-                    <span className="text-xs font-semibold tracking-wider text-gray-400 uppercase select-none">
-                      Base Lot?
-                    </span>
-                    <input
-                      type="text"
-                      value={baseLot}
-                      onChange={(e) => {
-                        updateActiveTab({
-                          baseLot: e.target.value,
-                          hasResult: false,
-                          isSaved: false,
-                        });
-                      }}
-                      placeholder="e.g. 1"
-                      className="bg-gray-900 border border-gray-800/80 text-xs font-medium text-gray-200 rounded-lg px-2.5 py-1.5 outline-none hover:border-gray-700 focus:border-blue-500/80 transition-colors shrink-0 w-48 h-8 font-mono"
-                    />
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Row 4: Sizing */}
-            {showSizing && (
-              <div className="flex gap-4 items-start relative">
-                {/* Left Timeline */}
-                <div className="relative flex flex-col items-center w-4 shrink-0 self-stretch">
-                  <div className={`w-3.5 h-3.5 rounded-full border z-10 absolute top-[31px] transition-colors duration-200 ${
-                    isSizingFilled ? "bg-gray-600 border-gray-500" : "bg-gray-950 border-gray-600"
-                  }`} />
-                  {sizing !== "" && (
-                    <div className="absolute top-[45px] bottom-[-55px] w-[1px] bg-gray-600 z-0" />
                   )}
                 </div>
-                {/* Right Content */}
-                <div className="flex flex-col gap-1.5 h-[54px] justify-end">
-                  <span className="text-xs font-semibold tracking-wider text-gray-400 uppercase select-none">
-                    Sizing?
-                  </span>
-                  <select
-                    value={sizing}
-                    onChange={(e) => {
-                      updateActiveTab({
-                        sizing: e.target.value,
-                        volTarget: "",
-                        volHalflife: "",
-                        volMaxMult: "",
-                        volMinDays: "",
-                        hasResult: false,
-                        isSaved: false,
-                      });
-                    }}
-                    className="bg-gray-900 border border-gray-800/80 text-xs font-medium text-gray-200 rounded-lg px-2.5 py-1.5 outline-none cursor-pointer hover:border-gray-700 transition-colors shrink-0 w-48 h-8"
-                  >
-                    <option value="" disabled>Select sizing...</option>
-                    {sizingOptions.map((opt) => (
-                      <option key={opt} value={opt}>
-                        {opt}
-                      </option>
-                    ))}
-                  </select>
-                </div>
               </div>
             )}
 
-            {/* Row 5: Vol Target Parameters (Conditional branch) */}
-            {showVolParams && (
-              <div className="flex gap-4 items-start relative">
-                {/* Left Timeline */}
-                <div className="relative flex flex-col items-center w-4 shrink-0 self-stretch">
-                  <div className={`w-3.5 h-3.5 rounded-full border z-10 absolute top-[31px] transition-colors duration-200 ${
-                    isVolParamsFilled ? "bg-gray-600 border-gray-500" : "bg-gray-950 border-gray-600"
-                  }`} />
-                  {allVolParamsSet && (
-                    <div className="absolute top-[45px] bottom-[-55px] w-[1px] bg-gray-600 z-0" />
-                  )}
-                </div>
-                {/* Right Content */}
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="flex flex-col gap-1.5">
-                    <span className="text-xs font-semibold tracking-wider text-gray-400 uppercase select-none">
-                      Vol Target?
-                    </span>
-                    <input
-                      type="text"
-                      value={volTarget}
-                      onChange={(e) => {
-                        updateActiveTab({
-                          volTarget: e.target.value,
-                          hasResult: false,
-                          isSaved: false,
-                        });
-                      }}
-                      placeholder="e.g. 0.2"
-                      className="bg-gray-900 border border-gray-800/80 text-xs font-medium text-gray-200 rounded-lg px-2.5 py-1.5 outline-none hover:border-gray-700 focus:border-blue-500/80 transition-colors shrink-0 w-48 h-8 font-mono"
-                    />
-                  </div>
-
-                  <div className="flex flex-col gap-1.5">
-                    <span className="text-xs font-semibold tracking-wider text-gray-400 uppercase select-none">
-                      Vol Halflife?
-                    </span>
-                    <input
-                      type="text"
-                      value={volHalflife}
-                      onChange={(e) => {
-                        updateActiveTab({
-                          volHalflife: e.target.value,
-                          hasResult: false,
-                          isSaved: false,
-                        });
-                      }}
-                      placeholder="e.g. 20"
-                      className="bg-gray-900 border border-gray-800/80 text-xs font-medium text-gray-200 rounded-lg px-2.5 py-1.5 outline-none hover:border-gray-700 focus:border-blue-500/80 transition-colors shrink-0 w-48 h-8 font-mono"
-                    />
-                  </div>
-
-                  <div className="flex flex-col gap-1.5">
-                    <span className="text-xs font-semibold tracking-wider text-gray-400 uppercase select-none">
-                      Vol Max Mult?
-                    </span>
-                    <input
-                      type="text"
-                      value={volMaxMult}
-                      onChange={(e) => {
-                        updateActiveTab({
-                          volMaxMult: e.target.value,
-                          hasResult: false,
-                          isSaved: false,
-                        });
-                      }}
-                      placeholder="e.g. 3"
-                      className="bg-gray-900 border border-gray-800/80 text-xs font-medium text-gray-200 rounded-lg px-2.5 py-1.5 outline-none hover:border-gray-700 focus:border-blue-500/80 transition-colors shrink-0 w-48 h-8 font-mono"
-                    />
-                  </div>
-
-                  <div className="flex flex-col gap-1.5">
-                    <span className="text-xs font-semibold tracking-wider text-gray-400 uppercase select-none">
-                      Vol Min Days?
-                    </span>
-                    <input
-                      type="text"
-                      value={volMinDays}
-                      onChange={(e) => {
-                        updateActiveTab({
-                          volMinDays: e.target.value,
-                          hasResult: false,
-                          isSaved: false,
-                        });
-                      }}
-                      placeholder="e.g. 30"
-                      className="bg-gray-900 border border-gray-800/80 text-xs font-medium text-gray-200 rounded-lg px-2.5 py-1.5 outline-none hover:border-gray-700 focus:border-blue-500/80 transition-colors shrink-0 w-48 h-8 font-mono"
-                    />
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Row 6: Date Selection */}
+            {/* Row 4: Date Selection */}
             {showDate && (
               <div className="flex gap-4 items-start relative">
                 {/* Left Timeline */}
                 <div className="relative flex flex-col items-center w-4 shrink-0 self-stretch">
-                  <div className={`w-3.5 h-3.5 rounded-full border z-10 absolute top-[31px] transition-colors duration-200 ${
-                    isDateFilled ? "bg-gray-600 border-gray-500" : "bg-gray-950 border-gray-600"
-                  }`} />
-                  {showSpreadAndSlippage && (
-                    <div className="absolute top-[45px] bottom-[-55px] w-[1px] bg-gray-600 z-0" />
-                  )}
+                  <div className={`w-3.5 h-3.5 rounded-full border z-10 absolute top-[31px] transition-all duration-200 flex items-center justify-center text-[9px] font-black leading-none ${
+                    isDateFilled ? "bg-gray-600 border-[#3A3A3E] text-white" : "bg-[#28282D] border-[#3A3A3E] text-transparent"
+                  }`}>
+                    ✓
+                  </div>
                 </div>
                 {/* Right Content */}
                 <div className="flex flex-col gap-1.5 h-[54px] justify-end">
                   <span className="text-xs font-semibold tracking-wider text-gray-400 uppercase select-none">
-                    Date?
+                    {questionLabel("Date", isDateFilled)}
                   </span>
                   <div className="flex items-center gap-4 relative">
                     <input
@@ -1290,7 +1264,7 @@ export default function TestPage() {
                         });
                       }}
                       placeholder="From (YYYY-MM-DD)"
-                      className="bg-gray-900 border border-gray-800/80 text-xs font-medium text-gray-200 rounded-lg px-2.5 py-1.5 outline-none hover:border-gray-700 focus:border-blue-500/80 transition-colors w-48 h-8 font-mono"
+                      className="bg-[#121214] border border-[#212124] text-xs font-medium text-gray-200 px-2.5 py-1.5 outline-none hover:border-gray-700 transition-colors w-48 h-8 font-mono"
                     />
                     <span className="absolute left-[192px] w-4 text-center text-gray-600 select-none font-light">
                       -
@@ -1306,99 +1280,54 @@ export default function TestPage() {
                         });
                       }}
                       placeholder="To (YYYY-MM-DD)"
-                      className="bg-gray-900 border border-gray-800/80 text-xs font-medium text-gray-200 rounded-lg px-2.5 py-1.5 outline-none hover:border-gray-700 focus:border-blue-500/80 transition-colors w-48 h-8 font-mono"
+                      className="bg-[#121214] border border-[#212124] text-xs font-medium text-gray-200 px-2.5 py-1.5 outline-none hover:border-gray-700 transition-colors w-48 h-8 font-mono"
                     />
                   </div>
                 </div>
               </div>
             )}
 
-            {/* Row 7: Spread & Slippage */}
-            {showSpreadAndSlippage && (
+            {/* Row 5: Run actions */}
+            {showActions && (
               <div className="flex gap-4 items-start relative">
                 {/* Left Timeline */}
-                <div className="relative flex flex-col items-center w-4 shrink-0 self-stretch">
-                  <div className={`w-3.5 h-3.5 rounded-full border z-10 absolute top-[31px] transition-all duration-200 flex items-center justify-center text-[9px] font-black leading-none ${
-                    isSpreadAndSlippageFilled ? "bg-gray-600 border-gray-500 text-white" : "bg-gray-950 border-gray-600 text-transparent"
-                  }`}>
-                    ✓
-                  </div>
-                </div>
+                <div className="relative flex flex-col items-center w-4 shrink-0 self-stretch" />
                 {/* Right Content */}
-                <div className="flex flex-col gap-4">
-                  <div className="flex flex-row items-center gap-4">
-                    <div className="flex flex-col gap-1.5">
-                      <span className="text-xs font-semibold tracking-wider text-gray-400 uppercase select-none">
-                        Spread?
-                      </span>
-                      <input
-                        type="text"
-                        value={spread}
-                        onChange={(e) => {
-                          updateActiveTab({
-                            spread: e.target.value,
-                            hasResult: false,
-                            isSaved: false,
-                          });
-                        }}
-                        placeholder="e.g. 0.5"
-                        className="bg-gray-900 border border-gray-800/80 text-xs font-medium text-gray-200 rounded-lg px-2.5 py-1.5 outline-none hover:border-gray-700 focus:border-blue-500/80 transition-colors shrink-0 w-48 h-8 font-mono"
-                      />
-                    </div>
-
-                    <div className="flex flex-col gap-1.5">
-                      <span className="text-xs font-semibold tracking-wider text-gray-400 uppercase select-none">
-                        Slippage?
-                      </span>
-                      <input
-                        type="text"
-                        value={slippage}
-                        onChange={(e) => {
-                          updateActiveTab({
-                            slippage: e.target.value,
-                            hasResult: false,
-                            isSaved: false,
-                          });
-                        }}
-                        placeholder="e.g. 1.0"
-                        className="bg-gray-900 border border-gray-800/80 text-xs font-medium text-gray-200 rounded-lg px-2.5 py-1.5 outline-none hover:border-gray-700 focus:border-blue-500/80 transition-colors shrink-0 w-48 h-8 font-mono"
-                      />
-                    </div>
-                  </div>
-
-                  {isSpreadAndSlippageFilled && (
-                    <div className="flex items-center gap-4">
+                <div className="flex items-center gap-4">
                       <button
-                        disabled={isLoading}
+                        type="button"
+                        disabled={isLoading || hasResult}
                         onClick={handleSeeResult}
-                        className="bg-blue-600 hover:bg-blue-500 active:bg-blue-700 disabled:bg-blue-800 disabled:cursor-wait text-white text-xs font-semibold tracking-wide py-2 rounded-lg transition-all duration-150 shadow-lg shadow-blue-900/30 cursor-pointer w-48 flex items-center justify-center gap-1.5 select-none shrink-0"
+                        className="liquid-glass-btn liquid-glass-btn-no-grow disabled:cursor-not-allowed text-xs font-semibold tracking-wide px-4 py-2 min-w-32 h-8 gap-1.5 select-none shrink-0"
                       >
-                        {isLoading ? (
-                          <>
-                            <svg className="animate-spin h-3.5 w-3.5 text-white" fill="none" viewBox="0 0 24 24">
-                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                            </svg>
-                            Running...
-                          </>
-                        ) : (
-                          <>
-                            See Result
-                            <svg
-                              className="w-3.5 h-3.5"
-                              fill="none"
-                              stroke="currentColor"
-                              strokeWidth="2.2"
-                              viewBox="0 0 24 24"
-                            >
-                              <path
-                                strokeLinecap="round"
-                                strokeLinejoin="round"
-                                d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3"
-                              />
-                            </svg>
-                          </>
-                        )}
+                        <div className="flex items-center justify-center gap-1.5 select-none w-full">
+                          {isLoading ? (
+                            <>
+                              <svg className="animate-spin h-3.5 w-3.5 text-white" fill="none" viewBox="0 0 24 24">
+                                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                              </svg>
+                              Running...
+                            </>
+                          ) : (
+                            <>
+                              See Result
+                              <svg
+                                className="w-3.5 h-3.5"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="2.2"
+                                viewBox="0 0 24 24"
+                              >
+                                <path
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                  d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3"
+                                />
+                              </svg>
+                            </>
+                          )}
+                        </div>
                       </button>
 
                       {!isLoading && hasResult && selectedCommand !== "Tune" && (
@@ -1428,13 +1357,11 @@ export default function TestPage() {
                                 <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 8.25l-4.72-4.72a.75.75 0 00-.53-.22H5.25A2.25 2.25 0 003 5.5v13.5A2.25 2.25 0 005.25 21.25h13.5A2.25 2.25 0 0021 19V8.78a.75.75 0 00-.22-.53z" />
                                 <path strokeLinecap="round" strokeLinejoin="round" d="M6 3v6h8V3M9 21v-8h6v8" />
                               </svg>
-                              Save?
+                              Save
                             </>
                           )}
                         </button>
                       )}
-                    </div>
-                  )}
                 </div>
               </div>
             )}
@@ -1443,7 +1370,7 @@ export default function TestPage() {
         </div>
 
         {/* Right Column: Results Dashboard */}
-        <div className="flex-1 flex flex-col min-h-0 bg-gray-900/30 relative">
+        <div className="flex-1 flex flex-col min-h-0 bg-[#121214] relative">
           {isLoading && (
             <div className="flex-1 flex items-center justify-center">
               <span className="text-sm text-gray-400 flex items-center gap-2">
@@ -1488,7 +1415,7 @@ export default function TestPage() {
                             <th className="pb-2 font-semibold pr-4">Vol Target</th>
                             <th className="pb-2 font-semibold pr-4">Halflife</th>
                             <th className="pb-2 font-semibold pr-4">Max Mult</th>
-                            <th className="pb-2 font-semibold">Min Days</th>
+                            <th className="pb-2 font-semibold pr-4">Min Days</th>
                           </>
                         )}
                       </tr>
@@ -1507,7 +1434,7 @@ export default function TestPage() {
                               <td className="py-2 pr-4 text-gray-350">{(c.volTarget ?? 0).toFixed(2)}</td>
                               <td className="py-2 pr-4 text-gray-350">{(c.volHalflife ?? 0).toFixed(1)}</td>
                               <td className="py-2 pr-4 text-gray-350">{(c.volMaxMult ?? 0).toFixed(2)}</td>
-                              <td className="py-2 text-gray-350">{c.volMinDays ?? 0}</td>
+                              <td className="py-2 pr-4 text-gray-350">{c.volMinDays ?? 0}</td>
                             </>
                           )}
                         </tr>
@@ -1541,49 +1468,33 @@ export default function TestPage() {
               { id: "analysis", label: "Analysis" },
               { id: "equity", label: "Equity" },
               { id: "splicing", label: "Splicing" },
+              { id: "volatility", label: "Volatility" },
               { id: "monte-carlo", label: "Monte Carlo" },
             ];
             const effectiveTab = resultTabs.some((t) => t.id === activeTab) ? activeTab : "analysis";
             return (
             <>
-              {/* Floating Tab Selection */}
-              <div className="absolute top-6 left-8 z-10 flex items-center gap-0.5 bg-gray-900 rounded-lg p-0.5 border border-gray-800/80 shrink-0 shadow-lg shadow-black/40">
-                {resultTabs.map((t) => (
-                  <button
-                    key={t.id}
-                    onClick={() => updateActiveTab({ activeTab: t.id })}
-                    className={`px-2.5 py-1 transition-all duration-150 text-xs font-medium rounded-md select-none cursor-pointer ${
-                      effectiveTab === t.id
-                        ? "bg-gray-700 text-white shadow-sm"
-                        : "text-gray-500 hover:text-gray-200 hover:bg-gray-800/70"
-                    }`}
-                  >
-                    {t.label}
-                  </button>
-                ))}
+              {/* Floating result tabs */}
+              <div className="absolute top-6 left-8 z-10 shrink-0">
+                <LiquidGlassTabs
+                  items={resultTabs}
+                  activeId={effectiveTab}
+                  onChange={(id) => updateActiveTab({ activeTab: id as TestTab["activeTab"] })}
+                  label="Result views"
+                />
               </div>
 
               {/* Native / Forex-execution switch */}
-              <div className="absolute top-6 right-8 z-10 flex items-center gap-0.5 bg-gray-900 rounded-lg p-0.5 border border-gray-800/80 shrink-0 shadow-lg shadow-black/40">
-                {([
-                  ["native", "Native"],
-                  ["fx", "March"],
-                ] as const).map(([id, label]) => {
-                  const active = execView === id;
-                  return (
-                    <button
-                      key={id}
-                      onClick={() => setExecView(id)}
-                      className={`px-2.5 py-1 transition-all duration-150 text-xs font-medium rounded-md select-none cursor-pointer ${
-                        active
-                          ? "bg-indigo-600 text-white shadow-sm"
-                          : "text-gray-500 hover:text-gray-200 hover:bg-gray-800/70"
-                      }`}
-                    >
-                      {label}
-                    </button>
-                  );
-                })}
+              <div className="absolute top-6 right-8 z-10 shrink-0">
+                <LiquidGlassTabs
+                  items={[
+                    { id: "native", label: "Native" },
+                    { id: "fx", label: "March" },
+                  ]}
+                  activeId={execView}
+                  onChange={(id) => setExecView(id as "native" | "fx")}
+                  label="Execution view"
+                />
               </div>
 
               {/* Forex selected but no trades fell inside the tick window. */}
@@ -1710,6 +1621,12 @@ export default function TestPage() {
               {effectiveTab === "splicing" && (
                 <div className="flex-1 overflow-y-auto no-scrollbar px-8 pb-8 pt-20">
                   <Splicing trades={view.trades} initialBalance={b.initial_bal} />
+                </div>
+              )}
+
+              {effectiveTab === "volatility" && (
+                <div className="flex-1 overflow-y-auto no-scrollbar px-8 pb-8 pt-20">
+                  <Volatility trades={view.trades} initialBalance={b.initial_bal} />
                 </div>
               )}
 

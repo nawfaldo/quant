@@ -6,15 +6,14 @@ interface Props {
   onClose: () => void
   indicators: Indicators
   onToggle: (key: keyof Indicators) => void
-  isNq: boolean
 }
 
-const INDICATOR_ROWS: { key: keyof Indicators; label: string; color: string; nqOnly: boolean }[] = [
-  { key: 'vwap', label: 'VWAP', color: '#60a5fa', nqOnly: true },
-  { key: 'noise_area', label: 'Noise Area', color: '#f43f5e', nqOnly: false },
+const INDICATOR_ROWS: { key: keyof Indicators; label: string; color: string }[] = [
+  { key: 'vwap', label: 'VWAP', color: '#60a5fa' },
+  { key: 'noise_area', label: 'Noise Area', color: '#f43f5e' },
 ]
 
-export default function IndicatorsModal({ open, onClose, indicators, onToggle, isNq }: Props) {
+export default function IndicatorsModal({ open, onClose, indicators, onToggle }: Props) {
   useEffect(() => {
     if (!open) return
     function onKey(e: KeyboardEvent) { if (e.key === 'Escape') onClose() }
@@ -38,7 +37,7 @@ export default function IndicatorsModal({ open, onClose, indicators, onToggle, i
           </button>
         </div>
         <div className="px-2 py-2">
-          {INDICATOR_ROWS.filter(({ nqOnly }) => !nqOnly || isNq).map(({ key, label }) => (
+          {INDICATOR_ROWS.map(({ key, label }) => (
             <button
               key={key}
               onClick={() => onToggle(key)}

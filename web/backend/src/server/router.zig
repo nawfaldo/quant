@@ -19,7 +19,7 @@ fn sendJson(req: *http.Ctx, body: []const u8) !void {
 fn queryParam(query: []const u8, key: []const u8) ?[]const u8 {
     var pos: usize = 0;
     while (pos < query.len) {
-        const eq  = std.mem.indexOfScalarPos(u8, query, pos, '=') orelse break;
+        const eq = std.mem.indexOfScalarPos(u8, query, pos, '=') orelse break;
         const amp = std.mem.indexOfScalarPos(u8, query, eq + 1, '&') orelse query.len;
         if (std.mem.eql(u8, query[pos..eq], key)) return query[eq + 1 .. amp];
         pos = amp + 1;
@@ -53,6 +53,55 @@ fn jsonField(body: []const u8, key: []const u8) []const u8 {
     return body[p..end];
 }
 
+const StrategyFile = struct {
+    filename: []const u8,
+    id: []const u8,
+    name: []const u8,
+};
+
+const strategy_files = [_]StrategyFile{
+    .{ .filename = "night_drift.zig", .id = "night_drift", .name = "Night Drift" },
+    .{ .filename = "noise_momentum.zig", .id = "noise_momentum", .name = "Noise Momentum" },
+};
+
+// Environment names double as strategy-directory names, so restrict them to a
+// single safe path component rather than allowing a name to traverse src/.
+fn isEnvironmentFolderName(name: []const u8) bool {
+    if (name.len == 0) return false;
+    for (name) |ch| {
+        const valid = std.ascii.isAlphanumeric(ch) or ch == '_' or ch == '-';
+        if (!valid) return false;
+    }
+    return true;
+}
+
+fn environmentStrategiesJson(io: std.Io, a: std.mem.Allocator, environment_name: []const u8) ![]const u8 {
+    if (!isEnvironmentFolderName(environment_name)) return a.dupe(u8, "[]");
+
+    var path_buf: [256]u8 = undefined;
+    const path = try std.fmt.bufPrint(&path_buf, "src/strategies/{s}", .{environment_name});
+    const dir = std.Io.Dir.openDir(.cwd(), io, path, .{}) catch return a.dupe(u8, "[]");
+    defer dir.close(io);
+
+    var out: std.ArrayList(u8) = .empty;
+    errdefer out.deinit(a);
+    try out.append(a, '[');
+    var first = true;
+    for (strategy_files) |strategy| {
+        const file = dir.openFile(io, strategy.filename, .{}) catch continue;
+        file.close(io);
+        if (!first) try out.append(a, ',');
+        first = false;
+        try out.appendSlice(a, "{\"id\":\"");
+        try out.appendSlice(a, strategy.id);
+        try out.appendSlice(a, "\",\"name\":\"");
+        try out.appendSlice(a, strategy.name);
+        try out.appendSlice(a, "\"}");
+    }
+    try out.append(a, ']');
+    return out.toOwnedSlice(a);
+}
+
 pub fn onRequest(req: *http.Ctx) !void {
     const path = req.path orelse "/";
 
@@ -67,17 +116,20 @@ pub fn onRequest(req: *http.Ctx) !void {
         // No tf given => fall back to the default_timeframe stored in app.db.
         const tf = queryParam(query, "tf") orelse settings.defaultTf(&tf_buf);
         var from_buf: [32]u8 = undefined;
-        var to_buf:   [32]u8 = undefined;
+        var to_buf: [32]u8 = undefined;
         const range = settings.dateRange(&from_buf, &to_buf);
         // Explicit ?from=&to= win; otherwise fall back to the app.db window.
         const q_from = queryParam(query, "from") orelse "";
-        const q_to   = queryParam(query, "to")   orelse "";
+        const q_to = queryParam(query, "to") orelse "";
         const from = if (isIsoDate(q_from)) q_from else range.from;
-        const to   = if (isIsoDate(q_to))   q_to   else range.to;
+        const to = if (isIsoDate(q_to)) q_to else range.to;
         const q_symbol = queryParam(query, "symbol") orelse "nq";
         var valid_symbol = false;
         for (cache.VALID_SYMBOLS) |s| {
-            if (std.mem.eql(u8, q_symbol, s)) { valid_symbol = true; break; }
+            if (std.mem.eql(u8, q_symbol, s)) {
+                valid_symbol = true;
+                break;
+            }
         }
         if (!valid_symbol) {
             req.setStatusNumeric(400);
@@ -114,6 +166,37 @@ pub fn onRequest(req: *http.Ctx) !void {
         return;
     }
 
+    // Daily VIX closes (JSON [[epoch_secs, close], ...]) for the Volatility
+    // result sub-tab. Optional ?from=&to= ISO date bounds; no bounds = full history.
+    if (std.mem.eql(u8, path, "/api/vix")) {
+        const query = req.query orelse "";
+        const q_from = queryParam(query, "from") orelse "";
+        const q_to = queryParam(query, "to") orelse "";
+        const from = if (isIsoDate(q_from)) q_from else "";
+        const to = if (isIsoDate(q_to)) q_to else "";
+        const body = cache.fetchVixDaily(req.io, alloc, from, to) catch |err| {
+            std.debug.print("vix fetch error: {}\n", .{err});
+            req.setStatusNumeric(503);
+            try req.sendJson("{\"error\":\"fetch failed\"}");
+            return;
+        };
+        defer alloc.free(body);
+        try sendJson(req, body);
+        return;
+    }
+
+    if (std.mem.eql(u8, path, "/api/database/summary")) {
+        const body = cache.fetchDatabaseSummary(req.io, alloc) catch |err| {
+            std.debug.print("database summary fetch error: {}\n", .{err});
+            req.setStatusNumeric(503);
+            try req.sendJson("{\"error\":\"fetch failed\"}");
+            return;
+        };
+        defer alloc.free(body);
+        try sendJson(req, body);
+        return;
+    }
+
     if (std.mem.eql(u8, path, "/api/settings")) {
         if (std.mem.eql(u8, req.method orelse "", "POST")) {
             const body = req.body orelse {
@@ -122,7 +205,7 @@ pub fn onRequest(req: *http.Ctx) !void {
                 return;
             };
             const from = jsonField(body, "from_date");
-            const to   = jsonField(body, "to_date");
+            const to = jsonField(body, "to_date");
             settings.save(from, to) catch |err| {
                 std.debug.print("settings save error: {}\n", .{err});
                 req.setStatusNumeric(500);
@@ -150,13 +233,13 @@ pub fn onRequest(req: *http.Ctx) !void {
                 try req.sendJson("{\"error\":\"no body\"}");
                 return;
             };
-            const symbol        = jsonField(body, "symbol");
-            const tf            = jsonField(body, "tf");
-            const from          = jsonField(body, "from");
-            const to            = jsonField(body, "to");
-            const mode          = jsonField(body, "mode");
-            const bottom_open   = jsonField(body, "bottomOpen");
-            const layout        = jsonField(body, "layout");
+            const symbol = jsonField(body, "symbol");
+            const tf = jsonField(body, "tf");
+            const from = jsonField(body, "from");
+            const to = jsonField(body, "to");
+            const mode = jsonField(body, "mode");
+            const bottom_open = jsonField(body, "bottomOpen");
+            const layout = jsonField(body, "layout");
             const bottom_height = jsonField(body, "bottomHeight");
             settings.marchSave(symbol, tf, from, to, mode, bottom_open, layout, bottom_height) catch |err| {
                 std.debug.print("march settings save error: {}\n", .{err});
@@ -202,6 +285,263 @@ pub fn onRequest(req: *http.Ctx) !void {
             defer alloc.free(body);
             try sendJson(req, body);
         }
+        return;
+    }
+
+    if (std.mem.eql(u8, path, "/api/march/workspace")) {
+        if (std.mem.eql(u8, req.method orelse "", "POST")) {
+            const body = req.body orelse {
+                req.setStatusNumeric(400);
+                try req.sendJson("{\"error\":\"no body\"}");
+                return;
+            };
+            settings.marchWorkspaceSave(body) catch |err| {
+                std.debug.print("march workspace save error: {}\n", .{err});
+                req.setStatusNumeric(500);
+                try req.sendJson("{\"error\":\"save failed\"}");
+                return;
+            };
+            try req.sendJson("{\"ok\":true}");
+        } else {
+            const body = settings.marchWorkspaceGet(alloc) catch |err| {
+                std.debug.print("march workspace read error: {}\n", .{err});
+                req.setStatusNumeric(500);
+                try req.sendJson("{\"error\":\"read failed\"}");
+                return;
+            };
+            defer alloc.free(body);
+            try sendJson(req, body);
+        }
+        return;
+    }
+
+    if (std.mem.eql(u8, path, "/api/environments")) {
+        if (std.mem.eql(u8, req.method orelse "", "GET")) {
+            const body = db.getEnvironments(alloc) catch |err| {
+                std.debug.print("environment list error: {}\n", .{err});
+                req.setStatusNumeric(500);
+                try req.sendJson("{\"error\":\"environment read failed\"}");
+                return;
+            };
+            defer alloc.free(body);
+            try sendJson(req, body);
+            return;
+        }
+
+        if (!std.mem.eql(u8, req.method orelse "", "POST")) {
+            req.setStatusNumeric(405);
+            try req.sendJson("{\"error\":\"use GET or POST\"}");
+            return;
+        }
+
+        const body = req.body orelse {
+            req.setStatusNumeric(400);
+            try req.sendJson("{\"error\":\"no body\"}");
+            return;
+        };
+        const name = std.mem.trim(u8, jsonField(body, "name"), " \t\r\n");
+        if (name.len == 0) {
+            req.setStatusNumeric(400);
+            try req.sendJson("{\"error\":\"name is required\"}");
+            return;
+        }
+        if (!isEnvironmentFolderName(name)) {
+            req.setStatusNumeric(400);
+            try req.sendJson("{\"error\":\"name must use only letters, numbers, hyphens, or underscores\"}");
+            return;
+        }
+        const is_mt5 = std.mem.eql(u8, jsonField(body, "isMt5"), "true");
+        const id = db.createEnvironment(.{
+            .name = name,
+            .is_mt5 = is_mt5,
+            .server = if (is_mt5) jsonField(body, "server") else "",
+            .login = if (is_mt5) jsonField(body, "login") else "",
+            .password = if (is_mt5) jsonField(body, "password") else "",
+        }) catch |err| switch (err) {
+            error.EnvironmentNameExists => {
+                req.setStatusNumeric(409);
+                try req.sendJson("{\"error\":\"environment name already exists\"}");
+                return;
+            },
+            else => {
+                std.debug.print("environment create error: {}\n", .{err});
+                req.setStatusNumeric(500);
+                try req.sendJson("{\"error\":\"environment save failed\"}");
+                return;
+            },
+        };
+        const response = try std.fmt.allocPrint(alloc, "{{\"id\":{d}}}", .{id});
+        defer alloc.free(response);
+        try req.sendJson(response);
+        return;
+    }
+
+    // GET/POST /api/environments/:id/rules — one spread and one slippage rule
+    // may be associated with an environment. The run/tune paths treat absent
+    // rules as zero rather than inheriting an unrelated global default.
+    const environment_prefix = "/api/environments/";
+    const rules_suffix = "/rules";
+    if (std.mem.startsWith(u8, path, environment_prefix) and std.mem.endsWith(u8, path, rules_suffix)) {
+        const id_text = path[environment_prefix.len .. path.len - rules_suffix.len];
+        if (id_text.len == 0 or std.mem.indexOfScalar(u8, id_text, '/') != null) {
+            req.setStatusNumeric(404);
+            try req.sendJson("{\"error\":\"environment not found\"}");
+            return;
+        }
+        const id = std.fmt.parseInt(i64, id_text, 10) catch {
+            req.setStatusNumeric(400);
+            try req.sendJson("{\"error\":\"invalid environment id\"}");
+            return;
+        };
+        if (std.mem.eql(u8, req.method orelse "", "GET")) {
+            const response = db.getEnvironmentRules(alloc, id) catch |err| {
+                std.debug.print("environment rules read error: {}\n", .{err});
+                req.setStatusNumeric(500);
+                try req.sendJson("{\"error\":\"environment rules read failed\"}");
+                return;
+            } orelse {
+                req.setStatusNumeric(404);
+                try req.sendJson("{\"error\":\"environment not found\"}");
+                return;
+            };
+            defer alloc.free(response);
+            try sendJson(req, response);
+            return;
+        }
+        if (std.mem.eql(u8, req.method orelse "", "DELETE")) {
+            const body = req.body orelse {
+                req.setStatusNumeric(400);
+                try req.sendJson("{\"error\":\"no body\"}");
+                return;
+            };
+            const rule_type = jsonField(body, "type");
+            if (!std.mem.eql(u8, rule_type, "spread") and !std.mem.eql(u8, rule_type, "slippage")) {
+                req.setStatusNumeric(400);
+                try req.sendJson("{\"error\":\"type must be spread or slippage\"}");
+                return;
+            }
+            db.deleteEnvironmentRule(id, rule_type) catch |err| {
+                std.debug.print("environment rule delete error: {}\n", .{err});
+                req.setStatusNumeric(500);
+                try req.sendJson("{\"error\":\"environment rule delete failed\"}");
+                return;
+            };
+            try req.sendJson("{\"ok\":true}");
+            return;
+        }
+        if (std.mem.eql(u8, req.method orelse "", "PUT")) {
+            const body = req.body orelse {
+                req.setStatusNumeric(400);
+                try req.sendJson("{\"error\":\"no body\"}");
+                return;
+            };
+            const rule_type = jsonField(body, "type");
+            if (!std.mem.eql(u8, rule_type, "spread") and !std.mem.eql(u8, rule_type, "slippage")) {
+                req.setStatusNumeric(400);
+                try req.sendJson("{\"error\":\"type must be spread or slippage\"}");
+                return;
+            }
+            const value = std.fmt.parseFloat(f64, jsonField(body, "value")) catch {
+                req.setStatusNumeric(400);
+                try req.sendJson("{\"error\":\"value must be a non-negative number\"}");
+                return;
+            };
+            if (!std.math.isFinite(value) or value < 0) {
+                req.setStatusNumeric(400);
+                try req.sendJson("{\"error\":\"value must be a non-negative number\"}");
+                return;
+            }
+            db.updateEnvironmentRule(id, rule_type, value) catch |err| {
+                std.debug.print("environment rule update error: {}\n", .{err});
+                req.setStatusNumeric(500);
+                try req.sendJson("{\"error\":\"environment rule update failed\"}");
+                return;
+            };
+            try req.sendJson("{\"ok\":true}");
+            return;
+        }
+        if (std.mem.eql(u8, req.method orelse "", "POST")) {
+            const body = req.body orelse {
+                req.setStatusNumeric(400);
+                try req.sendJson("{\"error\":\"no body\"}");
+                return;
+            };
+            const rule_type = jsonField(body, "type");
+            if (!std.mem.eql(u8, rule_type, "spread") and !std.mem.eql(u8, rule_type, "slippage")) {
+                req.setStatusNumeric(400);
+                try req.sendJson("{\"error\":\"type must be spread or slippage\"}");
+                return;
+            }
+            const value = std.fmt.parseFloat(f64, jsonField(body, "value")) catch {
+                req.setStatusNumeric(400);
+                try req.sendJson("{\"error\":\"value must be a non-negative number\"}");
+                return;
+            };
+            if (!std.math.isFinite(value) or value < 0) {
+                req.setStatusNumeric(400);
+                try req.sendJson("{\"error\":\"value must be a non-negative number\"}");
+                return;
+            }
+            db.createEnvironmentRule(.{ .environment_id = id, .rule_type = rule_type, .value = value }) catch |err| switch (err) {
+                error.RuleExistsOrEnvironmentMissing => {
+                    req.setStatusNumeric(409);
+                    try req.sendJson("{\"error\":\"this environment already has that rule\"}");
+                    return;
+                },
+                else => {
+                    std.debug.print("environment rule create error: {}\n", .{err});
+                    req.setStatusNumeric(500);
+                    try req.sendJson("{\"error\":\"environment rule save failed\"}");
+                    return;
+                },
+            };
+            try req.sendJson("{\"ok\":true}");
+            return;
+        }
+        req.setStatusNumeric(405);
+        try req.sendJson("{\"error\":\"use GET, POST, PUT, or DELETE\"}");
+        return;
+    }
+
+    // GET /api/environments/:id/strategies — only strategy source files that
+    // exist under src/strategies/<environment-name>/ are selectable.
+    const strategy_suffix = "/strategies";
+    if (std.mem.startsWith(u8, path, environment_prefix) and std.mem.endsWith(u8, path, strategy_suffix)) {
+        if (!std.mem.eql(u8, req.method orelse "", "GET")) {
+            req.setStatusNumeric(405);
+            try req.sendJson("{\"error\":\"use GET\"}");
+            return;
+        }
+        const id_text = path[environment_prefix.len .. path.len - strategy_suffix.len];
+        if (id_text.len == 0 or std.mem.indexOfScalar(u8, id_text, '/') != null) {
+            req.setStatusNumeric(404);
+            try req.sendJson("{\"error\":\"environment not found\"}");
+            return;
+        }
+        const id = std.fmt.parseInt(i64, id_text, 10) catch {
+            req.setStatusNumeric(400);
+            try req.sendJson("{\"error\":\"invalid environment id\"}");
+            return;
+        };
+        var name_buf: [128]u8 = undefined;
+        const name = db.getEnvironmentName(id, &name_buf) catch |err| {
+            std.debug.print("environment strategy lookup error: {}\n", .{err});
+            req.setStatusNumeric(500);
+            try req.sendJson("{\"error\":\"environment read failed\"}");
+            return;
+        } orelse {
+            req.setStatusNumeric(404);
+            try req.sendJson("{\"error\":\"environment not found\"}");
+            return;
+        };
+        const response = environmentStrategiesJson(req.io, alloc, name) catch |err| {
+            std.debug.print("environment strategy scan error: {}\n", .{err});
+            req.setStatusNumeric(500);
+            try req.sendJson("{\"error\":\"strategy scan failed\"}");
+            return;
+        };
+        defer alloc.free(response);
+        try sendJson(req, response);
         return;
     }
 
@@ -340,7 +680,6 @@ pub fn onRequest(req: *http.Ctx) !void {
         return;
     }
 
-
     // GET /api/trades/:id/fx — saved FX-execution trades (binary, same format as
     // /api/trades/:id). Must precede the /api/trades/ prefix match below.
     if (std.mem.startsWith(u8, path, "/api/trades/") and std.mem.endsWith(u8, path, "/fx")) {
@@ -363,7 +702,7 @@ pub fn onRequest(req: *http.Ctx) !void {
     }
 
     if (std.mem.startsWith(u8, path, "/api/trades/")) {
-        const id_str      = path["/api/trades/".len..];
+        const id_str = path["/api/trades/".len..];
         const backtest_id = std.fmt.parseInt(i64, id_str, 10) catch {
             req.setStatusNumeric(400);
             try req.sendJson("{\"error\":\"invalid id\"}");
@@ -413,9 +752,9 @@ pub fn onRequest(req: *http.Ctx) !void {
         // Optional ISO date bounds. `from` alone (open-ended) backs the live
         // "Latest" mode; `from`+`to` backs a static historical range.
         const q_from = queryParam(query, "from") orelse "";
-        const q_to   = queryParam(query, "to")   orelse "";
+        const q_to = queryParam(query, "to") orelse "";
         const from = if (isIsoDate(q_from)) q_from else "";
-        const to   = if (isIsoDate(q_to))   q_to   else "";
+        const to = if (isIsoDate(q_to)) q_to else "";
 
         var valid_symbol = false;
         if (std.mem.eql(u8, q_symbol, "nq") or std.mem.eql(u8, q_symbol, "es")) {
@@ -440,13 +779,13 @@ pub fn onRequest(req: *http.Ctx) !void {
         return;
     }
 
-    if (std.mem.eql(u8, path, "/api/march/indicators/zara-noise-area")) {
+    if (std.mem.eql(u8, path, "/api/march/indicators/noise-area")) {
         const query = req.query orelse "";
         const q_symbol = queryParam(query, "symbol") orelse "nq";
         const q_from = queryParam(query, "from") orelse "";
-        const q_to   = queryParam(query, "to")   orelse "";
+        const q_to = queryParam(query, "to") orelse "";
         const from = if (isIsoDate(q_from)) q_from else "";
-        const to   = if (isIsoDate(q_to))   q_to   else "";
+        const to = if (isIsoDate(q_to)) q_to else "";
 
         var valid_symbol = false;
         if (std.mem.eql(u8, q_symbol, "nq") or std.mem.eql(u8, q_symbol, "es")) {
@@ -459,8 +798,8 @@ pub fn onRequest(req: *http.Ctx) !void {
             return;
         }
 
-        const body = bt_run.fetchZaraNoiseArea(req.io, q_symbol, from, to) catch |err| {
-            std.debug.print("zara noise area fetch error: {}\n", .{err});
+        const body = bt_run.fetchNoiseArea(req.io, q_symbol, from, to) catch |err| {
+            std.debug.print("noise area fetch error: {}\n", .{err});
             req.setStatusNumeric(503);
             try req.sendJson("{\"error\":\"fetch failed\"}");
             return;
@@ -475,9 +814,9 @@ pub fn onRequest(req: *http.Ctx) !void {
         const query = req.query orelse "";
         const tf = queryParam(query, "tf") orelse "1m";
         const q_from = queryParam(query, "from") orelse "";
-        const q_to   = queryParam(query, "to")   orelse "";
+        const q_to = queryParam(query, "to") orelse "";
         const from = if (isIsoDate(q_from)) q_from else "";
-        const to   = if (isIsoDate(q_to))   q_to   else "";
+        const to = if (isIsoDate(q_to)) q_to else "";
 
         const body = cache.fetchFxNqCandles(req.io, alloc, tf, from, to) catch |err| {
             std.debug.print("fx_nq candles fetch error: {}\n", .{err});
