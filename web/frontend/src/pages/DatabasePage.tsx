@@ -5,6 +5,7 @@ import { fetchDatabaseSummary } from '../api'
 const datasets = [
   { name: 'ES', datasetName: 'S&P 500 Futures', country: 'United States', type: 'Futures', timeframe: '1m...1d', availableTimeframes: ['1m', '5m', '15m', '30m', '1h', '4h', '1d'] },
   { name: 'NQ', datasetName: 'Nasdaq-100 Futures', country: 'United States', type: 'Futures', timeframe: '1m...1d', availableTimeframes: ['1m', '5m', '15m', '30m', '1h', '4h', '1d'] },
+  { name: 'QQQ Options', datasetName: 'Invesco QQQ Trust Options', country: 'United States', type: 'Options', timeframe: '1m...1d', availableTimeframes: ['1m', '5m', '15m', '30m', '1h', '4h', '1d'] },
   { name: 'VIX', datasetName: 'CBOE Volatility Index', country: 'United States', type: 'Index', timeframe: '1d', availableTimeframes: ['1d'] },
 ] as const
 

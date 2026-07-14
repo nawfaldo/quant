@@ -34,8 +34,8 @@ pub fn fetchVwap(io: std.Io, a: std.mem.Allocator) ![]const u8 {
     return withRetry(io, buildVwap, .{ io, a });
 }
 
-const RTH_OPEN_MIN: u32  = 9 * 60 + 30; // 09:30 ET
-const RTH_CLOSE_MIN: u32 = 16 * 60;     // 16:00 ET
+const RTH_OPEN_MIN: u32 = 9 * 60 + 30; // 09:30 ET
+const RTH_CLOSE_MIN: u32 = 16 * 60; // 16:00 ET
 
 // QuestDB can transiently drop a connection mid-response when the cache fires
 // several large queries back-to-back at startup. A truncated stream must never
@@ -64,10 +64,11 @@ fn buildTf(io: std.Io, a: std.mem.Allocator, idx: usize, symbol: []const u8, fro
     // upper bound the start of the day after `to`, so the whole `to` day is kept.
     const table = try std.fmt.allocPrint(a, "{s}_{s}", .{ symbol, TF_NAMES[idx] });
     defer a.free(table);
-    const sql = try std.fmt.allocPrint(a,
+    const sql = try std.fmt.allocPrint(
+        a,
         "SELECT cast(timestamp as long) ts, open, high, low, close FROM {s}" ++
-        " WHERE timestamp >= '{s}' AND timestamp < dateadd('d', 1, '{s}')" ++
-        " ORDER BY timestamp ASC",
+            " WHERE timestamp >= '{s}' AND timestamp < dateadd('d', 1, '{s}')" ++
+            " ORDER BY timestamp ASC",
         .{ table, from, to },
     );
     defer a.free(sql);
@@ -96,20 +97,20 @@ fn buildTf(io: std.Io, a: std.mem.Allocator, idx: usize, symbol: []const u8, fro
         if (c4 >= line.len) continue;
 
         const ts_micros = std.fmt.parseInt(i64, line[0..c1], 10) catch continue;
-        const open  = std.fmt.parseFloat(f32, line[c1 + 1 .. c2]) catch continue;
-        const high  = std.fmt.parseFloat(f32, line[c2 + 1 .. c3]) catch continue;
-        const low   = std.fmt.parseFloat(f32, line[c3 + 1 .. c4]) catch continue;
-        const close = std.fmt.parseFloat(f32, line[c4 + 1 ..])    catch continue;
+        const open = std.fmt.parseFloat(f32, line[c1 + 1 .. c2]) catch continue;
+        const high = std.fmt.parseFloat(f32, line[c2 + 1 .. c3]) catch continue;
+        const low = std.fmt.parseFloat(f32, line[c3 + 1 .. c4]) catch continue;
+        const close = std.fmt.parseFloat(f32, line[c4 + 1 ..]) catch continue;
 
         const ts_secs: u32 = @intCast(@divFloor(ts_micros, 1_000_000));
         try out.ensureUnusedCapacity(a, ROW_BYTES);
         const dst = out.items.len;
         out.items.len += ROW_BYTES;
-        std.mem.writeInt(u32, out.items[dst..][0..4],      ts_secs,        .little);
+        std.mem.writeInt(u32, out.items[dst..][0..4], ts_secs, .little);
         std.mem.writeInt(u32, out.items[dst + 4 ..][0..4], @bitCast(open), .little);
         std.mem.writeInt(u32, out.items[dst + 8 ..][0..4], @bitCast(high), .little);
-        std.mem.writeInt(u32, out.items[dst + 12..][0..4], @bitCast(low),  .little);
-        std.mem.writeInt(u32, out.items[dst + 16..][0..4], @bitCast(close),.little);
+        std.mem.writeInt(u32, out.items[dst + 12 ..][0..4], @bitCast(low), .little);
+        std.mem.writeInt(u32, out.items[dst + 16 ..][0..4], @bitCast(close), .little);
         count += 1;
     }
 
@@ -130,7 +131,9 @@ fn buildTf(io: std.Io, a: std.mem.Allocator, idx: usize, symbol: []const u8, fro
 // and the RTH+evening session (09:30–24:00). A value of 0 is emitted only when
 // no volume has accumulated yet (start of a session).
 fn buildVwap(io: std.Io, a: std.mem.Allocator) ![]const u8 {
-    var rd = try questdb.open(io, a,
+    var rd = try questdb.open(
+        io,
+        a,
         "SELECT cast(timestamp as long) ts, high, low, close, volume FROM nq_1m ORDER BY timestamp ASC",
     );
     defer rd.deinit();
@@ -143,9 +146,9 @@ fn buildVwap(io: std.Io, a: std.mem.Allocator) ![]const u8 {
 
     var cur_day: i64 = -1;
     var rth_anchored: bool = false; // has the 09:30 re-anchor fired for cur_day yet?
-    var cum_pv: f64  = 0;
+    var cum_pv: f64 = 0;
     var cum_vol: f64 = 0;
-    var count: u32   = 0;
+    var count: u32 = 0;
 
     while (rd.nextLine()) |line| {
         if (line.len == 0) continue;
@@ -161,10 +164,10 @@ fn buildVwap(io: std.Io, a: std.mem.Allocator) ![]const u8 {
         if (c4 >= line.len) continue;
 
         const ts_micros = std.fmt.parseInt(i64, line[0..c1], 10) catch continue;
-        const high   = std.fmt.parseFloat(f64, line[c1 + 1 .. c2]) catch continue;
-        const low    = std.fmt.parseFloat(f64, line[c2 + 1 .. c3]) catch continue;
-        const close  = std.fmt.parseFloat(f64, line[c3 + 1 .. c4]) catch continue;
-        const volume = std.fmt.parseFloat(f64, line[c4 + 1 ..])    catch continue;
+        const high = std.fmt.parseFloat(f64, line[c1 + 1 .. c2]) catch continue;
+        const low = std.fmt.parseFloat(f64, line[c2 + 1 .. c3]) catch continue;
+        const close = std.fmt.parseFloat(f64, line[c3 + 1 .. c4]) catch continue;
+        const volume = std.fmt.parseFloat(f64, line[c4 + 1 ..]) catch continue;
 
         const ts_secs: u32 = @intCast(@divFloor(ts_micros, 1_000_000));
 
@@ -172,13 +175,13 @@ fn buildVwap(io: std.Io, a: std.mem.Allocator) ![]const u8 {
         // (see AGENT.md timezone model). Do NOT apply any timezone conversion —
         // derive the ET day and minute-of-day directly, the same way the frontend
         // candle/OpeningRange logic does.
-        const et_day: i64  = @divFloor(@as(i64, ts_secs), 86_400);
+        const et_day: i64 = @divFloor(@as(i64, ts_secs), 86_400);
         const min_of_day: u32 = @intCast(@divFloor(@mod(@as(i64, ts_secs), 86_400), 60));
 
         // Midnight re-anchor — each ET day's overnight session starts fresh.
         if (et_day != cur_day) {
             cur_day = et_day;
-            cum_pv  = 0;
+            cum_pv = 0;
             cum_vol = 0;
             rth_anchored = false;
         }
@@ -187,14 +190,14 @@ fn buildVwap(io: std.Io, a: std.mem.Allocator) ![]const u8 {
         // accumulator resets so the RTH+evening session is independent of the
         // overnight session.
         if (!rth_anchored and min_of_day >= RTH_OPEN_MIN) {
-            cum_pv  = 0;
+            cum_pv = 0;
             cum_vol = 0;
             rth_anchored = true;
         }
 
         // Every bar contributes (24h VWAP).
         const typical = (high + low + close) / 3.0;
-        cum_pv  += typical * volume;
+        cum_pv += typical * volume;
         cum_vol += volume;
         var v: f32 = 0;
         if (cum_vol > 0) v = @floatCast(cum_pv / cum_vol);
@@ -202,7 +205,7 @@ fn buildVwap(io: std.Io, a: std.mem.Allocator) ![]const u8 {
         try out.ensureUnusedCapacity(a, VWAP_ROW_BYTES);
         const dst = out.items.len;
         out.items.len += VWAP_ROW_BYTES;
-        std.mem.writeInt(u32, out.items[dst..][0..4],      ts_secs,     .little);
+        std.mem.writeInt(u32, out.items[dst..][0..4], ts_secs, .little);
         std.mem.writeInt(u32, out.items[dst + 4 ..][0..4], @bitCast(v), .little);
         count += 1;
     }
@@ -210,11 +213,11 @@ fn buildVwap(io: std.Io, a: std.mem.Allocator) ![]const u8 {
     if (!rd.complete) return error.IncompleteResponse;
 
     std.mem.writeInt(u32, out.items[0..4], VWAP_MAGIC, .little);
-    std.mem.writeInt(u32, out.items[4..8], count,      .little);
+    std.mem.writeInt(u32, out.items[4..8], count, .little);
     return out.toOwnedSlice(a);
 }
 
-// Daily VIX closes from vix_1d (imported by data_collection/fetch_vix.py) as
+// Daily VIX closes from vix_1d (imported by data_manipulation/fetch_vix.py) as
 // compact JSON: [[epoch_secs, close], ...]. Timestamps follow the pipeline's
 // fake-UTC ET convention. Empty bounds return the full history (~9k rows).
 pub fn fetchVixDaily(io: std.Io, a: std.mem.Allocator, from: []const u8, to: []const u8) ![]const u8 {
@@ -263,7 +266,7 @@ fn trimCsvQuotes(value: []const u8) []const u8 {
 }
 
 fn buildDatabaseSummary(io: std.Io, a: std.mem.Allocator) ![]const u8 {
-    const prefixes = [_][]const u8{ "es", "nq" };
+    const prefixes = [_][]const u8{ "es", "nq", "qqq_options" };
     var sql: std.ArrayList(u8) = .empty;
     defer sql.deinit(a);
 
@@ -272,7 +275,8 @@ fn buildDatabaseSummary(io: std.Io, a: std.mem.Allocator) ![]const u8 {
         for (TF_NAMES) |tf| {
             if (!first) try sql.appendSlice(a, " UNION ALL ");
             first = false;
-            const segment = try std.fmt.allocPrint(a,
+            const segment = try std.fmt.allocPrint(
+                a,
                 "SELECT '{s}' AS name, sum(diskSize) AS bytes, min(minTimestamp) AS first_date, max(maxTimestamp) AS last_date FROM table_partitions('{s}_{s}')",
                 .{ prefix, prefix, tf },
             );
@@ -288,9 +292,11 @@ fn buildDatabaseSummary(io: std.Io, a: std.mem.Allocator) ![]const u8 {
     _ = rd.nextLine(); // CSV column headers
     var es_bytes: u64 = 0;
     var nq_bytes: u64 = 0;
+    var qqq_options_bytes: u64 = 0;
     var vix_bytes: u64 = 0;
     var es_dates: DateBounds = .{};
     var nq_dates: DateBounds = .{};
+    var qqq_options_dates: DateBounds = .{};
     var vix_dates: DateBounds = .{};
     while (rd.nextLine()) |line| {
         const comma = std.mem.indexOfScalar(u8, line, ',') orelse continue;
@@ -306,6 +312,9 @@ fn buildDatabaseSummary(io: std.Io, a: std.mem.Allocator) ![]const u8 {
         } else if (std.mem.eql(u8, name, "nq")) {
             nq_bytes += bytes;
             nq_dates.update(first_date, last_date);
+        } else if (std.mem.eql(u8, name, "qqq_options")) {
+            qqq_options_bytes += bytes;
+            qqq_options_dates.update(first_date, last_date);
         } else if (std.mem.eql(u8, name, "vix")) {
             vix_bytes += bytes;
             vix_dates.update(first_date, last_date);
@@ -313,18 +322,20 @@ fn buildDatabaseSummary(io: std.Io, a: std.mem.Allocator) ![]const u8 {
     }
     if (!rd.complete) return error.IncompleteResponse;
 
-    return std.fmt.allocPrint(a,
-        "[{{\"name\":\"ES\",\"bytes\":{},\"firstDate\":\"{s}\",\"lastDate\":\"{s}\"}},{{\"name\":\"NQ\",\"bytes\":{},\"firstDate\":\"{s}\",\"lastDate\":\"{s}\"}},{{\"name\":\"VIX\",\"bytes\":{},\"firstDate\":\"{s}\",\"lastDate\":\"{s}\"}}]",
-        .{ es_bytes, es_dates.firstSlice(), es_dates.lastSlice(), nq_bytes, nq_dates.firstSlice(), nq_dates.lastSlice(), vix_bytes, vix_dates.firstSlice(), vix_dates.lastSlice() },
+    return std.fmt.allocPrint(
+        a,
+        "[{{\"name\":\"ES\",\"bytes\":{},\"firstDate\":\"{s}\",\"lastDate\":\"{s}\"}},{{\"name\":\"NQ\",\"bytes\":{},\"firstDate\":\"{s}\",\"lastDate\":\"{s}\"}},{{\"name\":\"QQQ Options\",\"bytes\":{},\"firstDate\":\"{s}\",\"lastDate\":\"{s}\"}},{{\"name\":\"VIX\",\"bytes\":{},\"firstDate\":\"{s}\",\"lastDate\":\"{s}\"}}]",
+        .{ es_bytes, es_dates.firstSlice(), es_dates.lastSlice(), nq_bytes, nq_dates.firstSlice(), nq_dates.lastSlice(), qqq_options_bytes, qqq_options_dates.firstSlice(), qqq_options_dates.lastSlice(), vix_bytes, vix_dates.firstSlice(), vix_dates.lastSlice() },
     );
 }
 
 fn buildVixDaily(io: std.Io, a: std.mem.Allocator, from: []const u8, to: []const u8) ![]const u8 {
     const sql = if (from.len > 0 and to.len > 0)
-        try std.fmt.allocPrint(a,
+        try std.fmt.allocPrint(
+            a,
             "SELECT cast(timestamp as long) ts, close FROM vix_1d" ++
-            " WHERE timestamp >= '{s}' AND timestamp < dateadd('d', 1, '{s}')" ++
-            " ORDER BY timestamp ASC",
+                " WHERE timestamp >= '{s}' AND timestamp < dateadd('d', 1, '{s}')" ++
+                " ORDER BY timestamp ASC",
             .{ from, to },
         )
     else
@@ -370,6 +381,17 @@ pub fn fetchMarchTicks(io: std.Io, a: std.mem.Allocator, symbol: []const u8, sin
     return withRetry(io, buildMarchTicks, .{ io, a, symbol, since });
 }
 
+// Estimated volume delta from 1-minute OHLCV, aggregated into the chart's
+// active timeframe. Each 1m bar contributes CLV-weighted volume:
+// ((2*close-high-low)/(high-low))*volume.
+pub fn fetchMarchVolumeDelta(io: std.Io, a: std.mem.Allocator, symbol: []const u8, tf: []const u8, from: []const u8, to: []const u8) ![]const u8 {
+    for (TF_NAMES) |valid_tf| {
+        if (std.mem.eql(u8, valid_tf, tf))
+            return withRetry(io, buildMarchVolumeDelta, .{ io, a, symbol, tf, from, to });
+    }
+    return a.dupe(u8, "[]");
+}
+
 // fx_nq overlay candles: aggregate the fx_nq_ticks tick table (timestamp, BID,
 // ASK) into OHLC bars at `tf`, using the tick MID = (BID+ASK)/2 — the same price
 // fx.zig fills against. Returns the same binary blob format as the regular
@@ -382,11 +404,12 @@ fn buildMarchTickCandles(io: std.Io, a: std.mem.Allocator, symbol: []const u8, t
     const table = try std.fmt.allocPrint(a, "bm_{s}_ticks", .{symbol});
     defer a.free(table);
 
-    const sql = try std.fmt.allocPrint(a,
+    const sql = try std.fmt.allocPrint(
+        a,
         "SELECT cast(timestamp as long) ts, first(price) open, max(price) high, min(price) low, last(price) close, sum(size) volume " ++
-        "FROM {s} WHERE timestamp > {} " ++
-        "SAMPLE BY {s} FILL(NONE) ALIGN TO CALENDAR " ++
-        "ORDER BY timestamp ASC",
+            "FROM {s} WHERE timestamp > {} " ++
+            "SAMPLE BY {s} FILL(NONE) ALIGN TO CALENDAR " ++
+            "ORDER BY timestamp ASC",
         .{ table, since_ns, tf },
     );
     defer a.free(sql);
@@ -416,23 +439,23 @@ fn buildMarchTickCandles(io: std.Io, a: std.mem.Allocator, symbol: []const u8, t
         if (c5 >= line.len) continue;
 
         const ts_nanos = std.fmt.parseInt(i64, line[0..c1], 10) catch continue;
-        const open  = std.fmt.parseFloat(f32, line[c1 + 1 .. c2]) catch continue;
-        const high  = std.fmt.parseFloat(f32, line[c2 + 1 .. c3]) catch continue;
-        const low   = std.fmt.parseFloat(f32, line[c3 + 1 .. c4]) catch continue;
+        const open = std.fmt.parseFloat(f32, line[c1 + 1 .. c2]) catch continue;
+        const high = std.fmt.parseFloat(f32, line[c2 + 1 .. c3]) catch continue;
+        const low = std.fmt.parseFloat(f32, line[c3 + 1 .. c4]) catch continue;
         const close = std.fmt.parseFloat(f32, line[c4 + 1 .. c5]) catch continue;
-        const volume = std.fmt.parseFloat(f32, line[c5 + 1 ..])   catch continue;
+        const volume = std.fmt.parseFloat(f32, line[c5 + 1 ..]) catch continue;
 
         // TIMESTAMP_NS to seconds
         const ts_secs: u32 = @intCast(@divFloor(ts_nanos, 1_000_000_000));
         try out.ensureUnusedCapacity(a, 24);
         const dst = out.items.len;
         out.items.len += 24;
-        std.mem.writeInt(u32, out.items[dst..][0..4],      ts_secs,          .little);
-        std.mem.writeInt(u32, out.items[dst + 4 ..][0..4], @bitCast(open),   .little);
-        std.mem.writeInt(u32, out.items[dst + 8 ..][0..4], @bitCast(high),   .little);
-        std.mem.writeInt(u32, out.items[dst + 12..][0..4], @bitCast(low),    .little);
-        std.mem.writeInt(u32, out.items[dst + 16..][0..4], @bitCast(close),  .little);
-        std.mem.writeInt(u32, out.items[dst + 20..][0..4], @bitCast(volume), .little);
+        std.mem.writeInt(u32, out.items[dst..][0..4], ts_secs, .little);
+        std.mem.writeInt(u32, out.items[dst + 4 ..][0..4], @bitCast(open), .little);
+        std.mem.writeInt(u32, out.items[dst + 8 ..][0..4], @bitCast(high), .little);
+        std.mem.writeInt(u32, out.items[dst + 12 ..][0..4], @bitCast(low), .little);
+        std.mem.writeInt(u32, out.items[dst + 16 ..][0..4], @bitCast(close), .little);
+        std.mem.writeInt(u32, out.items[dst + 20 ..][0..4], @bitCast(volume), .little);
         count += 1;
     }
 
@@ -450,23 +473,26 @@ fn buildMarchCandles(io: std.Io, a: std.mem.Allocator, symbol: []const u8, tf: [
     defer a.free(table);
 
     const sql = if (from.len > 0 and to.len > 0)
-        try std.fmt.allocPrint(a,
+        try std.fmt.allocPrint(
+            a,
             "SELECT cast(timestamp as long) ts, open, high, low, close, volume FROM {s}" ++
-            " WHERE timestamp >= '{s}' AND timestamp < dateadd('d', 1, '{s}')" ++
-            " ORDER BY timestamp ASC",
+                " WHERE timestamp >= '{s}' AND timestamp < dateadd('d', 1, '{s}')" ++
+                " ORDER BY timestamp ASC",
             .{ table, from, to },
         )
     else if (from.len > 0)
-        try std.fmt.allocPrint(a,
+        try std.fmt.allocPrint(
+            a,
             "SELECT cast(timestamp as long) ts, open, high, low, close, volume FROM {s}" ++
-            " WHERE timestamp >= '{s}' ORDER BY timestamp ASC",
+                " WHERE timestamp >= '{s}' ORDER BY timestamp ASC",
             .{ table, from },
         )
     else
-        try std.fmt.allocPrint(a,
+        try std.fmt.allocPrint(
+            a,
             "SELECT ts, open, high, low, close, volume FROM (" ++
-            "SELECT cast(timestamp as long) ts, open, high, low, close, volume FROM {s} ORDER BY timestamp DESC LIMIT 1500" ++
-            ") ORDER BY ts ASC",
+                "SELECT cast(timestamp as long) ts, open, high, low, close, volume FROM {s} ORDER BY timestamp DESC LIMIT 1500" ++
+                ") ORDER BY ts ASC",
             .{table},
         );
     defer a.free(sql);
@@ -500,22 +526,22 @@ fn buildMarchCandles(io: std.Io, a: std.mem.Allocator, symbol: []const u8, tf: [
         // nq_ tables are QuestDB TIMESTAMP (microseconds), so scale by 1e6 — not
         // 1e9 like the old bm_nq_ticks (TIMESTAMP_NS) source did.
         const ts_micros = std.fmt.parseInt(i64, line[0..c1], 10) catch continue;
-        const open  = std.fmt.parseFloat(f32, line[c1 + 1 .. c2]) catch continue;
-        const high  = std.fmt.parseFloat(f32, line[c2 + 1 .. c3]) catch continue;
-        const low   = std.fmt.parseFloat(f32, line[c3 + 1 .. c4]) catch continue;
+        const open = std.fmt.parseFloat(f32, line[c1 + 1 .. c2]) catch continue;
+        const high = std.fmt.parseFloat(f32, line[c2 + 1 .. c3]) catch continue;
+        const low = std.fmt.parseFloat(f32, line[c3 + 1 .. c4]) catch continue;
         const close = std.fmt.parseFloat(f32, line[c4 + 1 .. c5]) catch continue;
-        const volume = std.fmt.parseFloat(f32, line[c5 + 1 ..])   catch continue;
+        const volume = std.fmt.parseFloat(f32, line[c5 + 1 ..]) catch continue;
 
         const ts_secs: u32 = @intCast(@divFloor(ts_micros, 1_000_000));
         try out.ensureUnusedCapacity(a, 24);
         const dst = out.items.len;
         out.items.len += 24;
-        std.mem.writeInt(u32, out.items[dst..][0..4],      ts_secs,          .little);
-        std.mem.writeInt(u32, out.items[dst + 4 ..][0..4], @bitCast(open),   .little);
-        std.mem.writeInt(u32, out.items[dst + 8 ..][0..4], @bitCast(high),   .little);
-        std.mem.writeInt(u32, out.items[dst + 12..][0..4], @bitCast(low),    .little);
-        std.mem.writeInt(u32, out.items[dst + 16..][0..4], @bitCast(close),  .little);
-        std.mem.writeInt(u32, out.items[dst + 20..][0..4], @bitCast(volume), .little);
+        std.mem.writeInt(u32, out.items[dst..][0..4], ts_secs, .little);
+        std.mem.writeInt(u32, out.items[dst + 4 ..][0..4], @bitCast(open), .little);
+        std.mem.writeInt(u32, out.items[dst + 8 ..][0..4], @bitCast(high), .little);
+        std.mem.writeInt(u32, out.items[dst + 12 ..][0..4], @bitCast(low), .little);
+        std.mem.writeInt(u32, out.items[dst + 16 ..][0..4], @bitCast(close), .little);
+        std.mem.writeInt(u32, out.items[dst + 20 ..][0..4], @bitCast(volume), .little);
         last_ts_micros = ts_micros;
         count += 1;
     }
@@ -565,7 +591,8 @@ fn buildFxNqCandles(io: std.Io, a: std.mem.Allocator, tf: []const u8, from: []co
     const sql = if (from.len > 0)
         try std.fmt.allocPrint(a, agg, .{ where, tf })
     else
-        try std.fmt.allocPrint(a,
+        try std.fmt.allocPrint(
+            a,
             "SELECT ts, open, high, low, close, volume FROM (" ++ agg ++ " ORDER BY ts DESC LIMIT 1500) ORDER BY ts ASC",
             .{ where, tf },
         );
@@ -597,22 +624,22 @@ fn buildFxNqCandles(io: std.Io, a: std.mem.Allocator, tf: []const u8, from: []co
         if (c5 >= line.len) continue;
 
         const ts_micros = std.fmt.parseInt(i64, line[0..c1], 10) catch continue;
-        const open  = std.fmt.parseFloat(f32, line[c1 + 1 .. c2]) catch continue;
-        const high  = std.fmt.parseFloat(f32, line[c2 + 1 .. c3]) catch continue;
-        const low   = std.fmt.parseFloat(f32, line[c3 + 1 .. c4]) catch continue;
+        const open = std.fmt.parseFloat(f32, line[c1 + 1 .. c2]) catch continue;
+        const high = std.fmt.parseFloat(f32, line[c2 + 1 .. c3]) catch continue;
+        const low = std.fmt.parseFloat(f32, line[c3 + 1 .. c4]) catch continue;
         const close = std.fmt.parseFloat(f32, line[c4 + 1 .. c5]) catch continue;
-        const volume = std.fmt.parseFloat(f32, line[c5 + 1 ..])   catch continue;
+        const volume = std.fmt.parseFloat(f32, line[c5 + 1 ..]) catch continue;
 
         const ts_secs: u32 = @intCast(@divFloor(ts_micros, 1_000_000));
         try out.ensureUnusedCapacity(a, 24);
         const dst = out.items.len;
         out.items.len += 24;
-        std.mem.writeInt(u32, out.items[dst..][0..4],      ts_secs,          .little);
-        std.mem.writeInt(u32, out.items[dst + 4 ..][0..4], @bitCast(open),   .little);
-        std.mem.writeInt(u32, out.items[dst + 8 ..][0..4], @bitCast(high),   .little);
-        std.mem.writeInt(u32, out.items[dst + 12..][0..4], @bitCast(low),    .little);
-        std.mem.writeInt(u32, out.items[dst + 16..][0..4], @bitCast(close),  .little);
-        std.mem.writeInt(u32, out.items[dst + 20..][0..4], @bitCast(volume), .little);
+        std.mem.writeInt(u32, out.items[dst..][0..4], ts_secs, .little);
+        std.mem.writeInt(u32, out.items[dst + 4 ..][0..4], @bitCast(open), .little);
+        std.mem.writeInt(u32, out.items[dst + 8 ..][0..4], @bitCast(high), .little);
+        std.mem.writeInt(u32, out.items[dst + 12 ..][0..4], @bitCast(low), .little);
+        std.mem.writeInt(u32, out.items[dst + 16 ..][0..4], @bitCast(close), .little);
+        std.mem.writeInt(u32, out.items[dst + 20 ..][0..4], @bitCast(volume), .little);
         count += 1;
     }
 
@@ -629,17 +656,19 @@ fn buildMarchTicks(io: std.Io, a: std.mem.Allocator, symbol: []const u8, since: 
 
     var sql: []const u8 = undefined;
     if (since) |s| {
-        sql = try std.fmt.allocPrint(a,
+        sql = try std.fmt.allocPrint(
+            a,
             "SELECT cast(timestamp as long) ts, price, size, side " ++
-            "FROM {s} WHERE cast(timestamp as long) > {} ORDER BY timestamp ASC LIMIT 10000",
+                "FROM {s} WHERE cast(timestamp as long) > {} ORDER BY timestamp ASC LIMIT 10000",
             .{ table, s },
         );
     } else {
         // Default to returning the last 100 ticks sorted ascending
-        sql = try std.fmt.allocPrint(a,
+        sql = try std.fmt.allocPrint(
+            a,
             "SELECT ts, price, size, side FROM (" ++
-            "SELECT cast(timestamp as long) ts, price, size, side FROM {s} ORDER BY timestamp DESC LIMIT 100" ++
-            ") ORDER BY ts ASC",
+                "SELECT cast(timestamp as long) ts, price, size, side FROM {s} ORDER BY timestamp DESC LIMIT 100" ++
+                ") ORDER BY ts ASC",
             .{table},
         );
     }
@@ -689,5 +718,64 @@ fn buildMarchTicks(io: std.Io, a: std.mem.Allocator, symbol: []const u8, since: 
     if (!rd.complete) return error.IncompleteResponse;
 
     try out.appendSlice(a, "]");
+    return out.toOwnedSlice(a);
+}
+
+fn buildMarchVolumeDelta(io: std.Io, a: std.mem.Allocator, symbol: []const u8, tf: []const u8, from: []const u8, to: []const u8) ![]const u8 {
+    const table = try std.fmt.allocPrint(a, "{s}_1m", .{symbol});
+    defer a.free(table);
+
+    const select =
+        "SELECT cast(timestamp as long) ts, " ++
+        "sum(CASE WHEN high > low THEN ((2.0*close-high-low)/(high-low))*volume ELSE 0.0 END) delta " ++
+        "FROM ";
+    const sql = if (from.len > 0 and to.len > 0)
+        try std.fmt.allocPrint(
+            a,
+            select ++ "{s} WHERE timestamp >= '{s}' AND timestamp < dateadd('d', 1, '{s}') " ++
+                "SAMPLE BY {s} FILL(NONE) ALIGN TO CALENDAR ORDER BY timestamp ASC",
+            .{ table, from, to, tf },
+        )
+    else if (from.len > 0)
+        try std.fmt.allocPrint(
+            a,
+            select ++ "{s} WHERE timestamp >= '{s}' " ++
+                "SAMPLE BY {s} FILL(NONE) ALIGN TO CALENDAR ORDER BY timestamp ASC",
+            .{ table, from, tf },
+        )
+    else
+        try std.fmt.allocPrint(
+            a,
+            select ++ "{s} WHERE timestamp >= dateadd('d', -7, now()) " ++
+                "SAMPLE BY {s} FILL(NONE) ALIGN TO CALENDAR ORDER BY timestamp ASC",
+            .{ table, tf },
+        );
+    defer a.free(sql);
+
+    var rd = try questdb.open(io, a, sql);
+    defer rd.deinit();
+
+    var out: std.ArrayList(u8) = .empty;
+    errdefer out.deinit(a);
+    try out.append(a, '[');
+
+    _ = rd.nextLine();
+    var first = true;
+    while (rd.nextLine()) |line| {
+        if (line.len == 0) continue;
+        const comma = std.mem.indexOfScalar(u8, line, ',') orelse continue;
+        const ts_micros = std.fmt.parseInt(i64, line[0..comma], 10) catch continue;
+        const delta = std.fmt.parseFloat(f64, line[comma + 1 ..]) catch continue;
+        const ts_secs = @divFloor(ts_micros, 1_000_000);
+
+        if (!first) try out.append(a, ',');
+        first = false;
+        const row = try std.fmt.allocPrint(a, "{{\"time\":{},\"delta\":{d}}}", .{ ts_secs, delta });
+        defer a.free(row);
+        try out.appendSlice(a, row);
+    }
+    if (!rd.complete) return error.IncompleteResponse;
+
+    try out.append(a, ']');
     return out.toOwnedSlice(a);
 }

@@ -90,6 +90,9 @@ export interface MonteCarloData {
 export interface Indicators {
   vwap: boolean
   noise_area: boolean
+  volume: boolean
+  volume_delta_bubbles: boolean
+  session_volume_profile: boolean
 }
 
 export interface MarchSettings {
@@ -171,7 +174,13 @@ export function makeDefaultPanelConfig(): LayoutPanelConfig {
     mode: 'latest',
     from: recentFrom,
     to: today,
-    indicators: { vwap: false, noise_area: false },
+    indicators: {
+      vwap: false,
+      noise_area: false,
+      volume: false,
+      volume_delta_bubbles: false,
+      session_volume_profile: false,
+    },
   }
 }
 

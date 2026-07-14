@@ -272,7 +272,7 @@ export default function Volatility({ trades, initialBalance }: Props) {
   if ((vixQuery.data ?? []).length === 0) {
     return (
       <div className="text-sm text-gray-500">
-        No VIX data in QuestDB — import it with <span className="font-mono text-gray-400">data_collection/fetch_vix.py</span>.
+        No VIX data in QuestDB — import it with <span className="font-mono text-gray-400">data_manipulation/fetch_vix.py</span>.
       </div>
     )
   }

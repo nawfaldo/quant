@@ -31,7 +31,7 @@ export async function fetchBacktestFx(id: number): Promise<FxResult | null> {
 
 
 // Daily VIX closes from the backend's vix_1d table (imported by
-// data_collection/fetch_vix.py). Wire format is compact JSON pairs
+// data_manipulation/fetch_vix.py). Wire format is compact JSON pairs
 // [[epoch_secs, close], ...]; timestamps are fake-UTC ET like everything else.
 export interface VixPoint {
   t: number // epoch seconds (fake-UTC ET)
@@ -50,7 +50,7 @@ export async function fetchVix(from?: string, to?: string): Promise<VixPoint[]> 
 }
 
 export interface DatabaseSummaryItem {
-  name: 'ES' | 'NQ' | 'VIX'
+  name: 'ES' | 'NQ' | 'QQQ Options' | 'VIX'
   bytes: number
   firstDate: string
   lastDate: string
