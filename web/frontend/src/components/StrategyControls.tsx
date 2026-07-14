@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { fetchAccountStrategies, deleteAccountStrategy, setAccountStrategyActive } from '../api'
+import { displayStrategyName, fetchAccountStrategies, deleteAccountStrategy, setAccountStrategyActive } from '../api'
 import { useApp } from '../context/AppContext'
 
 // March-header strategy bar for the selected account: a "+" button that opens
@@ -57,7 +57,7 @@ export default function StrategyControls() {
             key={s.id}
             className="flex items-center gap-1.5 pl-2 pr-1 py-1 rounded-lg bg-gray-900 border border-gray-800/80 shrink-0"
           >
-            <span className="text-xs font-medium text-gray-200">{s.strategy}</span>
+            <span className="text-xs font-medium text-gray-200">{displayStrategyName(s.strategy)}</span>
             {s.symbol ? <span className="text-[10px] text-gray-500">{s.symbol}</span> : null}
 
             {/* On/off toggle */}

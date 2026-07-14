@@ -9,9 +9,9 @@ const c = @cImport(@cInclude("sqlite3.h"));
 // self-contained (it runs backtests via bt_run.zig and saves them into app.db).
 
 const APP_DB_PATH = switch (builtin.os.tag) {
-    .macos   => "/Users/nawfaldo/Bunker/Quant/web/backend/app.db",
+    .macos => "/Users/nawfaldo/Bunker/Quant/web/backend/app.db",
     .windows => "C:/Users/andra/Desktop/quant/web/backend/app.db",
-    else     => "/mnt/c/Users/JawirGaming66/Quant/web/backend/app.db",
+    else => "/mnt/c/Users/JawirGaming66/Quant/web/backend/app.db",
 };
 
 // ── Shared helpers ─────────────────────────────────────────────────────────────
@@ -46,7 +46,7 @@ pub fn getBacktests(a: std.mem.Allocator) ![]const u8 {
     _ = c.sqlite3_busy_timeout(db, 3000);
 
     var stmt: ?*c.sqlite3_stmt = null;
-    const sql = "SELECT id, strategy, run_at, first_ts, last_ts, total_days, initial_bal, final_bal, net_growth, max_drawdown, num_trades, symbol, avg_drawdown, sharpe, total_win, total_loss, win_rate, win_count, profit_factor, expectancy, max_lose_streak, avg_size, min_size, max_size, avg_weekly, avg_monthly, avg_weekly_pct, avg_monthly_pct, instrument, max_drawdown_dollars, max_drawdown_peak_date, max_drawdown_trough_date, avg_drawdown_dollars, max_intraday_drawdown, max_intraday_drawdown_dollars, max_intraday_drawdown_date, avg_intraday_drawdown, avg_intraday_drawdown_dollars, max_daily_loss, max_daily_loss_date, avg_daily_loss FROM backtests ORDER BY run_at DESC";
+    const sql = "SELECT id, strategy, run_at, first_ts, last_ts, total_days, initial_bal, final_bal, net_growth, max_drawdown, num_trades, symbol, avg_drawdown, sharpe, total_win, total_loss, win_rate, win_count, profit_factor, expectancy, max_lose_streak, avg_size, min_size, max_size, avg_weekly, avg_monthly, avg_weekly_pct, avg_monthly_pct, instrument, max_drawdown_dollars, max_drawdown_peak_date, max_drawdown_trough_date, avg_drawdown_dollars, max_intraday_drawdown, max_intraday_drawdown_dollars, max_intraday_drawdown_date, avg_intraday_drawdown, avg_intraday_drawdown_dollars, max_daily_loss, max_daily_loss_date, avg_daily_loss, COALESCE(environment_id, 0) FROM backtests ORDER BY run_at DESC";
     if (c.sqlite3_prepare_v2(db, sql, -1, &stmt, null) != c.SQLITE_OK)
         return error.PrepFailed;
     defer _ = c.sqlite3_finalize(stmt);
@@ -98,26 +98,23 @@ pub fn getBacktests(a: std.mem.Allocator) ![]const u8 {
         const max_daily_loss = c.sqlite3_column_double(stmt, 38);
         const max_daily_loss_date = spanOrEmpty(c.sqlite3_column_text(stmt, 39));
         const avg_daily_loss = c.sqlite3_column_double(stmt, 40);
+        const environment_id = c.sqlite3_column_int64(stmt, 41);
 
         const part1 = try std.fmt.allocPrint(a,
             \\{{"id":{d},"strategy":"{s}","run_at":"{s}","first_ts":"{s}","last_ts":"{s}","total_days":{d},"initial_bal":{d:.2},"final_bal":{d:.2},"net_growth":{d:.2},"max_drawdown":{d:.4},"num_trades":{d},"symbol":"{s}","avg_drawdown":{d:.4},"sharpe":{d:.4},"total_win":{d:.2},"total_loss":{d:.2},"win_rate":{d:.4},"win_count":{d},"profit_factor":{d:.4},"expectancy":{d:.4},"max_lose_streak":{d},"avg_size":{d:.4},"min_size":{d:.4},"max_size":{d:.4},"avg_weekly":{d:.2},"avg_monthly":{d:.2},"avg_weekly_pct":{d:.4},"avg_monthly_pct":{d:.4},"instrument":"{s}"
-        , .{
-            id, strategy, run_at, first_ts, last_ts, total_days, initial_bal, final_bal, net_growth, max_drawdown, num_trades, symbol, avg_drawdown, sharpe, total_win, total_loss, win_rate, win_count, profit_factor, expectancy, max_lose_streak, avg_size, min_size, max_size, avg_weekly, avg_monthly, avg_weekly_pct, avg_monthly_pct, instrument
-        });
+        , .{ id, strategy, run_at, first_ts, last_ts, total_days, initial_bal, final_bal, net_growth, max_drawdown, num_trades, symbol, avg_drawdown, sharpe, total_win, total_loss, win_rate, win_count, profit_factor, expectancy, max_lose_streak, avg_size, min_size, max_size, avg_weekly, avg_monthly, avg_weekly_pct, avg_monthly_pct, instrument });
         defer a.free(part1);
 
         const part2 = try std.fmt.allocPrint(a,
-            \\,"max_drawdown_dollars":{d:.2},"max_drawdown_peak_date":"{s}","max_drawdown_trough_date":"{s}","avg_drawdown_dollars":{d:.2},"max_intraday_drawdown":{d:.4},"max_intraday_drawdown_dollars":{d:.2},"max_intraday_drawdown_date":"{s}","avg_intraday_drawdown":{d:.4},"avg_intraday_drawdown_dollars":{d:.2},"max_daily_loss":{d:.2},"max_daily_loss_date":"{s}","avg_daily_loss":{d:.2}}}
-        , .{
-            max_drawdown_dollars, max_drawdown_peak_date, max_drawdown_trough_date, avg_drawdown_dollars, max_intraday_drawdown, max_intraday_drawdown_dollars, max_intraday_drawdown_date, avg_intraday_drawdown, avg_intraday_drawdown_dollars, max_daily_loss, max_daily_loss_date, avg_daily_loss
-        });
+            \\,"max_drawdown_dollars":{d:.2},"max_drawdown_peak_date":"{s}","max_drawdown_trough_date":"{s}","avg_drawdown_dollars":{d:.2},"max_intraday_drawdown":{d:.4},"max_intraday_drawdown_dollars":{d:.2},"max_intraday_drawdown_date":"{s}","avg_intraday_drawdown":{d:.4},"avg_intraday_drawdown_dollars":{d:.2},"max_daily_loss":{d:.2},"max_daily_loss_date":"{s}","avg_daily_loss":{d:.2},"environment_id":{d}}}
+        , .{ max_drawdown_dollars, max_drawdown_peak_date, max_drawdown_trough_date, avg_drawdown_dollars, max_intraday_drawdown, max_intraday_drawdown_dollars, max_intraday_drawdown_date, avg_intraday_drawdown, avg_intraday_drawdown_dollars, max_daily_loss, max_daily_loss_date, avg_daily_loss, environment_id });
         defer a.free(part2);
 
         try out.appendSlice(a, part1);
         try out.appendSlice(a, part2);
     }
     try out.appendSlice(a, "]");
-    return out.toOwnedSlice(a);
+    return @as([]const u8, try out.toOwnedSlice(a));
 }
 
 pub fn getTradesBin(a: std.mem.Allocator, backtest_id: i64) ![]const u8 {
@@ -218,15 +215,15 @@ pub fn getMonteCarloBin(a: std.mem.Allocator, backtest_id: i64) ![]const u8 {
         if (c.sqlite3_step(stmt) != c.SQLITE_ROW) return error.NotFound;
         mc_id = c.sqlite3_column_int64(stmt, 0);
         initial_balance = @floatCast(c.sqlite3_column_double(stmt, 1));
-        p5  = @floatCast(c.sqlite3_column_double(stmt, 2));
+        p5 = @floatCast(c.sqlite3_column_double(stmt, 2));
         p25 = @floatCast(c.sqlite3_column_double(stmt, 3));
         p50 = @floatCast(c.sqlite3_column_double(stmt, 4));
         p75 = @floatCast(c.sqlite3_column_double(stmt, 5));
         p95 = @floatCast(c.sqlite3_column_double(stmt, 6));
         p_profit = @floatCast(c.sqlite3_column_double(stmt, 7));
-        p_ruin   = @floatCast(c.sqlite3_column_double(stmt, 8));
-        sims     = @intCast(c.sqlite3_column_int64(stmt, 9));
-        dd_p5  = @floatCast(c.sqlite3_column_double(stmt, 10));
+        p_ruin = @floatCast(c.sqlite3_column_double(stmt, 8));
+        sims = @intCast(c.sqlite3_column_int64(stmt, 9));
+        dd_p5 = @floatCast(c.sqlite3_column_double(stmt, 10));
         dd_p25 = @floatCast(c.sqlite3_column_double(stmt, 11));
         dd_p50 = @floatCast(c.sqlite3_column_double(stmt, 12));
         dd_p75 = @floatCast(c.sqlite3_column_double(stmt, 13));
@@ -284,23 +281,23 @@ pub fn getMonteCarloBin(a: std.mem.Allocator, backtest_id: i64) ![]const u8 {
     var out: std.ArrayList(u8) = .empty;
     errdefer out.deinit(a);
     try out.appendNTimes(a, 0, 68);
-    std.mem.writeInt(u32, out.items[0..4],  MC_MAGIC,                    .little);
-    std.mem.writeInt(u32, out.items[4..8],  num_paths,                   .little);
-    std.mem.writeInt(u32, out.items[8..12], steps,                       .little);
+    std.mem.writeInt(u32, out.items[0..4], MC_MAGIC, .little);
+    std.mem.writeInt(u32, out.items[4..8], num_paths, .little);
+    std.mem.writeInt(u32, out.items[8..12], steps, .little);
     std.mem.writeInt(u32, out.items[12..16], @as(u32, @bitCast(initial_balance)), .little);
-    std.mem.writeInt(u32, out.items[16..20], @as(u32, @bitCast(p5)),     .little);
-    std.mem.writeInt(u32, out.items[20..24], @as(u32, @bitCast(p25)),    .little);
-    std.mem.writeInt(u32, out.items[24..28], @as(u32, @bitCast(p50)),    .little);
-    std.mem.writeInt(u32, out.items[28..32], @as(u32, @bitCast(p75)),    .little);
-    std.mem.writeInt(u32, out.items[32..36], @as(u32, @bitCast(p95)),    .little);
+    std.mem.writeInt(u32, out.items[16..20], @as(u32, @bitCast(p5)), .little);
+    std.mem.writeInt(u32, out.items[20..24], @as(u32, @bitCast(p25)), .little);
+    std.mem.writeInt(u32, out.items[24..28], @as(u32, @bitCast(p50)), .little);
+    std.mem.writeInt(u32, out.items[28..32], @as(u32, @bitCast(p75)), .little);
+    std.mem.writeInt(u32, out.items[32..36], @as(u32, @bitCast(p95)), .little);
     std.mem.writeInt(u32, out.items[36..40], @as(u32, @bitCast(p_profit)), .little);
-    std.mem.writeInt(u32, out.items[40..44], @as(u32, @bitCast(p_ruin)),  .little);
-    std.mem.writeInt(u32, out.items[44..48], sims,                        .little);
-    std.mem.writeInt(u32, out.items[48..52], @as(u32, @bitCast(dd_p5)),   .little);
-    std.mem.writeInt(u32, out.items[52..56], @as(u32, @bitCast(dd_p25)),  .little);
-    std.mem.writeInt(u32, out.items[56..60], @as(u32, @bitCast(dd_p50)),  .little);
-    std.mem.writeInt(u32, out.items[60..64], @as(u32, @bitCast(dd_p75)),  .little);
-    std.mem.writeInt(u32, out.items[64..68], @as(u32, @bitCast(dd_p95)),  .little);
+    std.mem.writeInt(u32, out.items[40..44], @as(u32, @bitCast(p_ruin)), .little);
+    std.mem.writeInt(u32, out.items[44..48], sims, .little);
+    std.mem.writeInt(u32, out.items[48..52], @as(u32, @bitCast(dd_p5)), .little);
+    std.mem.writeInt(u32, out.items[52..56], @as(u32, @bitCast(dd_p25)), .little);
+    std.mem.writeInt(u32, out.items[56..60], @as(u32, @bitCast(dd_p50)), .little);
+    std.mem.writeInt(u32, out.items[60..64], @as(u32, @bitCast(dd_p75)), .little);
+    std.mem.writeInt(u32, out.items[64..68], @as(u32, @bitCast(dd_p95)), .little);
     try out.appendSlice(a, step_values.items);
     try out.appendSlice(a, equity_data.items);
     return out.toOwnedSlice(a);
@@ -338,7 +335,8 @@ const BACKTEST_SCHEMA =
     \\  avg_intraday_drawdown_dollars REAL NOT NULL DEFAULT 0,
     \\  max_daily_loss REAL NOT NULL DEFAULT 0,
     \\  max_daily_loss_date TEXT NOT NULL DEFAULT '',
-    \\  avg_daily_loss REAL NOT NULL DEFAULT 0
+    \\  avg_daily_loss REAL NOT NULL DEFAULT 0,
+    \\  environment_id INTEGER REFERENCES environments(id)
     \\);
     \\CREATE TABLE IF NOT EXISTS trades (
     \\  id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -376,6 +374,35 @@ const BACKTEST_SCHEMA =
     \\CREATE INDEX IF NOT EXISTS idx_mcp ON montecarlo_paths(mc_id, path_idx, step);
 ;
 
+const ENVIRONMENT_SCHEMA =
+    \\CREATE TABLE IF NOT EXISTS environments (
+    \\  id INTEGER PRIMARY KEY AUTOINCREMENT,
+    \\  name TEXT NOT NULL COLLATE NOCASE,
+    \\  is_mt5 INTEGER NOT NULL DEFAULT 0,
+    \\  server TEXT NOT NULL DEFAULT '',
+    \\  login TEXT NOT NULL DEFAULT '',
+    \\  password TEXT NOT NULL DEFAULT '',
+    \\  created_at TEXT NOT NULL DEFAULT ''
+    \\);
+;
+
+const ENVIRONMENT_RULE_SCHEMA =
+    \\CREATE TABLE IF NOT EXISTS environment_rules (
+    \\  id INTEGER PRIMARY KEY AUTOINCREMENT,
+    \\  environment_id INTEGER NOT NULL REFERENCES environments(id) ON DELETE CASCADE,
+    \\  rule_type TEXT NOT NULL CHECK(rule_type IN ('spread', 'slippage')),
+    \\  value REAL NOT NULL CHECK(value >= 0),
+    \\  created_at TEXT NOT NULL DEFAULT '',
+    \\  UNIQUE(environment_id, rule_type)
+    \\);
+    \\CREATE INDEX IF NOT EXISTS idx_environment_rules_environment
+    \\  ON environment_rules(environment_id);
+;
+
+const ENVIRONMENT_NAME_UNIQUE_INDEX =
+    "CREATE UNIQUE INDEX IF NOT EXISTS environments_name_unique " ++
+    "ON environments(name COLLATE NOCASE);";
+
 // Create the backtest tables in app.db if absent. Called once at startup.
 pub fn initBacktestSchema() !void {
     var db: ?*c.sqlite3 = null;
@@ -383,6 +410,18 @@ pub fn initBacktestSchema() !void {
     defer _ = c.sqlite3_close(db);
     _ = c.sqlite3_exec(db, "PRAGMA journal_mode=WAL;", null, null, null);
     if (c.sqlite3_exec(db, BACKTEST_SCHEMA, null, null, null) != c.SQLITE_OK) return error.DbSchema;
+    if (c.sqlite3_exec(db, ENVIRONMENT_SCHEMA, null, null, null) != c.SQLITE_OK) return error.DbSchema;
+    if (c.sqlite3_exec(db, ENVIRONMENT_RULE_SCHEMA, null, null, null) != c.SQLITE_OK) return error.DbSchema;
+    if (c.sqlite3_exec(db, ENVIRONMENT_NAME_UNIQUE_INDEX, null, null, null) != c.SQLITE_OK) return error.DbSchema;
+    // Migrate the previous environment-level execution costs into one rule per
+    // type. On fresh databases the legacy columns do not exist; those harmless
+    // migration statements simply fail and are intentionally ignored.
+    _ = c.sqlite3_exec(db, "INSERT OR IGNORE INTO environment_rules (environment_id, rule_type, value, created_at) SELECT id, 'spread', spread, datetime('now') FROM environments WHERE spread != 0;", null, null, null);
+    _ = c.sqlite3_exec(db, "INSERT OR IGNORE INTO environment_rules (environment_id, rule_type, value, created_at) SELECT id, 'slippage', slippage, datetime('now') FROM environments WHERE slippage != 0;", null, null, null);
+    _ = c.sqlite3_exec(db, "ALTER TABLE environments DROP COLUMN spread;", null, null, null);
+    _ = c.sqlite3_exec(db, "ALTER TABLE environments DROP COLUMN slippage;", null, null, null);
+    _ = c.sqlite3_exec(db, "ALTER TABLE backtests ADD COLUMN environment_id INTEGER REFERENCES environments(id);", null, null, null);
+    _ = c.sqlite3_exec(db, "CREATE INDEX IF NOT EXISTS idx_backtests_environment ON backtests(environment_id);", null, null, null);
     // Migrations for DBs created before dd_p* columns were added to montecarlo.
     _ = c.sqlite3_exec(db, "ALTER TABLE montecarlo ADD COLUMN dd_p5 REAL NOT NULL DEFAULT 0;", null, null, null);
     _ = c.sqlite3_exec(db, "ALTER TABLE montecarlo ADD COLUMN dd_p25 REAL NOT NULL DEFAULT 0;", null, null, null);
@@ -391,8 +430,272 @@ pub fn initBacktestSchema() !void {
     _ = c.sqlite3_exec(db, "ALTER TABLE montecarlo ADD COLUMN dd_p95 REAL NOT NULL DEFAULT 0;", null, null, null);
 }
 
+// ── Environments ─────────────────────────────────────────────────────────────
+// Environment credentials are persisted in app.db, but the password is never
+// included in API responses.
+
+pub const EnvironmentInput = struct {
+    name: []const u8,
+    is_mt5: bool,
+    server: []const u8,
+    login: []const u8,
+    password: []const u8,
+};
+
+pub const EnvironmentRuleInput = struct {
+    environment_id: i64,
+    rule_type: []const u8,
+    value: f64,
+};
+
+pub const EnvironmentCosts = struct {
+    spread: f64 = 0,
+    slippage: f64 = 0,
+};
+
+// Copies the name for one environment into caller-owned storage. The strategy
+// catalog uses this as the directory name beneath src/strategies/.
+pub fn getEnvironmentName(id: i64, out: []u8) !?[]const u8 {
+    var db: ?*c.sqlite3 = null;
+    if (c.sqlite3_open_v2(APP_DB_PATH, &db, c.SQLITE_OPEN_READONLY | c.SQLITE_OPEN_FULLMUTEX, null) != c.SQLITE_OK)
+        return error.DbOpenFailed;
+    defer _ = c.sqlite3_close(db);
+    _ = c.sqlite3_busy_timeout(db, 3000);
+
+    var stmt: ?*c.sqlite3_stmt = null;
+    if (c.sqlite3_prepare_v2(db, "SELECT name FROM environments WHERE id = ?", -1, &stmt, null) != c.SQLITE_OK)
+        return error.PrepFailed;
+    defer _ = c.sqlite3_finalize(stmt);
+
+    _ = c.sqlite3_bind_int64(stmt, 1, id);
+    if (c.sqlite3_step(stmt) != c.SQLITE_ROW) return null;
+    const name = spanOrEmpty(c.sqlite3_column_text(stmt, 0));
+    if (name.len > out.len) return error.NameTooLong;
+    @memcpy(out[0..name.len], name);
+    return out[0..name.len];
+}
+
+pub fn getEnvironments(a: std.mem.Allocator) ![]const u8 {
+    var db: ?*c.sqlite3 = null;
+    if (c.sqlite3_open_v2(APP_DB_PATH, &db, c.SQLITE_OPEN_READONLY | c.SQLITE_OPEN_FULLMUTEX, null) != c.SQLITE_OK)
+        return error.DbOpenFailed;
+    defer _ = c.sqlite3_close(db);
+    _ = c.sqlite3_busy_timeout(db, 3000);
+
+    var stmt: ?*c.sqlite3_stmt = null;
+    const sql = "SELECT id, name, is_mt5, server, login FROM environments ORDER BY id";
+    if (c.sqlite3_prepare_v2(db, sql, -1, &stmt, null) != c.SQLITE_OK)
+        return error.PrepFailed;
+    defer _ = c.sqlite3_finalize(stmt);
+
+    var out: std.ArrayList(u8) = .empty;
+    errdefer out.deinit(a);
+    try out.append(a, '[');
+    var first = true;
+    while (c.sqlite3_step(stmt) == c.SQLITE_ROW) {
+        if (!first) try out.append(a, ',');
+        first = false;
+
+        const id = c.sqlite3_column_int64(stmt, 0);
+        const name = spanOrEmpty(c.sqlite3_column_text(stmt, 1));
+        const is_mt5 = c.sqlite3_column_int(stmt, 2) != 0;
+        const server = spanOrEmpty(c.sqlite3_column_text(stmt, 3));
+        const login = spanOrEmpty(c.sqlite3_column_text(stmt, 4));
+        const prefix = try std.fmt.allocPrint(
+            a,
+            "{{\"id\":{d},\"isMt5\":{s},\"name\":",
+            .{ id, if (is_mt5) "true" else "false" },
+        );
+        defer a.free(prefix);
+        try out.appendSlice(a, prefix);
+        try appendJsonString(a, &out, name);
+        try out.appendSlice(a, ",\"server\":");
+        try appendJsonString(a, &out, server);
+        try out.appendSlice(a, ",\"login\":");
+        try appendJsonString(a, &out, login);
+        try out.append(a, '}');
+    }
+    try out.append(a, ']');
+    return out.toOwnedSlice(a);
+}
+
+fn appendJsonString(a: std.mem.Allocator, out: *std.ArrayList(u8), value: []const u8) !void {
+    try out.append(a, '"');
+    for (value) |ch| switch (ch) {
+        '"' => try out.appendSlice(a, "\\\""),
+        '\\' => try out.appendSlice(a, "\\\\"),
+        '\n' => try out.appendSlice(a, "\\n"),
+        '\r' => try out.appendSlice(a, "\\r"),
+        '\t' => try out.appendSlice(a, "\\t"),
+        else => {
+            if (ch < 0x20) {
+                const escaped = try std.fmt.allocPrint(a, "\\u00{x:0>2}", .{ch});
+                defer a.free(escaped);
+                try out.appendSlice(a, escaped);
+            } else try out.append(a, ch);
+        },
+    };
+    try out.append(a, '"');
+}
+
+pub fn createEnvironment(input: EnvironmentInput) !i64 {
+    var db: ?*c.sqlite3 = null;
+    if (c.sqlite3_open_v2(APP_DB_PATH, &db, c.SQLITE_OPEN_READWRITE | c.SQLITE_OPEN_FULLMUTEX, null) != c.SQLITE_OK)
+        return error.DbOpenFailed;
+    defer _ = c.sqlite3_close(db);
+    _ = c.sqlite3_busy_timeout(db, 3000);
+
+    var stmt: ?*c.sqlite3_stmt = null;
+    const sql = "INSERT INTO environments (name, is_mt5, server, login, password, created_at) VALUES (?, ?, ?, ?, ?, datetime('now'))";
+    if (c.sqlite3_prepare_v2(db, sql, -1, &stmt, null) != c.SQLITE_OK)
+        return error.PrepFailed;
+    defer _ = c.sqlite3_finalize(stmt);
+
+    bindText(stmt, 1, input.name);
+    _ = c.sqlite3_bind_int(stmt, 2, if (input.is_mt5) 1 else 0);
+    bindText(stmt, 3, input.server);
+    bindText(stmt, 4, input.login);
+    bindText(stmt, 5, input.password);
+    if (c.sqlite3_step(stmt) != c.SQLITE_DONE) {
+        if (c.sqlite3_errcode(db) == c.SQLITE_CONSTRAINT)
+            return error.EnvironmentNameExists;
+        return error.SaveFailed;
+    }
+    return c.sqlite3_last_insert_rowid(db);
+}
+
+pub fn getEnvironmentRules(a: std.mem.Allocator, environment_id: i64) !?[]const u8 {
+    var db: ?*c.sqlite3 = null;
+    if (c.sqlite3_open_v2(APP_DB_PATH, &db, c.SQLITE_OPEN_READONLY | c.SQLITE_OPEN_FULLMUTEX, null) != c.SQLITE_OK)
+        return error.DbOpenFailed;
+    defer _ = c.sqlite3_close(db);
+    _ = c.sqlite3_busy_timeout(db, 3000);
+
+    var exists_stmt: ?*c.sqlite3_stmt = null;
+    if (c.sqlite3_prepare_v2(db, "SELECT 1 FROM environments WHERE id = ?", -1, &exists_stmt, null) != c.SQLITE_OK)
+        return error.PrepFailed;
+    defer _ = c.sqlite3_finalize(exists_stmt);
+    _ = c.sqlite3_bind_int64(exists_stmt, 1, environment_id);
+    if (c.sqlite3_step(exists_stmt) != c.SQLITE_ROW) return null;
+
+    var stmt: ?*c.sqlite3_stmt = null;
+    if (c.sqlite3_prepare_v2(db, "SELECT id, rule_type, value FROM environment_rules WHERE environment_id = ? ORDER BY id", -1, &stmt, null) != c.SQLITE_OK)
+        return error.PrepFailed;
+    defer _ = c.sqlite3_finalize(stmt);
+    _ = c.sqlite3_bind_int64(stmt, 1, environment_id);
+
+    var out: std.ArrayList(u8) = .empty;
+    errdefer out.deinit(a);
+    try out.append(a, '[');
+    var first = true;
+    while (c.sqlite3_step(stmt) == c.SQLITE_ROW) {
+        if (!first) try out.append(a, ',');
+        first = false;
+        const id = c.sqlite3_column_int64(stmt, 0);
+        const rule_type = spanOrEmpty(c.sqlite3_column_text(stmt, 1));
+        const value = c.sqlite3_column_double(stmt, 2);
+        const prefix = try std.fmt.allocPrint(a, "{{\"id\":{d},\"type\":", .{id});
+        defer a.free(prefix);
+        try out.appendSlice(a, prefix);
+        try appendJsonString(a, &out, rule_type);
+        const suffix = try std.fmt.allocPrint(a, ",\"value\":{d}}}", .{value});
+        defer a.free(suffix);
+        try out.appendSlice(a, suffix);
+    }
+    try out.append(a, ']');
+    return @as([]const u8, try out.toOwnedSlice(a));
+}
+
+pub fn createEnvironmentRule(input: EnvironmentRuleInput) !void {
+    var db: ?*c.sqlite3 = null;
+    if (c.sqlite3_open_v2(APP_DB_PATH, &db, c.SQLITE_OPEN_READWRITE | c.SQLITE_OPEN_FULLMUTEX, null) != c.SQLITE_OK)
+        return error.DbOpenFailed;
+    defer _ = c.sqlite3_close(db);
+    _ = c.sqlite3_busy_timeout(db, 3000);
+    _ = c.sqlite3_exec(db, "PRAGMA foreign_keys=ON;", null, null, null);
+
+    var stmt: ?*c.sqlite3_stmt = null;
+    if (c.sqlite3_prepare_v2(db, "INSERT INTO environment_rules (environment_id, rule_type, value, created_at) VALUES (?, ?, ?, datetime('now'))", -1, &stmt, null) != c.SQLITE_OK)
+        return error.PrepFailed;
+    defer _ = c.sqlite3_finalize(stmt);
+    _ = c.sqlite3_bind_int64(stmt, 1, input.environment_id);
+    bindText(stmt, 2, input.rule_type);
+    _ = c.sqlite3_bind_double(stmt, 3, input.value);
+    if (c.sqlite3_step(stmt) != c.SQLITE_DONE) {
+        if (c.sqlite3_errcode(db) == c.SQLITE_CONSTRAINT) return error.RuleExistsOrEnvironmentMissing;
+        return error.SaveFailed;
+    }
+}
+
+pub fn deleteEnvironmentRule(environment_id: i64, rule_type: []const u8) !void {
+    var db: ?*c.sqlite3 = null;
+    if (c.sqlite3_open_v2(APP_DB_PATH, &db, c.SQLITE_OPEN_READWRITE | c.SQLITE_OPEN_FULLMUTEX, null) != c.SQLITE_OK)
+        return error.DbOpenFailed;
+    defer _ = c.sqlite3_close(db);
+    _ = c.sqlite3_busy_timeout(db, 3000);
+    _ = c.sqlite3_exec(db, "PRAGMA foreign_keys=ON;", null, null, null);
+
+    var stmt: ?*c.sqlite3_stmt = null;
+    if (c.sqlite3_prepare_v2(db, "DELETE FROM environment_rules WHERE environment_id = ? AND rule_type = ?", -1, &stmt, null) != c.SQLITE_OK)
+        return error.PrepFailed;
+    defer _ = c.sqlite3_finalize(stmt);
+    _ = c.sqlite3_bind_int64(stmt, 1, environment_id);
+    bindText(stmt, 2, rule_type);
+    if (c.sqlite3_step(stmt) != c.SQLITE_DONE) return error.DeleteFailed;
+}
+
+pub fn updateEnvironmentRule(environment_id: i64, rule_type: []const u8, value: f64) !void {
+    var db: ?*c.sqlite3 = null;
+    if (c.sqlite3_open_v2(APP_DB_PATH, &db, c.SQLITE_OPEN_READWRITE | c.SQLITE_OPEN_FULLMUTEX, null) != c.SQLITE_OK)
+        return error.DbOpenFailed;
+    defer _ = c.sqlite3_close(db);
+    _ = c.sqlite3_busy_timeout(db, 3000);
+    _ = c.sqlite3_exec(db, "PRAGMA foreign_keys=ON;", null, null, null);
+
+    var stmt: ?*c.sqlite3_stmt = null;
+    if (c.sqlite3_prepare_v2(db, "UPDATE environment_rules SET value = ? WHERE environment_id = ? AND rule_type = ?", -1, &stmt, null) != c.SQLITE_OK)
+        return error.PrepFailed;
+    defer _ = c.sqlite3_finalize(stmt);
+    _ = c.sqlite3_bind_double(stmt, 1, value);
+    _ = c.sqlite3_bind_int64(stmt, 2, environment_id);
+    bindText(stmt, 3, rule_type);
+    if (c.sqlite3_step(stmt) != c.SQLITE_DONE) return error.UpdateFailed;
+}
+
+// Returns null only when the environment does not exist. Each absent rule is
+// intentionally zero, so users can create an environment without any costs.
+pub fn getEnvironmentCosts(environment_id: i64) !?EnvironmentCosts {
+    var db: ?*c.sqlite3 = null;
+    if (c.sqlite3_open_v2(APP_DB_PATH, &db, c.SQLITE_OPEN_READONLY | c.SQLITE_OPEN_FULLMUTEX, null) != c.SQLITE_OK)
+        return error.DbOpenFailed;
+    defer _ = c.sqlite3_close(db);
+    _ = c.sqlite3_busy_timeout(db, 3000);
+
+    var exists_stmt: ?*c.sqlite3_stmt = null;
+    if (c.sqlite3_prepare_v2(db, "SELECT 1 FROM environments WHERE id = ?", -1, &exists_stmt, null) != c.SQLITE_OK)
+        return error.PrepFailed;
+    defer _ = c.sqlite3_finalize(exists_stmt);
+    _ = c.sqlite3_bind_int64(exists_stmt, 1, environment_id);
+    if (c.sqlite3_step(exists_stmt) != c.SQLITE_ROW) return null;
+
+    var stmt: ?*c.sqlite3_stmt = null;
+    if (c.sqlite3_prepare_v2(db, "SELECT rule_type, value FROM environment_rules WHERE environment_id = ?", -1, &stmt, null) != c.SQLITE_OK)
+        return error.PrepFailed;
+    defer _ = c.sqlite3_finalize(stmt);
+    _ = c.sqlite3_bind_int64(stmt, 1, environment_id);
+    var costs: EnvironmentCosts = .{};
+    while (c.sqlite3_step(stmt) == c.SQLITE_ROW) {
+        const rule_type = spanOrEmpty(c.sqlite3_column_text(stmt, 0));
+        const value = c.sqlite3_column_double(stmt, 1);
+        if (std.mem.eql(u8, rule_type, "spread")) costs.spread = value;
+        if (std.mem.eql(u8, rule_type, "slippage")) costs.slippage = value;
+    }
+    return costs;
+}
+
 // Scalar report fields for one saved run (mirrors the backtests columns).
 pub const SaveMeta = struct {
+    environment_id: ?i64 = null,
     strategy: []const u8,
     symbol: []const u8,
     instrument: []const u8,
@@ -472,6 +775,7 @@ pub fn saveBacktest(meta: SaveMeta, trades: []const SaveTrade, mc: ?SaveMonteCar
     if (c.sqlite3_open(APP_DB_PATH, &db) != c.SQLITE_OK) return error.DbOpen;
     defer _ = c.sqlite3_close(db);
     _ = c.sqlite3_busy_timeout(db, 3000);
+    _ = c.sqlite3_exec(db, "PRAGMA foreign_keys=ON;", null, null, null);
     _ = c.sqlite3_exec(db, BACKTEST_SCHEMA, null, null, null);
 
     if (c.sqlite3_exec(db, "BEGIN;", null, null, null) != c.SQLITE_OK) return error.DbBegin;
@@ -485,8 +789,8 @@ pub fn saveBacktest(meta: SaveMeta, trades: []const SaveTrade, mc: ?SaveMonteCar
             " avg_monthly, avg_weekly_pct, avg_monthly_pct, instrument, max_drawdown_dollars, max_drawdown_peak_date," ++
             " max_drawdown_trough_date, avg_drawdown_dollars, max_intraday_drawdown, max_intraday_drawdown_dollars," ++
             " max_intraday_drawdown_date, avg_intraday_drawdown, avg_intraday_drawdown_dollars, max_daily_loss," ++
-            " max_daily_loss_date, avg_daily_loss)" ++
-            " VALUES (?, datetime('now'), ?,?,?,?,?, ?,?,?,?,?,?,?,?,?, ?,?,?,?,?,?,?,?, ?,?,?,?,?,?, ?,?,?,?, ?,?,?,?, ?,?)";
+            " max_daily_loss_date, avg_daily_loss, environment_id)" ++
+            " VALUES (?, datetime('now'), ?,?,?,?,?, ?,?,?,?,?,?,?,?,?, ?,?,?,?,?,?,?,?, ?,?,?,?,?,?, ?,?,?,?, ?,?,?,?, ?,?,?)";
         var stmt: ?*c.sqlite3_stmt = null;
         if (c.sqlite3_prepare_v2(db, sql, -1, &stmt, null) != c.SQLITE_OK) return error.PrepFailed;
         defer _ = c.sqlite3_finalize(stmt);
@@ -569,6 +873,12 @@ pub fn saveBacktest(meta: SaveMeta, trades: []const SaveTrade, mc: ?SaveMonteCar
         bindText(stmt, i, meta.max_daily_loss_date);
         i += 1;
         _ = c.sqlite3_bind_double(stmt, i, meta.avg_daily_loss);
+        i += 1;
+        if (meta.environment_id) |environment_id| {
+            _ = c.sqlite3_bind_int64(stmt, i, environment_id);
+        } else {
+            _ = c.sqlite3_bind_null(stmt, i);
+        }
 
         if (c.sqlite3_step(stmt) != c.SQLITE_DONE) return error.InsertFailed;
         break :blk c.sqlite3_last_insert_rowid(db);
@@ -735,8 +1045,8 @@ const engine = @import("bt/engine.zig");
 
 pub const CombineSource = struct {
     initial_bal: f64,
-    strategy: []const u8,   // heap-allocated, caller frees
-    symbol: []const u8,     // heap-allocated, caller frees
+    strategy: []const u8, // heap-allocated, caller frees
+    symbol: []const u8, // heap-allocated, caller frees
     instrument: []const u8, // heap-allocated, caller frees
     trades: []engine.Trade, // heap-allocated, caller frees
 };
@@ -790,9 +1100,9 @@ pub fn loadCombineSource(a: std.mem.Allocator, backtest_id: i64) !CombineSource 
             const xts = copyCol(stmt, 2, &t.exit_ts);
             if (xts < 16) @memset(t.exit_ts[xts..], ' ');
             t.entry_price = c.sqlite3_column_double(stmt, 3);
-            t.exit_price  = c.sqlite3_column_double(stmt, 4);
-            t.pnl         = c.sqlite3_column_double(stmt, 5);
-            t.contracts   = c.sqlite3_column_double(stmt, 6);
+            t.exit_price = c.sqlite3_column_double(stmt, 4);
+            t.pnl = c.sqlite3_column_double(stmt, 5);
+            t.contracts = c.sqlite3_column_double(stmt, 6);
             try list.append(a, t);
         }
     }
@@ -802,10 +1112,10 @@ pub fn loadCombineSource(a: std.mem.Allocator, backtest_id: i64) !CombineSource 
     const instrument = try a.dupe(u8, inst_buf[0..inst_len]);
     return .{
         .initial_bal = initial_bal,
-        .strategy    = strategy,
-        .symbol      = symbol,
-        .instrument  = instrument,
-        .trades      = try list.toOwnedSlice(a),
+        .strategy = strategy,
+        .symbol = symbol,
+        .instrument = instrument,
+        .trades = try list.toOwnedSlice(a),
     };
 }
 
@@ -853,7 +1163,7 @@ const MARCH_SCHEMA =
     \\);
 ;
 
-const KNOWN_STRATEGIES = [_][]const u8{"rth_vwap"};
+const KNOWN_STRATEGIES = [_][]const u8{"night_drift"};
 
 pub fn open() !?*c.sqlite3 {
     var db: ?*c.sqlite3 = null;
@@ -865,12 +1175,17 @@ pub fn open() !?*c.sqlite3 {
     }
     // Migrations for DBs created before certain columns existed (harmless if already present).
     _ = c.sqlite3_exec(db, "ALTER TABLE mt5_account_strategies ADD COLUMN active INTEGER NOT NULL DEFAULT 0;", null, null, null);
+    // Strategy rename/removal: preserve the old EU Open state under Night Drift,
+    // then retire both obsolete entries.
+    _ = c.sqlite3_exec(db, "INSERT OR IGNORE INTO strategies (name, active, updated_at) SELECT 'night_drift', active, updated_at FROM strategies WHERE name = 'eu_open';", null, null, null);
+    _ = c.sqlite3_exec(db, "UPDATE strategies SET active = 1 WHERE name = 'night_drift' AND EXISTS (SELECT 1 FROM strategies WHERE name = 'eu_open' AND active = 1);", null, null, null);
+    _ = c.sqlite3_exec(db, "UPDATE mt5_account_strategies SET strategy = 'night_drift' WHERE strategy = 'eu_open';", null, null, null);
+    _ = c.sqlite3_exec(db, "DELETE FROM mt5_account_strategies WHERE strategy = 'rth_vwap';", null, null, null);
+    _ = c.sqlite3_exec(db, "DELETE FROM strategies WHERE name IN ('rth_vwap', 'eu_open');", null, null, null);
     // Seed known strategies (INSERT OR IGNORE preserves existing active state).
     for (KNOWN_STRATEGIES) |name| {
         var buf: [256]u8 = undefined;
-        const sql = std.fmt.bufPrintZ(&buf,
-            "INSERT OR IGNORE INTO strategies (name, active, updated_at) VALUES ('{s}', 0, '');",
-            .{name}) catch continue;
+        const sql = std.fmt.bufPrintZ(&buf, "INSERT OR IGNORE INTO strategies (name, active, updated_at) VALUES ('{s}', 0, '');", .{name}) catch continue;
         _ = c.sqlite3_exec(db, sql.ptr, null, null, null);
     }
     return db;
@@ -1140,6 +1455,16 @@ pub fn anyActiveForStrategy(db: ?*c.sqlite3, strategy: []const u8) bool {
     return c.sqlite3_step(stmt) == c.SQLITE_ROW;
 }
 
+pub fn firstActiveSymbolForStrategy(db: ?*c.sqlite3, strategy: []const u8, buf: []u8) ?usize {
+    var stmt: ?*c.sqlite3_stmt = null;
+    if (c.sqlite3_prepare_v2(db, "SELECT symbol FROM mt5_account_strategies WHERE strategy = ? AND active = 1 LIMIT 1;", -1, &stmt, null) != c.SQLITE_OK) return null;
+    defer _ = c.sqlite3_finalize(stmt);
+
+    bindText(stmt, 1, strategy);
+    if (c.sqlite3_step(stmt) != c.SQLITE_ROW) return null;
+    return copyCol(stmt, 0, buf);
+}
+
 pub fn listActiveStrategyNames(db: ?*c.sqlite3, out: [][64]u8) usize {
     var stmt: ?*c.sqlite3_stmt = null;
     if (c.sqlite3_prepare_v2(db, "SELECT DISTINCT strategy FROM mt5_account_strategies WHERE active = 1;", -1, &stmt, null) != c.SQLITE_OK) return 0;
@@ -1220,4 +1545,3 @@ pub fn deleteBacktest(backtest_id: i64) !void {
 
     if (c.sqlite3_exec(db, "COMMIT;", null, null, null) != c.SQLITE_OK) return error.DbCommit;
 }
-

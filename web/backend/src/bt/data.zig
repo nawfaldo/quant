@@ -10,6 +10,7 @@ pub const Bar = struct {
     low: f64 = 0,
     close: f64 = 0,
     volume: i64 = 0,
+    vix_close: f64 = 0,
 };
 
 // "YYYY-MM-DD HH:MM" is exactly 16 ASCII bytes.
@@ -35,6 +36,7 @@ pub const Columns = struct {
     low: bool = true,
     close: bool = true,
     volume: bool = true,
+    vix: bool = false,
 };
 
 // QuestDB source descriptor.
@@ -163,10 +165,7 @@ pub fn streamFxTicks(io: Io, gpa: std.mem.Allocator, from: []const u8, to: []con
                 try r.discardAll(h.payload_len);
                 return;
             },
-            'E' => {
-                try r.discardAll(h.payload_len);
-                return error.PgwireServerError;
-            },
+            'E' => return errorResponse(r, h.payload_len),
             else => try r.discardAll(h.payload_len),
         }
     }
@@ -416,6 +415,10 @@ fn readResults(gpa: std.mem.Allocator, r: *Io.Reader, cols: Columns) !Dataset {
                     bar.volume = try readI8(r);
                     i += 1;
                 }
+                if (cols.vix and i < col_count) {
+                    bar.vix_close = try readF8(r);
+                    i += 1;
+                }
                 // Drain any unread fields (shouldn't happen but stays safe).
                 while (i < col_count) : (i += 1) {
                     const flen = try r.takeInt(i32, .big);
@@ -437,7 +440,7 @@ fn readResults(gpa: std.mem.Allocator, r: *Io.Reader, cols: Columns) !Dataset {
                 };
             },
             'E' => {
-                try r.discardAll(h.payload_len);
+                try errorResponse(r, h.payload_len);
                 return error.PgwireServerError;
             },
             else => try r.discardAll(h.payload_len), // NoticeResponse, ParameterStatus, etc.
@@ -500,7 +503,36 @@ fn formatTs(micros: i64, out: *Ts) void {
 // Zig errors are tag-only — we lose the human-readable message, which is the
 // main downside vs. a richer error type. Add a printer here if you need it.
 fn errorResponse(r: *Io.Reader, payload_len: usize) !void {
-    try r.discardAll(payload_len);
+    const payload = r.take(payload_len) catch |err| {
+        std.debug.print("Failed to read error response payload: {any}\n", .{err});
+        return error.PgwireServerError;
+    };
+    var idx: usize = 0;
+    var severity: []const u8 = "";
+    var code: []const u8 = "";
+    var message: []const u8 = "";
+    var detail: []const u8 = "";
+
+    while (idx < payload.len) {
+        const type_byte = payload[idx];
+        if (type_byte == 0) break;
+        idx += 1;
+        
+        const start = idx;
+        while (idx < payload.len and payload[idx] != 0) : (idx += 1) {}
+        const val = payload[start..idx];
+        if (idx < payload.len) idx += 1; // skip null terminator
+
+        switch (type_byte) {
+            'S' => severity = val,
+            'C' => code = val,
+            'M' => message = val,
+            'D' => detail = val,
+            else => {},
+        }
+    }
+
+    std.debug.print("QuestDB PGWire Error: Severity={s}, Code={s}, Message={s}, Detail={s}\n", .{ severity, code, message, detail });
     return error.PgwireServerError;
 }
 
@@ -519,33 +551,68 @@ fn buildSql(buf: []u8, cols: Columns, src: Source) ![]const u8 {
         }
     }.f;
 
-    try put(buf, &pos, "SELECT timestamp");
-    if (cols.open) try put(buf, &pos, ",open");
-    if (cols.high) try put(buf, &pos, ",high");
-    if (cols.low) try put(buf, &pos, ",low");
-    if (cols.close) try put(buf, &pos, ",close");
-    if (cols.volume) try put(buf, &pos, ",volume");
+    const prefix = if (cols.vix) "n." else "";
+    try put(buf, &pos, "SELECT ");
+    try put(buf, &pos, prefix);
+    try put(buf, &pos, "timestamp");
+    if (cols.open) {
+        try put(buf, &pos, ",");
+        try put(buf, &pos, prefix);
+        try put(buf, &pos, "open");
+    }
+    if (cols.high) {
+        try put(buf, &pos, ",");
+        try put(buf, &pos, prefix);
+        try put(buf, &pos, "high");
+    }
+    if (cols.low) {
+        try put(buf, &pos, ",");
+        try put(buf, &pos, prefix);
+        try put(buf, &pos, "low");
+    }
+    if (cols.close) {
+        try put(buf, &pos, ",");
+        try put(buf, &pos, prefix);
+        try put(buf, &pos, "close");
+    }
+    if (cols.volume) {
+        try put(buf, &pos, ",");
+        try put(buf, &pos, prefix);
+        try put(buf, &pos, "volume");
+    }
+    if (cols.vix) try put(buf, &pos, ",v.close");
     try put(buf, &pos, " FROM ");
     try put(buf, &pos, src.table);
+    if (cols.vix) try put(buf, &pos, " n ASOF JOIN vix_1d v");
 
     if (src.from) |from| {
         if (src.to) |to| {
-            try put(buf, &pos, " WHERE timestamp >= '");
+            try put(buf, &pos, " WHERE ");
+            try put(buf, &pos, prefix);
+            try put(buf, &pos, "timestamp >= '");
             try put(buf, &pos, from);
-            try put(buf, &pos, "' AND timestamp < '");
+            try put(buf, &pos, "' AND ");
+            try put(buf, &pos, prefix);
+            try put(buf, &pos, "timestamp < '");
             try put(buf, &pos, to);
             try put(buf, &pos, "'");
         } else {
-            try put(buf, &pos, " WHERE timestamp >= '");
+            try put(buf, &pos, " WHERE ");
+            try put(buf, &pos, prefix);
+            try put(buf, &pos, "timestamp >= '");
             try put(buf, &pos, from);
             try put(buf, &pos, "'");
         }
     } else if (src.to) |to| {
-        try put(buf, &pos, " WHERE timestamp < '");
+        try put(buf, &pos, " WHERE ");
+        try put(buf, &pos, prefix);
+        try put(buf, &pos, "timestamp < '");
         try put(buf, &pos, to);
         try put(buf, &pos, "'");
     }
 
-    try put(buf, &pos, " ORDER BY timestamp");
+    try put(buf, &pos, " ORDER BY ");
+    try put(buf, &pos, prefix);
+    try put(buf, &pos, "timestamp");
     return buf[0..pos];
 }

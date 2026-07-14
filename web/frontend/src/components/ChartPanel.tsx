@@ -229,17 +229,6 @@ export default function ChartPanel({
   const tradeLinesPrimitive = useRef(new TradeLinesPrimitive());
   const fxTradeLinesPrimitive = useRef(new TradeLinesPrimitive());
   const noiseAreaPlugin = useRef(new NoiseAreaPrimitive());
-  const [chartContextMenu, setChartContextMenu] = useState<{ x: number; y: number } | null>(null);
-
-  useEffect(() => {
-    const handleClose = () => setChartContextMenu(null);
-    window.addEventListener("click", handleClose);
-    window.addEventListener("contextmenu", handleClose);
-    return () => {
-      window.removeEventListener("click", handleClose);
-      window.removeEventListener("contextmenu", handleClose);
-    };
-  }, []);
 
   const { data: positions } = useQuery({
     queryKey: ["activePositions"],
@@ -268,11 +257,11 @@ export default function ChartPanel({
       autoSize: true,
       ...({ attributionLogo: false } as any),
       layout: {
-        background: { type: ColorType.Solid, color: "#030712" },
+        background: { type: ColorType.Solid, color: "#0F0F0F" },
         textColor: "#d1d5db",
         panes: {
-          separatorColor: "#030712",
-          separatorHoverColor: "#030712",
+          separatorColor: "#0F0F0F",
+          separatorHoverColor: "#0F0F0F",
         },
       },
       grid: {
@@ -289,7 +278,7 @@ export default function ChartPanel({
           timeFormatter.format(new Date(time * 1000)),
       },
       timeScale: {
-        borderColor: "#1f2937",
+        borderColor: "#212124",
         timeVisible: true,
         secondsVisible: false,
         tickMarkFormatter: (time: number, tickMarkType: number) => {
@@ -299,18 +288,20 @@ export default function ChartPanel({
             : tickDateFormatter.format(date);
         },
       },
-      rightPriceScale: { borderColor: "#1f2937" },
+      rightPriceScale: { borderColor: "#212124" },
     });
 
     const series = chart.addSeries(CandlestickSeries, {
-      upColor: "#22c55e",
-      downColor: "#ef4444",
-      borderUpColor: "#22c55e",
-      borderDownColor: "#ef4444",
-      wickUpColor: "#22c55e",
-      wickDownColor: "#ef4444",
-      lastValueVisible: true,
-      priceLineVisible: true,
+      upColor: "#FFFFFF",
+      downColor: "#000000",
+      borderUpColor: "#FFFFFF",
+      borderDownColor: "#FFFFFF",
+      wickUpColor: "#FFFFFF",
+      wickDownColor: "#FFFFFF",
+      // The right-edge latest-price label is meaningful only while the chart
+      // ends at Now. Historical date ranges keep the price scale unlabelled.
+      lastValueVisible: mode === "latest",
+      priceLineVisible: mode === "latest",
     });
     setChartSeries(series);
     chartRef.current = chart;
@@ -325,7 +316,7 @@ export default function ChartPanel({
       priceLineVisible: false,
       lastValueVisible: false,
       crosshairMarkerVisible: false,
-      visible: vwap && symbol === "nq",
+      visible: vwap,
     });
     vwapSeriesRef.current = vwapSeries;
 
@@ -356,7 +347,6 @@ export default function ChartPanel({
     // skipped individually so a single rejected bar can't stop the stream.
     function applyTicks(ticks: Tick[]) {
       const tfSecs = tf.seconds;
-      const isNq = symbol === "nq";
 
       for (const tick of ticks) {
         if (!Number.isFinite(tick.ts) || !Number.isFinite(tick.price)) continue;
@@ -428,7 +418,7 @@ export default function ChartPanel({
 
           // VWAP for the forming bar (24h) = completed Σ(typical×vol) in this
           // session plus the forming bar folded in, over the matching volume.
-          if (isNq && lastCandle) {
+          if (lastCandle) {
             const curTypical =
               (lastCandle.high + lastCandle.low + lastCandle.close) / 3;
             const denom = sessionVol + formingVol;
@@ -602,11 +592,7 @@ export default function ChartPanel({
       }
 
       try {
-        if (symbol === "nq") {
-          vwapSeries.setData(vwapPoints);
-        } else {
-          vwapSeries.setData([]);
-        }
+        vwapSeries.setData(vwapPoints);
       } catch (err) {
         console.error("Failed to render historical VWAP:", err);
       }
@@ -773,20 +759,22 @@ export default function ChartPanel({
 
   useEffect(() => {
     if (!chartSeries) return;
-    tradeLinesPrimitive.current.setTrades(allTrades, tf.seconds);
-  }, [allTrades, tf, chartSeries]);
+    const filteredTrades = allTrades.filter(t => (t as any).symbol?.toLowerCase() === symbol.toLowerCase());
+    tradeLinesPrimitive.current.setTrades(filteredTrades, tf.seconds);
+  }, [allTrades, symbol, tf, chartSeries]);
 
   // fx-priced trades for the same toggled-on backtests, drawn on the fx_nq pane.
   // Only populated while the fx_nq overlay is shown (NQ only); cleared otherwise.
   useEffect(() => {
     if (!chartSeries) return;
     const show = showFxNq && symbol === "nq";
-    fxTradeLinesPrimitive.current.setTrades(show ? allFxTrades : [], tf.seconds);
+    const filteredFxTrades = allFxTrades.filter(t => (t as any).symbol?.toLowerCase() === symbol.toLowerCase());
+    fxTradeLinesPrimitive.current.setTrades(show ? filteredFxTrades : [], tf.seconds);
   }, [allFxTrades, showFxNq, symbol, tf, chartSeries]);
 
   useEffect(() => {
-    vwapSeriesRef.current?.applyOptions({ visible: vwap && symbol === "nq" });
-  }, [vwap, symbol, chartSeries]);
+    vwapSeriesRef.current?.applyOptions({ visible: vwap });
+  }, [vwap, chartSeries]);
 
   useEffect(() => {
     let active = true;
@@ -797,7 +785,7 @@ export default function ChartPanel({
           if (fromDate) params.set("from", fromDate);
           if (toDate) params.set("to", toDate);
 
-          const res = await fetch(`${BACKEND_URL}/api/march/indicators/zara-noise-area?${params.toString()}`);
+          const res = await fetch(`${BACKEND_URL}/api/march/indicators/noise-area?${params.toString()}`);
           if (!res.ok) throw new Error("Backend error");
           const data = await res.json();
 
@@ -828,12 +816,12 @@ export default function ChartPanel({
     const fxSeries = chart.addSeries(
       CandlestickSeries,
       {
-        upColor: "#22c55e",
-        downColor: "#ef4444",
-        borderUpColor: "#22c55e",
-        borderDownColor: "#ef4444",
-        wickUpColor: "#22c55e",
-        wickDownColor: "#ef4444",
+        upColor: "#FFFFFF",
+        downColor: "#000000",
+        borderUpColor: "#FFFFFF",
+        borderDownColor: "#FFFFFF",
+        wickUpColor: "#FFFFFF",
+        wickDownColor: "#FFFFFF",
         lastValueVisible: true,
         priceLineVisible: false,
       },
@@ -881,7 +869,7 @@ export default function ChartPanel({
   }, [showFxNq, symbol, tf, mode, fromDate, toDate, chartSeries]);
 
   return (
-    <div className="flex flex-col bg-gray-950 min-h-0 min-w-0 h-full w-full">
+    <div className="relative flex flex-col bg-[#0F0F0F] min-h-0 min-w-0 h-full w-full">
       <Header
         symbol={symbol}
         setSymbol={setSymbol}
@@ -893,6 +881,10 @@ export default function ChartPanel({
         toDate={toDate}
         onApplyRange={onApplyRange}
         onLatest={onLatest}
+        onOpenIndicators={onOpenIndicators}
+        onOpenBacktests={onOpenBacktests}
+        showFxNq={showFxNq}
+        onToggleFxNq={() => setShowFxNq((visible) => !visible)}
       />
       <div className="flex-1 flex flex-col relative min-h-0 min-w-0">
         {loading && (
@@ -938,89 +930,8 @@ export default function ChartPanel({
         <div
           ref={containerRef}
           className="flex-1 min-h-0"
-          onContextMenu={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            const menuWidth = 140;
-            const menuHeight = symbol === "nq" ? 144 : 104;
-            let x = e.clientX;
-            let y = e.clientY;
-
-            if (x + menuWidth > window.innerWidth) {
-              x = window.innerWidth - menuWidth - 8;
-            }
-            if (y + menuHeight > window.innerHeight) {
-              y = window.innerHeight - menuHeight - 8;
-            }
-            setChartContextMenu({ x, y });
-          }}
         />
       </div>
-
-      {/* Chart Context Menu */}
-      {chartContextMenu && (
-        <div
-          className="fixed z-50 bg-gray-900/95 backdrop-blur-md border border-gray-800/80 rounded-lg shadow-xl shadow-black/60 py-0.5 font-sans text-xs text-gray-300 select-none transition-all duration-100 ease-out"
-          style={{ left: chartContextMenu.x, top: chartContextMenu.y }}
-          onClick={(e) => e.stopPropagation()}
-        >
-          <button
-            onClick={() => {
-              onOpenIndicators();
-              setChartContextMenu(null);
-            }}
-            className="w-full px-4 py-2 text-left hover:bg-blue-600/20 hover:text-white transition-colors duration-150 cursor-pointer whitespace-nowrap flex items-center gap-2"
-          >
-            <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
-              <polyline
-                points="1,7.5 5,3 9,5 14.5,0.5"
-                stroke="currentColor"
-                strokeWidth="1.5"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-              <rect x="0.8" y="12" width="3" height="3.5" rx="0.4" stroke="currentColor" strokeWidth="1.1" />
-              <rect x="5.5" y="10" width="3" height="5.5" rx="0.4" stroke="currentColor" strokeWidth="1.1" />
-              <rect x="10.5" y="7.5" width="3" height="8" rx="0.4" stroke="currentColor" strokeWidth="1.1" />
-            </svg>
-            Indicators
-          </button>
-          <button
-            onClick={() => {
-              onOpenBacktests();
-              setChartContextMenu(null);
-            }}
-            className="w-full px-4 py-2 text-left hover:bg-blue-600/20 hover:text-white transition-colors duration-150 cursor-pointer whitespace-nowrap flex items-center gap-2"
-          >
-            <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
-              <rect x="1" y="1" width="14" height="14" rx="2" stroke="currentColor" strokeWidth="1.4" />
-              <line x1="4" y1="5.5" x2="12" y2="5.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
-              <line x1="4" y1="8" x2="12" y2="8" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
-              <line x1="4" y1="10.5" x2="9" y2="10.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
-            </svg>
-            Backtests
-          </button>
-          {symbol === "nq" && (
-            <button
-              onClick={() => {
-                setShowFxNq((v) => !v);
-                setChartContextMenu(null);
-              }}
-              className="w-full px-4 py-2 text-left hover:bg-blue-600/20 hover:text-white transition-colors duration-150 cursor-pointer whitespace-nowrap flex items-center gap-2"
-            >
-              <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
-                <rect x="1" y="8.5" width="2.5" height="5" rx="0.4" stroke="currentColor" strokeWidth="1.1" />
-                <line x1="2.25" y1="6.5" x2="2.25" y2="15" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" />
-                <rect x="6.75" y="5" width="2.5" height="6" rx="0.4" stroke="currentColor" strokeWidth="1.1" />
-                <line x1="8" y1="2.5" x2="8" y2="13" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" />
-                <rect x="12.5" y="9" width="2.5" height="4" rx="0.4" stroke="currentColor" strokeWidth="1.1" />
-                <line x1="13.75" y1="7" x2="13.75" y2="15" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" />
-              </svg>
-              {showFxNq ? "Hide fx_nq" : "Show fx_nq"}
-            </button>
-          )}
-        </div>
-      )}
     </div>
   );
 }

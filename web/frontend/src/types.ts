@@ -6,6 +6,7 @@ export type Bar = CandlestickData<UTCTimestamp> & { volume?: number }
 
 export interface Backtest {
   id: number
+  environment_id: number
   strategy: string
   run_at: string
   first_ts: string
@@ -50,8 +51,7 @@ export interface Backtest {
 
 export const SYMBOLS = [
   { id: 'nq',     label: 'NQ' },
-  { id: 'gbpusd', label: 'GBPUSD' },
-  { id: 'eurusd', label: 'EURUSD' },
+  { id: 'es',     label: 'ES' },
 ] as const
 
 export type SymbolId = typeof SYMBOLS[number]['id']
@@ -103,6 +103,33 @@ export interface MarchSettings {
   bottomHeight?: string | number
 }
 
+export interface Environment {
+  id: number
+  name: string
+  isMt5: boolean
+  server: string
+  login: string
+}
+
+export interface EnvironmentRule {
+  id: number
+  type: 'spread' | 'slippage'
+  value: number
+}
+
+export interface EnvironmentStrategy {
+  id: 'night_drift' | 'noise_momentum'
+  name: 'Night Drift' | 'Noise Momentum'
+}
+
+export interface CreateEnvironmentInput {
+  name: string
+  isMt5: boolean
+  server: string
+  login: string
+  password: string
+}
+
 // One chart panel's persisted config. Stored per layout (see MarchLayouts) so
 // each layout remembers its own panels' symbol / timeframe / date / indicator.
 export interface LayoutPanelConfig {
@@ -116,6 +143,22 @@ export interface LayoutPanelConfig {
 
 // Keyed by layout id (e.g. 'single', 'split-v'); the array is that layout's panels.
 export type MarchLayouts = Record<string, LayoutPanelConfig[]>
+
+export interface MarchWorkspaceTab {
+  id: string
+  layout: string
+  layouts: MarchLayouts
+  bottomOpen: boolean
+  bottomHeight: number
+  environmentId: number | null
+  backtestIds: number[]
+}
+
+export interface MarchWorkspace {
+  version: 1
+  activeTabId: string
+  tabs: MarchWorkspaceTab[]
+}
 
 export function makeDefaultPanelConfig(): LayoutPanelConfig {
   const today = new Date().toISOString().slice(0, 10)

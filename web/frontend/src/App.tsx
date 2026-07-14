@@ -1,13 +1,16 @@
-import { useState, useEffect, useRef, useMemo } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useQuery, useQueries } from '@tanstack/react-query'
 import { TIMEFRAMES, makeDefaultPanelConfig, type TF, type MarchLayouts, type LayoutPanelConfig } from './types'
-import { fetchTrades, fetchTradesFx, fetchMarchSettings, saveMarchSettings, fetchMarchLayouts, saveMarchLayouts, type RunResult, type TuneResult } from './api'
+import { fetchBacktests, fetchTrades, fetchTradesFx, type RunResult, type TuneResult } from './api'
 
 import BacktestsModal from './components/BacktestsModal'
 import IndicatorsModal from './components/IndicatorsModal'
-import StatsPage from './components/StatsPage'
-import TestPage from './components/TestPage'
-import MarchPage from './components/MarchPage'
+import DatabasePage from './pages/DatabasePage'
+import TestPage from './pages/TestPage'
+import MarchPage from './pages/MarchPage'
+import HomePage from './pages/HomePage'
+import EnvironmentPage from './pages/EnvironmentPage'
+import CodePage from './pages/CodePage'
 import AccountModal from './components/AccountModal'
 import StrategyModal from './components/StrategyModal'
 import Sidebar from './components/Sidebar'
@@ -18,6 +21,7 @@ import {
   createRouter,
   RouterProvider,
   Outlet,
+  useRouterState,
 } from '@tanstack/react-router'
 
 // Pre-load default; the persisted default_timeframe from app.db overrides this
@@ -27,16 +31,26 @@ const DEFAULT_TF = TIMEFRAMES.find(t => t.table === '5m') ?? TIMEFRAMES[0]
 // --- Route Components ---
 
 function RootRouteComponent() {
+  const pathname = useRouterState({ select: state => state.location.pathname })
+  const isMarchRoute = pathname === '/march'
+  const [hasVisitedMarch, setHasVisitedMarch] = useState(isMarchRoute)
+
   const {
     modalOpen, setModalOpen,
     setIndicatorsOpen,
     indicatorsOpen,
     visibleIds, loadingIds, toggleId,
-    marchSymbol,
     marchAccountModalOpen, setMarchAccountModalOpen, setSelectedAccountId,
     selectedAccountId, marchStrategyModalOpen, setMarchStrategyModalOpen,
-    marchLayouts, activeMarchPanel, updateMarchPanel,
+    marchLayouts, activeMarchPanel, updateMarchPanel, selectedEnvironmentId,
   } = useApp()
+
+  // March owns a stateful chart and live WebSocket connection. Once visited,
+  // keep it mounted while other routes are open so returning to the page does
+  // not recreate the chart or download its candle history again.
+  useEffect(() => {
+    if (isMarchRoute) setHasVisitedMarch(true)
+  }, [isMarchRoute])
 
   // The Indicators modal acts on whichever chart panel opened it.
   const activeCfg: LayoutPanelConfig =
@@ -48,6 +62,14 @@ function RootRouteComponent() {
       <Sidebar />
 
       <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
+        {(hasVisitedMarch || isMarchRoute) && (
+          <div
+            className={isMarchRoute ? 'flex flex-1 min-h-0 overflow-hidden' : 'hidden'}
+            aria-hidden={!isMarchRoute}
+          >
+            <MarchPage />
+          </div>
+        )}
         <Outlet />
       </div>
 
@@ -61,7 +83,6 @@ function RootRouteComponent() {
             indicators: { ...activeCfg.indicators, [key]: !activeCfg.indicators[key] },
           })
         }}
-        isNq={activeCfg.symbol === 'nq'}
       />
       <AccountModal
         open={marchAccountModalOpen}
@@ -79,32 +100,55 @@ function RootRouteComponent() {
         visibleIds={visibleIds}
         loadingIds={loadingIds}
         onToggle={toggleId}
-        activeSymbol={marchSymbol}
+        activeSymbol={activeCfg.symbol}
+        environmentId={selectedEnvironmentId}
       />
     </div>
   )
 }
 
-function StatsRouteComponent() {
+function HomeRouteComponent() {
   return (
     <div className="flex flex-1 overflow-hidden">
-      <StatsPage />
+      <HomePage />
+    </div>
+  )
+}
+
+function DatabaseRouteComponent() {
+  return (
+    <div className="flex flex-1 overflow-hidden">
+      <DatabasePage />
     </div>
   )
 }
 
 function MarchRouteComponent() {
-  return (
-    <div className="flex flex-1 overflow-hidden">
-      <MarchPage />
-    </div>
-  )
+  // MarchPage is kept alive by RootRouteComponent so its chart survives route
+  // navigation. This route only controls whether that persistent page is shown.
+  return null
 }
 
 function TestRouteComponent() {
   return (
     <div className="flex flex-1 overflow-hidden min-h-0">
       <TestPage />
+    </div>
+  )
+}
+
+function EnvironmentRouteComponent() {
+  return (
+    <div className="flex flex-1 overflow-hidden">
+      <EnvironmentPage />
+    </div>
+  )
+}
+
+function CodeRouteComponent() {
+  return (
+    <div className="flex flex-1 overflow-hidden">
+      <CodePage />
     </div>
   )
 }
@@ -118,13 +162,19 @@ const rootRoute = createRootRoute({
 const indexRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/',
+  component: HomeRouteComponent,
+})
+
+const marchRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/march',
   component: MarchRouteComponent,
 })
 
-const statsRoute = createRoute({
+const databaseRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: '/stats',
-  component: StatsRouteComponent,
+  path: '/database',
+  component: DatabaseRouteComponent,
 })
 
 const testRoute = createRoute({
@@ -133,7 +183,19 @@ const testRoute = createRoute({
   component: TestRouteComponent,
 })
 
-const routeTree = rootRoute.addChildren([indexRoute, statsRoute, testRoute])
+const environmentRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/environment',
+  component: EnvironmentRouteComponent,
+})
+
+const codeRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/code',
+  component: CodeRouteComponent,
+})
+
+const routeTree = rootRoute.addChildren([indexRoute, marchRoute, databaseRoute, testRoute, environmentRoute, codeRoute])
 
 const router = createRouter({ routeTree })
 
@@ -159,6 +221,11 @@ export default function App() {
     })
   }
 
+  const { data: backtests } = useQuery({
+    queryKey: ['backtests'],
+    queryFn: fetchBacktests,
+  })
+
   const visibleIdsArray = [...visibleIds]
   const tradeQueries = useQueries({
     queries: visibleIdsArray.map(id => ({
@@ -169,9 +236,14 @@ export default function App() {
   })
   const loadingIds = new Set(visibleIdsArray.filter((_, i) => tradeQueries[i]?.isLoading))
   const allTrades = useMemo(
-    () => tradeQueries.flatMap(q => q.data ?? []),
+    () => tradeQueries.flatMap((q, idx) => {
+      const id = visibleIdsArray[idx];
+      const bt = backtests?.find(b => b.id === id);
+      const symbol = bt?.symbol ?? 'nq';
+      return (q.data ?? []).map(t => ({ ...t, symbol }));
+    }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [tradeQueries.map(q => q.dataUpdatedAt).join(',')]
+    [tradeQueries.map(q => q.dataUpdatedAt).join(','), backtests, visibleIdsArray]
   )
   // FX-execution trades for the same toggled-on backtests, re-priced from
   // fx_nq_ticks — overlaid on the fx_nq candle pane when that overlay is shown.
@@ -183,9 +255,14 @@ export default function App() {
     }))
   })
   const allFxTrades = useMemo(
-    () => fxTradeQueries.flatMap(q => q.data ?? []),
+    () => fxTradeQueries.flatMap((q, idx) => {
+      const id = visibleIdsArray[idx];
+      const bt = backtests?.find(b => b.id === id);
+      const symbol = bt?.symbol ?? 'nq';
+      return (q.data ?? []).map(t => ({ ...t, symbol }));
+    }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [fxTradeQueries.map(q => q.dataUpdatedAt).join(',')]
+    [fxTradeQueries.map(q => q.dataUpdatedAt).join(','), backtests, visibleIdsArray]
   )
   const [selectedBacktestId, setSelectedBacktestId] = useState<number | null>(null)
   const [activeTab, setActiveTab] = useState<'analysis' | 'equity' | 'splicing' | 'monte-carlo'>('analysis')
@@ -221,6 +298,10 @@ export default function App() {
   const [marchMode, setMarchMode] = useState<'latest' | 'range'>('latest')
   const [marchFromDate, setMarchFromDate] = useState(recentFrom)
   const [marchToDate, setMarchToDate] = useState(today)
+  const [selectedEnvironmentId, setSelectedEnvironmentId] = useState<number | null>(() => {
+    const saved = sessionStorage.getItem('selected_environment_id')
+    return saved ? Number(saved) : null
+  })
 
   function handleMarchApplyRange(from: string, to: string) {
     setMarchFromDate(from)
@@ -233,78 +314,13 @@ export default function App() {
     setMarchMode('latest')
   }
 
-  // Load persisted march settings from app.db once on mount, then persist any
-  // change back. `marchLoaded` gates the save effect so we don't immediately
-  // overwrite the stored values with the component defaults on first render.
-  const marchLoaded = useRef(false)
-  const { data: savedMarch } = useQuery({
-    queryKey: ['marchSettings'],
-    queryFn: fetchMarchSettings,
-    staleTime: Infinity,
-  })
-
-  useEffect(() => {
-    if (!savedMarch) return
-    setMarchSymbol(savedMarch.symbol)
-    const tf = TIMEFRAMES.find(t => t.table === savedMarch.tf)
-    if (tf) setMarchTf(tf)
-    setMarchFromDate(savedMarch.from)
-    setMarchToDate(savedMarch.to)
-    setMarchMode(savedMarch.mode)
-    if (savedMarch.bottomOpen !== undefined) {
-      const isOpen = typeof savedMarch.bottomOpen === 'boolean'
-        ? savedMarch.bottomOpen
-        : savedMarch.bottomOpen === 'true';
-      setIsBottomOpen(isOpen);
-    }
-    if (savedMarch.layout) {
-      setMarchLayout(savedMarch.layout)
-    }
-    if (savedMarch.bottomHeight !== undefined) {
-      const h = parseInt(String(savedMarch.bottomHeight), 10)
-      if (!isNaN(h) && h > 0) {
-        setMarchBottomHeight(h)
-      }
-    }
-    marchLoaded.current = true
-  }, [savedMarch])
-
-  useEffect(() => {
-    if (!marchLoaded.current) return
-    saveMarchSettings({
-      symbol: marchSymbol,
-      tf: marchTf.table,
-      from: marchFromDate,
-      to: marchToDate,
-      mode: marchMode,
-      bottomOpen: String(isBottomOpen),
-      layout: marchLayout,
-      bottomHeight: String(marchBottomHeight),
-    })
-  }, [marchSymbol, marchTf, marchFromDate, marchToDate, marchMode, isBottomOpen, marchLayout, marchBottomHeight])
-
-  // Load persisted per-layout panel configs once; persist any change back.
-  const marchLayoutsLoaded = useRef(false)
-  const { data: savedMarchLayouts } = useQuery({
-    queryKey: ['marchLayouts'],
-    queryFn: fetchMarchLayouts,
-    staleTime: Infinity,
-  })
-
-  useEffect(() => {
-    if (!savedMarchLayouts) return
-    setMarchLayouts(savedMarchLayouts)
-    marchLayoutsLoaded.current = true
-  }, [savedMarchLayouts])
-
-  useEffect(() => {
-    if (!marchLayoutsLoaded.current) return
-    saveMarchLayouts(marchLayouts)
-  }, [marchLayouts])
-
   const [testResults, setTestResults] = useState<Record<string, RunResult>>({})
   const [testErrors, setTestErrors] = useState<Record<string, string>>({})
   const [tuneResults, setTuneResults] = useState<Record<string, TuneResult>>({})
+  // Test runs continue while the user switches test tabs or navigates elsewhere.
+  // Keep their UI state above the route so it is not discarded on unmount.
+  const [testLoading, setTestLoading] = useState<Record<string, boolean>>({})
+  const [testTuneProgress, setTestTuneProgress] = useState<Record<string, { progress: number; total: number }>>({})
 
   const [selectedAccountId, setSelectedAccountId] = useState<number | null>(null)
   const [marchAccountModalOpen, setMarchAccountModalOpen] = useState(false)
@@ -327,12 +343,13 @@ export default function App() {
     <AppContext.Provider value={{
       modalOpen, setModalOpen,
       indicatorsOpen, setIndicatorsOpen,
-      visibleIds, loadingIds, allTrades, allFxTrades, toggleId,
+      visibleIds, loadingIds, allTrades, allFxTrades, toggleId, setVisibleIds,
       marchSymbol, setMarchSymbol,
       marchTf, setMarchTf,
       marchStreamStatus, setMarchStreamStatus,
       marchMode, marchFromDate, marchToDate,
       handleMarchApplyRange, handleMarchLatest,
+      selectedEnvironmentId, setSelectedEnvironmentId,
       selectedAccountId, setSelectedAccountId,
       marchAccountModalOpen, setMarchAccountModalOpen,
       marchStrategyModalOpen, setMarchStrategyModalOpen,
@@ -340,13 +357,15 @@ export default function App() {
       isBottomOpen, setIsBottomOpen,
       marchLayout, setMarchLayout,
       marchBottomHeight, setMarchBottomHeight,
-      marchLayouts, updateMarchPanel,
+      marchLayouts, setMarchLayouts, updateMarchPanel,
       activeMarchPanel, setActiveMarchPanel,
       selectedBacktestId, setSelectedBacktestId,
       activeTab, setActiveTab,
       testResults, setTestResults,
       testErrors, setTestErrors,
       tuneResults, setTuneResults,
+      testLoading, setTestLoading,
+      testTuneProgress, setTestTuneProgress,
     }}>
       <RouterProvider router={router} />
     </AppContext.Provider>

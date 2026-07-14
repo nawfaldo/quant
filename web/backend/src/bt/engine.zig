@@ -14,20 +14,13 @@ pub const Ts = data.Ts;
 // the whole table.
 pub var from: ?[]const u8 = null; // e.g. "2023-01-01"
 pub var to: ?[]const u8 = null; // e.g. "2025-01-01"
-pub var symbol: []const u8 = "nq"; // table prefix, e.g. "nq" or "gbpusd"
-
-// How the selected price series is traded. This is decoupled from `symbol`:
-// Every symbol — including NQ — is modeled as a forex CFD: $1/point per 1.0
-// lot, fractional lots, "lot" terminology. The enum is kept as a single-member
-// type so the rest of the codebase (Config, combine, db labels) stays intact.
-pub const Instrument = enum { forex };
-pub var instrument: Instrument = .forex;
+pub var symbol: []const u8 = "nq"; // table prefix, e.g. "nq" or "es"
 
 var g_table_buf: [32]u8 = undefined;
 
 // Warm-up buffer: when `from` is set, the fetch is widened backward by this
 // many CALENDAR days so volatility/indicator state (e.g. the EWMA vol estimate
-// in Orb) is primed before the evaluation window. Bars in the warm-up region
+// used by vol-target sizing) is primed before the evaluation window. Bars in the warm-up region
 // are fed to `strat.update()` but produce no trades and are excluded from the
 // reported stats. Set to 0 to disable. Has no effect when `from` is null
 // (full-history runs warm up naturally from the first bar).
@@ -67,35 +60,6 @@ const Position = struct {
     contracts: f64,
 };
 
-// Point value per unit of position. Forex CFD: $1 per point per 1 standard
-// lot. A 10-point move on 0.1 lot = $1.
-fn lotMultOf(inst: Instrument) f64 {
-    return switch (inst) {
-        .forex => 1.0,
-    };
-}
-
-fn lotMult() f64 {
-    return lotMultOf(instrument);
-}
-
-// Dollar value of one index point per contract/lot for the active instrument.
-// Exposed so the CLI can visualize transaction costs ($ = points × pointValue).
-pub fn pointValue() f64 {
-    return lotMult();
-}
-
-fn usesContractsOf(inst: Instrument) bool {
-    return inst != .forex;
-}
-
-// Forex CFDs keep fractional lots untouched, so this is always false now. Kept
-// so callers (engine, CLI terminology) need no change; if a whole-contract
-// instrument is ever re-added, flip `usesContractsOf` and this follows.
-pub fn usesContracts() bool {
-    return usesContractsOf(instrument);
-}
-
 // Forex CFDs execute in 0.01-lot increments at every retail broker. Sizing
 // (base_lot × leverage × vol-target multiplier) is otherwise a free-floating
 // float, so without this a run can size a trade at 0.0001 or 0.8932 lots —
@@ -108,16 +72,12 @@ fn roundToLotStep(raw: f64) f64 {
     return @max(lot_step, @round(raw / lot_step) * lot_step);
 }
 
-fn sizeFor(raw: f64, inst: Instrument) f64 {
-    if (usesContractsOf(inst)) return @max(1.0, @round(raw));
+fn sizeFor(raw: f64) f64 {
     return roundToLotStep(raw);
 }
 
-// Human-readable instrument label — stored in the DB and shown in the report.
 pub fn instrumentName() []const u8 {
-    return switch (instrument) {
-        .forex => "forex",
-    };
+    return "forex";
 }
 
 // ── Transaction-cost model ──────────────────────────────────────────────────
@@ -126,19 +86,27 @@ pub fn instrumentName() []const u8 {
 //   1. Half the bid/ask spread. A market order crosses the spread, paying the
 //      ask when buying / hitting the bid when selling — i.e. half the quoted
 //      spread away from mid on each leg. `spread` is the full quoted spread.
-//      Exness NAS100: typically 0.3–0.6 pt; using 0.4 as the midpoint default.
+//      The application default is 0.2 point for every supported symbol.
 //
 //   2. Fixed slippage. A flat per-fill adverse price move that approximates
 //      order-book friction at retail lot sizes (queue position, partial fills,
-//      price movement in the 1-bar fill window). At 0.2 pt this represents a
-//      modest but realistic retail execution cost on a liquid CFD.
+//      price movement in the 1-bar fill window). The default is zero.
 //
-// Per-side cost = spread/2 + slippage = 2.0 + 0.2 = 2.2 pt  (NQ default).
-// Round-trip    = 2 × 2.2              = 4.4 pt.
+// Per-side cost = spread/2 + slippage = 0.1 pt.
+// Round-trip    = 2 × 0.1              = 0.2 pt.
 //
 // Set both to 0 to run frictionless.
-pub var spread: f64 = 4.0; // full bid/ask spread in points
-pub var slippage: f64 = 0.2; // fixed per-fill slippage in points
+pub var spread: f64 = 0.2; // full bid/ask spread in points
+pub var slippage: f64 = 0.0; // fixed per-fill slippage in points
+
+// Request fallbacks use the same defaults for every supported symbol.
+pub fn defaultSpreadFor(_: []const u8) f64 {
+    return spread;
+}
+
+pub fn defaultSlippageFor(_: []const u8) f64 {
+    return slippage;
+}
 
 // Set to true by the CLI's stdin reader to abort a running backtest.
 // Atomic so cli.zig (main thread) and engine (worker thread) can race safely.
@@ -148,10 +116,9 @@ pub var cancelled: std.atomic.Value(bool) = .init(false);
 // globals above and call the global entry points, which snapshot them via
 // `globalConfig()`. `/combine` instead runs several configs *concurrently*, so it
 // builds an explicit Config per source and calls `runWith` — keeping each run's
-// symbol/instrument/cost/date out of shared mutable state (no data races).
+// symbol/cost/date out of shared mutable state (no data races).
 pub const Config = struct {
     symbol: []const u8,
-    instrument: Instrument,
     from: ?[]const u8,
     to: ?[]const u8,
     spread: f64,
@@ -164,7 +131,6 @@ pub const Config = struct {
 pub fn globalConfig() Config {
     return .{
         .symbol = symbol,
-        .instrument = instrument,
         .from = from,
         .to = to,
         .spread = spread,
@@ -223,7 +189,7 @@ pub fn run(io: Io, gpa: std.mem.Allocator, strat: anytype) !Result {
 
 // Like `run`, but driven entirely by an explicit `cfg` instead of the module
 // globals — so several runs can proceed *concurrently* on different threads
-// (each with its own symbol/instrument/cost/date) without racing shared state.
+// (each with its own symbol/cost/date) without racing shared state.
 // The table name is built into a stack buffer here, not the shared `g_table_buf`.
 pub fn runWith(io: Io, gpa: std.mem.Allocator, strat: anytype, cfg: Config) !Result {
     const cols = columnsFor(@TypeOf(strat.*));
@@ -242,6 +208,7 @@ pub fn columnsFor(comptime Strat: type) data.Columns {
         .low = Strat.columns.low,
         .close = Strat.columns.close,
         .volume = Strat.columns.volume,
+        .vix = if (@hasField(@TypeOf(Strat.columns), "vix")) Strat.columns.vix else false,
     };
 }
 
@@ -365,12 +332,15 @@ fn backtest(gpa: std.mem.Allocator, strat: anytype, bars: []const Bar, timestamp
     // state the warm-up left set.
     while (i < start) : (i += 1) {
         if (cancelled.load(.acquire)) return error.Cancelled;
-        _ = strat.update(bars[i], timestamps[i]);
+        setStrategyEquity(strat, equity);
+        const signal = strat.update(bars[i], timestamps[i]);
+        discardStrategyAction(strat, signal);
     }
 
     while (i < bars.len) : (i += 1) {
         if (cancelled.load(.acquire)) return error.Cancelled;
 
+        setStrategyEquity(strat, equity);
         const signal = strat.update(bars[i], timestamps[i]);
 
         // Sample the mark-to-market equity for this bar BEFORE acting on the
@@ -379,7 +349,7 @@ fn backtest(gpa: std.mem.Allocator, strat: anytype, bars: []const Bar, timestamp
         // below that `continue` — so drawdown reflects the whole holding period.
         {
             var mtm = equity;
-            if (position) |pos| mtm += calcPnl(pos.side, pos.entry_price, bars[i].close, pos.contracts, cfg.instrument);
+            if (position) |pos| mtm += calcPnl(pos.side, pos.entry_price, bars[i].close, pos.contracts);
 
             // All-time trailing drawdown (peak never resets).
             if (mtm > peak) {
@@ -430,9 +400,14 @@ fn backtest(gpa: std.mem.Allocator, strat: anytype, bars: []const Bar, timestamp
         switch (signal) {
             .flat => continue,
             .close => {
-                if (position) |pos| {
-                    const cf = closeFill(strat, bars, timestamps, i);
-                    const pnl = calcPnl(pos.side, pos.entry_price, cf.price, pos.contracts, cfg.instrument);
+                if (position) |*pos| {
+                    const cf = closeFill(strat, bars, timestamps, i, pos.side, cfg);
+                    const fraction = closeFraction(strat);
+                    const closed_contracts = if (fraction >= 1.0)
+                        pos.contracts
+                    else
+                        pos.contracts * fraction;
+                    const pnl = calcPnl(pos.side, pos.entry_price, cf.price, closed_contracts);
                     try trades.append(gpa, .{
                         .entry_ts = pos.entry_ts,
                         .exit_ts = cf.ts,
@@ -440,11 +415,14 @@ fn backtest(gpa: std.mem.Allocator, strat: anytype, bars: []const Bar, timestamp
                         .entry_price = pos.entry_price,
                         .exit_price = cf.price,
                         .pnl = pnl,
-                        .contracts = pos.contracts,
+                        .contracts = closed_contracts,
                         .entry_raw = pos.entry_raw,
                     });
                     equity += pnl;
-                    position = null;
+                    pos.contracts -= closed_contracts;
+                    if (pos.contracts <= 0.000000001) position = null;
+                } else {
+                    _ = closeFraction(strat);
                 }
                 continue;
             },
@@ -462,24 +440,30 @@ fn backtest(gpa: std.mem.Allocator, strat: anytype, bars: []const Bar, timestamp
         // value. Here we skip if we're already in the same direction.
         if (position) |pos| if (pos.side == new_side) continue;
 
-        // We fill on the *next* bar's open (no lookahead cheating). If there
-        // is no next bar, we can't fill — bail out of the loop.
-        if (i + 1 >= bars.len) break;
+        // By default we fill on the *next* bar's open (no lookahead cheating).
+        // A strategy that exposes `entry_fill` may instead provide an exact raw
+        // price touched inside the current bar (for stop-entry style signals).
+        const exact_entry = takeEntryFill(strat);
 
-        const next_bar = bars[i + 1];
-        const next_open = next_bar.open;
-        const next_ts = timestamps[i + 1];
+        // Intrabar touch strategies normally stamp an exact fill at the bar's
+        // end (i+1). A strategy that deliberately trades the current bar's open
+        // can opt into the current timestamp instead.
+        const current_exact_ts = exact_entry != null and exactFillTimestampCurrent(strat);
+        if (!current_exact_ts and i + 1 >= bars.len) break;
+
+        const raw_entry = exact_entry orelse bars[i + 1].open;
+        const entry_ts = if (current_exact_ts) timestamps[i] else timestamps[i + 1];
 
         // Close any existing position at the next bar's open. Booking its PnL
         // into `equity` *here* (before entering the new position) means a flip
         // reallocates the freshly-updated account, matching the paper. The
         // closing leg carries its *own* size, so it gets its own impact cost.
         if (position) |pos| {
-            const exit_fill = next_open;
-            const pnl = calcPnl(pos.side, pos.entry_price, exit_fill, pos.contracts, cfg.instrument);
+            const exit_fill = raw_entry;
+            const pnl = calcPnl(pos.side, pos.entry_price, exit_fill, pos.contracts);
             try trades.append(gpa, .{
                 .entry_ts = pos.entry_ts,
-                .exit_ts = next_ts,
+                .exit_ts = entry_ts,
                 .side = pos.side,
                 .entry_price = pos.entry_price,
                 .exit_price = exit_fill,
@@ -490,9 +474,9 @@ fn backtest(gpa: std.mem.Allocator, strat: anytype, bars: []const Bar, timestamp
             equity += pnl;
         }
 
-        const open_contracts = sizeFor(strat.contracts, cfg.instrument);
-        const entry_fill = applyFillCost(next_open, new_side == .long, cfg.spread, cfg.slippage);
-        position = .{ .side = new_side, .entry_price = entry_fill, .entry_raw = next_open, .entry_ts = next_ts, .contracts = open_contracts };
+        const open_contracts = sizeFor(strat.contracts);
+        const entry_fill = applyFillCost(raw_entry, new_side == .long, cfg.spread, cfg.slippage);
+        position = .{ .side = new_side, .entry_price = entry_fill, .entry_raw = raw_entry, .entry_ts = entry_ts, .contracts = open_contracts };
     }
 
     // If we ended the loop still holding a position, close it at the final
@@ -500,7 +484,7 @@ fn backtest(gpa: std.mem.Allocator, strat: anytype, bars: []const Bar, timestamp
     if (position) |pos| {
         const last = bars[bars.len - 1];
         const exit_price = last.close;
-        const pnl = calcPnl(pos.side, pos.entry_price, exit_price, pos.contracts, cfg.instrument);
+        const pnl = calcPnl(pos.side, pos.entry_price, exit_price, pos.contracts);
         try trades.append(gpa, .{
             .entry_ts = pos.entry_ts,
             .exit_ts = timestamps[bars.len - 1],
@@ -548,18 +532,27 @@ fn backtest(gpa: std.mem.Allocator, strat: anytype, bars: []const Bar, timestamp
 // cleared (so a stale value can't leak into a later close). Strategies without
 // the field are unaffected: the `@hasField` check is comptime, so this branch is
 // elided entirely for them and the next-open path is preserved.
-fn closeFill(strat: anytype, bars: []const Bar, timestamps: []const data.Ts, i: usize) struct { price: f64, ts: data.Ts } {
+fn closeFill(strat: anytype, bars: []const Bar, timestamps: []const data.Ts, i: usize, side: Side, cfg: Config) struct { price: f64, ts: data.Ts } {
     if (comptime @hasField(@TypeOf(strat.*), "exit_fill")) {
         if (strat.exit_fill) |p| {
             strat.exit_fill = null;
-            // The exit_fill price is reached DURING bar i (e.g. zara's 16:00
+            // The exit_fill price is reached DURING bar i (e.g. noise momentum's 16:00
             // flatten quotes the bar's close), so stamp the exit at the bar's
             // end — the next bar's timestamp — not its start. Stamping at the
             // start puts a price on the chart up to a full bar before the
             // market trades there, which draws the exit arrow in empty space
             // on finer chart timeframes.
-            const ts: data.Ts = if (i + 1 < timestamps.len) timestamps[i + 1] else timestamps[i];
-            return .{ .price = p, .ts = ts };
+            const ts: data.Ts = if (exactFillTimestampCurrent(strat))
+                timestamps[i]
+            else if (i + 1 < timestamps.len)
+                timestamps[i + 1]
+            else
+                timestamps[i];
+            const priced = if (exactFillsPayCosts(strat))
+                applyFillCost(p, side == .short, cfg.spread, cfg.slippage)
+            else
+                p;
+            return .{ .price = priced, .ts = ts };
         }
     }
     const price: f64 = if (i + 1 < bars.len) bars[i + 1].open else bars[i].close;
@@ -567,11 +560,53 @@ fn closeFill(strat: anytype, bars: []const Bar, timestamps: []const data.Ts, i: 
     return .{ .price = price, .ts = ts };
 }
 
-pub fn calcPnl(side: Side, entry: f64, exit: f64, lots: f64, inst: Instrument) f64 {
-    const mult = lotMultOf(inst);
+fn setStrategyEquity(strat: anytype, equity: f64) void {
+    if (comptime @hasField(@TypeOf(strat.*), "account_equity"))
+        strat.account_equity = equity;
+}
+
+fn takeEntryFill(strat: anytype) ?f64 {
+    if (comptime @hasField(@TypeOf(strat.*), "entry_fill")) {
+        const fill = strat.entry_fill;
+        strat.entry_fill = null;
+        return fill;
+    }
+    return null;
+}
+
+fn closeFraction(strat: anytype) f64 {
+    if (comptime @hasField(@TypeOf(strat.*), "close_fraction")) {
+        const fraction = std.math.clamp(strat.close_fraction, 0.0, 1.0);
+        strat.close_fraction = 1.0;
+        return fraction;
+    }
+    return 1.0;
+}
+
+fn exactFillsPayCosts(strat: anytype) bool {
+    if (comptime @hasField(@TypeOf(strat.*), "cost_exact_fills"))
+        return strat.cost_exact_fills;
+    return false;
+}
+
+fn exactFillTimestampCurrent(strat: anytype) bool {
+    if (comptime @hasField(@TypeOf(strat.*), "exact_fill_timestamp_current"))
+        return strat.exact_fill_timestamp_current;
+    return false;
+}
+
+fn discardStrategyAction(strat: anytype, signal: Signal) void {
+    _ = takeEntryFill(strat);
+    if (comptime @hasField(@TypeOf(strat.*), "exit_fill")) strat.exit_fill = null;
+    _ = closeFraction(strat);
+    if (comptime @hasDecl(@TypeOf(strat.*), "onDiscardedSignal"))
+        strat.onDiscardedSignal(signal);
+}
+
+pub fn calcPnl(side: Side, entry: f64, exit: f64, lots: f64) f64 {
     return switch (side) {
-        .long => (exit - entry) * mult * lots,
-        .short => (entry - exit) * mult * lots,
+        .long => (exit - entry) * lots,
+        .short => (entry - exit) * lots,
     };
 }
 
@@ -582,6 +617,193 @@ pub fn calcPnl(side: Side, entry: f64, exit: f64, lots: f64, inst: Instrument) f
 pub fn applyFillCost(raw: f64, buying: bool, sprd: f64, slip: f64) f64 {
     const adverse = sprd / 2.0 + slip;
     return if (buying) raw + adverse else raw - adverse;
+}
+
+test "optional exact and partial fill hooks realize separate legs" {
+    const TestStrategy = struct {
+        pub const timeframe = "1m";
+        pub const columns = .{ .high = true, .low = true, .close = true, .volume = false };
+
+        initial_balance: f64 = 1000.0,
+        contracts: f64 = 2.0,
+        account_equity: f64 = 0.0,
+        entry_fill: ?f64 = null,
+        exit_fill: ?f64 = null,
+        close_fraction: f64 = 1.0,
+        cost_exact_fills: bool = false,
+        step: usize = 0,
+        equities: [3]f64 = .{0.0} ** 3,
+
+        pub fn update(self: *@This(), _: Bar, _: data.Ts) Signal {
+            if (self.step < self.equities.len) self.equities[self.step] = self.account_equity;
+            defer self.step += 1;
+            return switch (self.step) {
+                0 => blk: {
+                    self.entry_fill = 100.0;
+                    break :blk .long;
+                },
+                1 => blk: {
+                    self.exit_fill = 110.0;
+                    self.close_fraction = 0.5;
+                    break :blk .close;
+                },
+                2 => blk: {
+                    self.exit_fill = 120.0;
+                    break :blk .close;
+                },
+                else => .flat,
+            };
+        }
+    };
+
+    var strat = TestStrategy{};
+    const bars = [_]Bar{
+        .{ .open = 99, .high = 101, .low = 98, .close = 100 },
+        .{ .open = 101, .high = 111, .low = 100, .close = 110 },
+        .{ .open = 111, .high = 121, .low = 110, .close = 120 },
+        .{ .open = 120, .high = 120, .low = 120, .close = 120 },
+    };
+    const timestamps = [_]data.Ts{
+        "2025-01-02 09:30".*,
+        "2025-01-02 09:31".*,
+        "2025-01-02 09:32".*,
+        "2025-01-02 09:33".*,
+    };
+    const dataset = data.Dataset{
+        .bars = @constCast(bars[0..]),
+        .timestamps = @constCast(timestamps[0..]),
+        .allocator = std.testing.allocator,
+    };
+    const cfg = Config{
+        .symbol = "test",
+        .from = null,
+        .to = null,
+        .spread = 0,
+        .slippage = 0,
+        .warmup_days = 0,
+    };
+
+    const result = try backtestOnCfg(std.testing.allocator, &strat, dataset, cfg);
+    defer result.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(@as(usize, 2), result.trades.len);
+    try std.testing.expectApproxEqAbs(@as(f64, 1.0), result.trades[0].contracts, 0.000001);
+    try std.testing.expectApproxEqAbs(@as(f64, 10.0), result.trades[0].pnl, 0.000001);
+    try std.testing.expectApproxEqAbs(@as(f64, 1.0), result.trades[1].contracts, 0.000001);
+    try std.testing.expectApproxEqAbs(@as(f64, 20.0), result.trades[1].pnl, 0.000001);
+    try std.testing.expectApproxEqAbs(@as(f64, 1000.0), strat.equities[0], 0.000001);
+    try std.testing.expectApproxEqAbs(@as(f64, 1000.0), strat.equities[1], 0.000001);
+    try std.testing.expectApproxEqAbs(@as(f64, 1010.0), strat.equities[2], 0.000001);
+}
+
+test "strategies without exact-fill hooks keep next-open fills" {
+    const TestStrategy = struct {
+        pub const timeframe = "1m";
+        pub const columns = .{ .high = false, .low = false, .close = true, .volume = false };
+
+        initial_balance: f64 = 1000.0,
+        contracts: f64 = 1.0,
+        step: usize = 0,
+
+        pub fn update(self: *@This(), _: Bar, _: data.Ts) Signal {
+            defer self.step += 1;
+            return switch (self.step) {
+                0 => .long,
+                1 => .close,
+                else => .flat,
+            };
+        }
+    };
+
+    var strat = TestStrategy{};
+    const bars = [_]Bar{
+        .{ .open = 100, .close = 100 },
+        .{ .open = 101, .close = 101 },
+        .{ .open = 102, .close = 102 },
+    };
+    const timestamps = [_]data.Ts{
+        "2025-01-02 09:30".*,
+        "2025-01-02 09:31".*,
+        "2025-01-02 09:32".*,
+    };
+    const dataset = data.Dataset{
+        .bars = @constCast(bars[0..]),
+        .timestamps = @constCast(timestamps[0..]),
+        .allocator = std.testing.allocator,
+    };
+    const cfg = Config{
+        .symbol = "test",
+        .from = null,
+        .to = null,
+        .spread = 0,
+        .slippage = 0,
+        .warmup_days = 0,
+    };
+
+    const result = try backtestOnCfg(std.testing.allocator, &strat, dataset, cfg);
+    defer result.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(usize, 1), result.trades.len);
+    try std.testing.expectApproxEqAbs(@as(f64, 101.0), result.trades[0].entry_price, 0.000001);
+    try std.testing.expectApproxEqAbs(@as(f64, 102.0), result.trades[0].exit_price, 0.000001);
+}
+
+test "exact current-bar fill hook preserves open-fill timestamps" {
+    const TestStrategy = struct {
+        pub const timeframe = "1d";
+        pub const columns = .{ .high = false, .low = false, .close = true, .volume = false };
+
+        initial_balance: f64 = 1000.0,
+        contracts: f64 = 1.0,
+        entry_fill: ?f64 = null,
+        exit_fill: ?f64 = null,
+        exact_fill_timestamp_current: bool = true,
+        step: usize = 0,
+
+        pub fn update(self: *@This(), bar: Bar, _: data.Ts) Signal {
+            defer self.step += 1;
+            return switch (self.step) {
+                0 => blk: {
+                    self.entry_fill = bar.open;
+                    break :blk .long;
+                },
+                1 => blk: {
+                    self.exit_fill = bar.open;
+                    break :blk .close;
+                },
+                else => .flat,
+            };
+        }
+    };
+
+    var strat = TestStrategy{};
+    const bars = [_]Bar{
+        .{ .open = 100, .close = 101 },
+        .{ .open = 110, .close = 111 },
+    };
+    const timestamps = [_]data.Ts{
+        "2025-01-02 00:00".*,
+        "2025-02-03 00:00".*,
+    };
+    const dataset = data.Dataset{
+        .bars = @constCast(bars[0..]),
+        .timestamps = @constCast(timestamps[0..]),
+        .allocator = std.testing.allocator,
+    };
+    const cfg = Config{
+        .symbol = "test",
+        .from = null,
+        .to = null,
+        .spread = 0,
+        .slippage = 0,
+        .warmup_days = 0,
+    };
+
+    const result = try backtestOnCfg(std.testing.allocator, &strat, dataset, cfg);
+    defer result.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(usize, 1), result.trades.len);
+    try std.testing.expectEqual(timestamps[0], result.trades[0].entry_ts);
+    try std.testing.expectEqual(timestamps[1], result.trades[0].exit_ts);
+    try std.testing.expectApproxEqAbs(@as(f64, 10.0), result.trades[0].pnl, 0.000001);
 }
 
 // ── Warm-up window helpers ────────────────────────────────────────────────────

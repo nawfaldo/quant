@@ -4,6 +4,8 @@ const std = @import("std");
 // Sizing mode selector, shared by the CLI, the tuner, and strategies.
 //   .none       — fixed lots (base_lots × leverage), no scaling.
 //   .vol_target — Harvey et al. (2018) volatility targeting (VolTarget below).
+// (Noise Momentum is NOT driven by this — it uses its own internal sizing
+// formula; see strategies/idk/noise_momentum.zig.)
 pub const Mode = enum { none, vol_target };
 
 // ── Volatility targeting (Harvey, Hoyle, Korgaonkar, Rattray, Sargaison &

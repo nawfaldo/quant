@@ -1,5 +1,6 @@
 const std = @import("std");
 const http = @import("../server/http.zig");
+const db = @import("../db.zig");
 const engine = @import("engine.zig");
 const data = @import("data.zig");
 const sizing = @import("../sizings/vol_target.zig");
@@ -7,8 +8,7 @@ const bt_run = @import("run.zig");
 const report = @import("tune_report.zig");
 const scoring = @import("tune_score.zig");
 
-const RthVwap = @import("../strategies/rth_vwap.zig").RthVwap;
-const ZaraMomentum = @import("../strategies/zara_momentum.zig").ZaraMomentum;
+const NightDrift = @import("../strategies/idk/night_drift.zig").NightDrift;
 
 const alloc = std.heap.page_allocator;
 
@@ -87,7 +87,7 @@ const ThreadCtx = struct {
     vol_targets: []const f64,
     vol_halflifes: []const f64,
     vol_max_mults: []const f64,
-    vol_min_days: []const u32,
+    vol_min_days: []const f64, // integer-valued; f64 so every swept dim shares one type
     fromDate: []const u8,
     toDate: []const u8,
     spread: f64,
@@ -128,7 +128,6 @@ pub fn handle(req: *http.Ctx) !void {
         try req.sendJson("{\"error\":\"unknown symbol\"}");
         return;
     };
-
     const balance = jsonNum(body, "initialBalance") orelse 0;
 
     // Parse comma-separated base lot list.
@@ -159,7 +158,7 @@ pub fn handle(req: *http.Ctx) !void {
     var vol_targets: [MAX_GRID]f64 = undefined;
     var vol_halflifes: [MAX_GRID]f64 = undefined;
     var vol_max_mults: [MAX_GRID]f64 = undefined;
-    var vol_min_days: [MAX_GRID]u32 = undefined;
+    var vol_min_days: [MAX_GRID]f64 = undefined;
     var vol_targets_n: usize = 1;
     var vol_halflifes_n: usize = 1;
     var vol_max_mults_n: usize = 1;
@@ -181,7 +180,7 @@ pub fn handle(req: *http.Ctx) !void {
             try req.sendJson("{\"error\":\"invalid volMaxMult list\"}");
             return;
         };
-        vol_min_days_n = parseUintListOrDefault(jsonStr(body, "volMinDays"), &vol_min_days, 30) orelse {
+        vol_min_days_n = parseFloatListOrDefault(jsonStr(body, "volMinDays"), &vol_min_days, 30) orelse {
             req.setStatusNumeric(400);
             try req.sendJson("{\"error\":\"invalid volMinDays list\"}");
             return;
@@ -196,8 +195,9 @@ pub fn handle(req: *http.Ctx) !void {
     // Date range.
     const from_raw = jsonStr(body, "fromDate");
     const to_raw = jsonStr(body, "toDate");
-    const spread_val = jsonNum(body, "spread") orelse engine.spread;
-    const slippage_val = jsonNum(body, "slippage") orelse engine.slippage;
+    const costs = (try environmentCosts(req, body)) orelse return;
+    const spread_val = costs.spread;
+    const slippage_val = costs.slippage;
 
     // Build the cartesian product of all swept dimensions.
     const total = base_lots_n * leverages_n * vol_targets_n * vol_halflifes_n * vol_max_mults_n * vol_min_days_n;
@@ -219,7 +219,7 @@ pub fn handle(req: *http.Ctx) !void {
         .vol_targets = try alloc.dupe(f64, vol_targets[0..vol_targets_n]),
         .vol_halflifes = try alloc.dupe(f64, vol_halflifes[0..vol_halflifes_n]),
         .vol_max_mults = try alloc.dupe(f64, vol_max_mults[0..vol_max_mults_n]),
-        .vol_min_days = try alloc.dupe(u32, vol_min_days[0..vol_min_days_n]),
+        .vol_min_days = try alloc.dupe(f64, vol_min_days[0..vol_min_days_n]),
         .fromDate = try alloc.dupe(u8, from_raw),
         .toDate = try alloc.dupe(u8, to_raw),
         .spread = spread_val,
@@ -256,6 +256,28 @@ pub fn handle(req: *http.Ctx) !void {
     try req.sendJson("{\"ok\":true}");
 }
 
+// An environment can omit either execution-cost rule. In that case the absent
+// value is zero, which keeps tuning consistent with a normal run.
+fn environmentCosts(req: *http.Ctx, body: []const u8) !?db.EnvironmentCosts {
+    const raw_id = jsonNum(body, "environmentId") orelse return .{};
+    if (!std.math.isFinite(raw_id) or raw_id <= 0 or @floor(raw_id) != raw_id) {
+        req.setStatusNumeric(400);
+        try req.sendJson("{\"error\":\"invalid environment id\"}");
+        return null;
+    }
+    const id: i64 = @intFromFloat(raw_id);
+    return db.getEnvironmentCosts(id) catch |err| {
+        std.debug.print("tune environment cost lookup error: {}\n", .{err});
+        req.setStatusNumeric(500);
+        try req.sendJson("{\"error\":\"environment read failed\"}");
+        return null;
+    } orelse {
+        req.setStatusNumeric(404);
+        try req.sendJson("{\"error\":\"environment not found\"}");
+        return null;
+    };
+}
+
 fn setAsyncError(err: anyerror) void {
     var buf: [128]u8 = undefined;
     const msg = std.fmt.bufPrint(&buf, "Tune failed: {s}", .{@errorName(err)}) catch "Tune failed";
@@ -264,7 +286,16 @@ fn setAsyncError(err: anyerror) void {
 }
 
 fn runTuneAsync(ctx: *ThreadCtx) void {
-    const total = ctx.base_lots.len * ctx.leverages.len * ctx.vol_targets.len * ctx.vol_halflifes.len * ctx.vol_max_mults.len * ctx.vol_min_days.len;
+    // Cartesian product over every swept sizing dimension (non-swept dims are
+    // singletons). Built with an odometer instead of nested loops; the last
+    // dimension varies fastest.
+    const dims = [_][]const f64{
+        ctx.base_lots,     ctx.leverages,    ctx.vol_targets, ctx.vol_halflifes,
+        ctx.vol_max_mults, ctx.vol_min_days,
+    };
+    var total: usize = 1;
+    for (dims) |d| total *= d.len;
+
     const combos = alloc.alloc(Combo, total) catch {
         g_error_msg = alloc.dupe(u8, "Alloc failed") catch null;
         g_status = .failed;
@@ -273,32 +304,28 @@ fn runTuneAsync(ctx: *ThreadCtx) void {
     };
     defer alloc.free(combos);
 
+    var idx: [dims.len]usize = .{0} ** dims.len;
     var k: usize = 0;
-    for (ctx.base_lots) |bl| {
-        for (ctx.leverages) |lev| {
-            for (ctx.vol_targets) |vt| {
-                for (ctx.vol_halflifes) |vh| {
-                    for (ctx.vol_max_mults) |vm| {
-                        for (ctx.vol_min_days) |vd| {
-                            combos[k] = .{
-                                .base_lot = bl,
-                                .leverage = lev,
-                                .vol_target = vt,
-                                .vol_halflife = vh,
-                                .vol_max_mult = vm,
-                                .vol_min_days = vd,
-                            };
-                            k += 1;
-                        }
-                    }
-                }
-            }
+    while (k < total) : (k += 1) {
+        combos[k] = .{
+            .base_lot = dims[0][idx[0]],
+            .leverage = dims[1][idx[1]],
+            .vol_target = dims[2][idx[2]],
+            .vol_halflife = dims[3][idx[3]],
+            .vol_max_mult = dims[4][idx[4]],
+            .vol_min_days = @intFromFloat(@max(0, dims[5][idx[5]])),
+        };
+        var d: usize = dims.len;
+        while (d > 0) {
+            d -= 1;
+            idx[d] += 1;
+            if (idx[d] < dims[d].len) break;
+            idx[d] = 0;
         }
     }
 
     const cfg = engine.Config{
         .symbol = ctx.symbol,
-        .instrument = .forex,
         .from = if (ctx.fromDate.len > 0) ctx.fromDate else null,
         .to = if (ctx.toDate.len > 0) ctx.toDate else null,
         .spread = ctx.spread,
@@ -306,19 +333,16 @@ fn runTuneAsync(ctx: *ThreadCtx) void {
         .warmup_days = 90,
     };
 
-    if (std.mem.eql(u8, ctx.strategy, "RTH VWAP")) {
-        runGrid(RthVwap, ctx.io, combos, ctx.balance, ctx.sizing_mode, cfg) catch |err| {
-            setAsyncError(err);
-            ctx.deinit();
-            return;
-        };
-    } else if (std.mem.eql(u8, ctx.strategy, "Zara Momentum")) {
-        runGrid(ZaraMomentum, ctx.io, combos, ctx.balance, ctx.sizing_mode, cfg) catch |err| {
+    if (std.mem.eql(u8, ctx.strategy, "Night Drift")) {
+        runGrid(NightDrift, ctx.io, combos, ctx.balance, ctx.sizing_mode, cfg) catch |err| {
             setAsyncError(err);
             ctx.deinit();
             return;
         };
     } else {
+        // Noise Momentum is deliberately absent: it has no base-lot/leverage/
+        // vol-target surface to grid over — it always sizes itself with the
+        // strategy's internal formula (see strategies/idk/noise_momentum.zig).
         g_error_msg = alloc.dupe(u8, "Unknown strategy") catch null;
         g_status = .failed;
         ctx.deinit();
@@ -513,7 +537,7 @@ fn buildTuneJson(work: []Combo, mode: sizing.Mode) ![]const u8 {
 // the parameter-sensitivity surface.
 fn appendFullGrid(out: *std.ArrayList(u8), all: []const Combo, mode: sizing.Mode) !void {
     try out.appendSlice(alloc, ",\"grid\":[");
-    var buf: [512]u8 = undefined;
+    var buf: [768]u8 = undefined;
     for (all, 0..) |c, i| {
         const comma: []const u8 = if (i == 0) "" else ",";
         if (mode == .vol_target) {
@@ -551,7 +575,7 @@ fn appendComboList(out: *std.ArrayList(u8), key: []const u8, sorted: []const Com
     try out.appendSlice(alloc, kh);
 
     const n = @min(sorted.len, 10);
-    var buf: [512]u8 = undefined;
+    var buf: [768]u8 = undefined;
     for (sorted[0..n], 0..) |c, i| {
         const comma: []const u8 = if (i == 0) "" else ",";
         if (mode == .vol_target) {
@@ -636,8 +660,7 @@ fn jsonNum(body: []const u8, key: []const u8) ?f64 {
 
 fn symbolPrefix(label: []const u8) ?[]const u8 {
     if (std.mem.eql(u8, label, "NQ") or std.mem.eql(u8, label, "nq")) return "nq";
-    if (std.mem.eql(u8, label, "GBPUSD") or std.mem.eql(u8, label, "gbpusd")) return "gbpusd";
-    if (std.mem.eql(u8, label, "EURUSD") or std.mem.eql(u8, label, "eurusd")) return "eurusd";
+    if (std.mem.eql(u8, label, "ES") or std.mem.eql(u8, label, "es")) return "es";
     return null;
 }
 
@@ -674,25 +697,6 @@ fn parseFloatListOrDefault(s: []const u8, dst: []f64, def: f64) ?usize {
         return 1;
     }
     return parseFloatList(t, dst);
-}
-
-fn parseUintListOrDefault(s: []const u8, dst: []u32, def: u32) ?usize {
-    const t = std.mem.trim(u8, s, " ");
-    if (t.len == 0) {
-        dst[0] = def;
-        return 1;
-    }
-    var n: usize = 0;
-    var it = std.mem.tokenizeAny(u8, t, ", ");
-    while (it.next()) |tok| {
-        if (n >= dst.len) break;
-        const v = std.fmt.parseFloat(f64, tok) catch return null;
-        if (v < 0) return null;
-        dst[n] = @intFromFloat(v);
-        n += 1;
-    }
-    if (n == 0) return null;
-    return n;
 }
 
 pub fn handleStatus(req: *http.Ctx) !void {

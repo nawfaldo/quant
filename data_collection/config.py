@@ -17,4 +17,4 @@ QUESTDB_ILP_PORT = int(os.getenv("QUESTDB_ILP_PORT", "9009"))
 
 # Data Collection configurations
 TICKER = os.getenv("TICKER", "NQ=F")
-BASE_TABLE_NAME = "nq"  # Table prefix: e.g., nq_1m_yf, nq_5m_yf
+BASE_TABLE_NAME = os.getenv("BASE_TABLE_NAME", "nq")  # Table prefix: e.g., nq_1m_yf, nq_5m_yf

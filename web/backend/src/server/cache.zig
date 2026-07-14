@@ -10,7 +10,7 @@ pub const VWAP_ROW_BYTES: usize = 8;
 
 pub const TF_NAMES = [_][]const u8{ "1m", "5m", "15m", "30m", "1h", "4h", "1d" };
 pub const TF_COUNT = TF_NAMES.len;
-pub const VALID_SYMBOLS = [_][]const u8{ "nq", "gbpusd", "eurusd" };
+pub const VALID_SYMBOLS = [_][]const u8{ "nq", "es" };
 
 // On-demand only: nothing is cached. Each request builds the binary blob it
 // needs straight from QuestDB and hands ownership to the caller, who frees it
@@ -169,7 +169,7 @@ fn buildVwap(io: std.Io, a: std.mem.Allocator) ![]const u8 {
         const ts_secs: u32 = @intCast(@divFloor(ts_micros, 1_000_000));
 
         // Timestamps are already ET wall-clock stored as fake-UTC by the importer
-        // (see CLAUDE.md timezone model). Do NOT apply any timezone conversion —
+        // (see AGENT.md timezone model). Do NOT apply any timezone conversion —
         // derive the ET day and minute-of-day directly, the same way the frontend
         // candle/OpeningRange logic does.
         const et_day: i64  = @divFloor(@as(i64, ts_secs), 86_400);
@@ -211,6 +211,154 @@ fn buildVwap(io: std.Io, a: std.mem.Allocator) ![]const u8 {
 
     std.mem.writeInt(u32, out.items[0..4], VWAP_MAGIC, .little);
     std.mem.writeInt(u32, out.items[4..8], count,      .little);
+    return out.toOwnedSlice(a);
+}
+
+// Daily VIX closes from vix_1d (imported by data_collection/fetch_vix.py) as
+// compact JSON: [[epoch_secs, close], ...]. Timestamps follow the pipeline's
+// fake-UTC ET convention. Empty bounds return the full history (~9k rows).
+pub fn fetchVixDaily(io: std.Io, a: std.mem.Allocator, from: []const u8, to: []const u8) ![]const u8 {
+    return withRetry(io, buildVixDaily, .{ io, a, from, to });
+}
+
+// Physical storage used by the market-data tables, grouped by instrument. The
+// data page uses this instead of an expensive COUNT(*) scan over every table.
+pub fn fetchDatabaseSummary(io: std.Io, a: std.mem.Allocator) ![]const u8 {
+    return withRetry(io, buildDatabaseSummary, .{ io, a });
+}
+
+const DateBounds = struct {
+    first: [10]u8 = undefined,
+    last: [10]u8 = undefined,
+    has_first: bool = false,
+    has_last: bool = false,
+
+    fn update(self: *DateBounds, first_raw: []const u8, last_raw: []const u8) void {
+        const first = trimCsvQuotes(first_raw);
+        const last = trimCsvQuotes(last_raw);
+        if (first.len >= 10 and (!self.has_first or std.mem.order(u8, first[0..10], self.first[0..]) == .lt)) {
+            @memcpy(self.first[0..10], first[0..10]);
+            self.has_first = true;
+        }
+        if (last.len >= 10 and (!self.has_last or std.mem.order(u8, last[0..10], self.last[0..]) == .gt)) {
+            @memcpy(self.last[0..10], last[0..10]);
+            self.has_last = true;
+        }
+    }
+
+    fn firstSlice(self: *const DateBounds) []const u8 {
+        return if (self.has_first) self.first[0..] else "";
+    }
+
+    fn lastSlice(self: *const DateBounds) []const u8 {
+        return if (self.has_last) self.last[0..] else "";
+    }
+};
+
+fn trimCsvQuotes(value: []const u8) []const u8 {
+    return if (value.len >= 2 and value[0] == '"' and value[value.len - 1] == '"')
+        value[1 .. value.len - 1]
+    else
+        value;
+}
+
+fn buildDatabaseSummary(io: std.Io, a: std.mem.Allocator) ![]const u8 {
+    const prefixes = [_][]const u8{ "es", "nq" };
+    var sql: std.ArrayList(u8) = .empty;
+    defer sql.deinit(a);
+
+    var first = true;
+    for (prefixes) |prefix| {
+        for (TF_NAMES) |tf| {
+            if (!first) try sql.appendSlice(a, " UNION ALL ");
+            first = false;
+            const segment = try std.fmt.allocPrint(a,
+                "SELECT '{s}' AS name, sum(diskSize) AS bytes, min(minTimestamp) AS first_date, max(maxTimestamp) AS last_date FROM table_partitions('{s}_{s}')",
+                .{ prefix, prefix, tf },
+            );
+            defer a.free(segment);
+            try sql.appendSlice(a, segment);
+        }
+    }
+    try sql.appendSlice(a, " UNION ALL SELECT 'vix' AS name, sum(diskSize) AS bytes, min(minTimestamp) AS first_date, max(maxTimestamp) AS last_date FROM table_partitions('vix_1d')");
+
+    var rd = try questdb.open(io, a, sql.items);
+    defer rd.deinit();
+
+    _ = rd.nextLine(); // CSV column headers
+    var es_bytes: u64 = 0;
+    var nq_bytes: u64 = 0;
+    var vix_bytes: u64 = 0;
+    var es_dates: DateBounds = .{};
+    var nq_dates: DateBounds = .{};
+    var vix_dates: DateBounds = .{};
+    while (rd.nextLine()) |line| {
+        const comma = std.mem.indexOfScalar(u8, line, ',') orelse continue;
+        const bytes_end = std.mem.indexOfScalarPos(u8, line, comma + 1, ',') orelse continue;
+        const first_end = std.mem.indexOfScalarPos(u8, line, bytes_end + 1, ',') orelse continue;
+        const name = trimCsvQuotes(line[0..comma]);
+        const bytes = std.fmt.parseInt(u64, line[comma + 1 .. bytes_end], 10) catch 0;
+        const first_date = line[bytes_end + 1 .. first_end];
+        const last_date = line[first_end + 1 ..];
+        if (std.mem.eql(u8, name, "es")) {
+            es_bytes += bytes;
+            es_dates.update(first_date, last_date);
+        } else if (std.mem.eql(u8, name, "nq")) {
+            nq_bytes += bytes;
+            nq_dates.update(first_date, last_date);
+        } else if (std.mem.eql(u8, name, "vix")) {
+            vix_bytes += bytes;
+            vix_dates.update(first_date, last_date);
+        }
+    }
+    if (!rd.complete) return error.IncompleteResponse;
+
+    return std.fmt.allocPrint(a,
+        "[{{\"name\":\"ES\",\"bytes\":{},\"firstDate\":\"{s}\",\"lastDate\":\"{s}\"}},{{\"name\":\"NQ\",\"bytes\":{},\"firstDate\":\"{s}\",\"lastDate\":\"{s}\"}},{{\"name\":\"VIX\",\"bytes\":{},\"firstDate\":\"{s}\",\"lastDate\":\"{s}\"}}]",
+        .{ es_bytes, es_dates.firstSlice(), es_dates.lastSlice(), nq_bytes, nq_dates.firstSlice(), nq_dates.lastSlice(), vix_bytes, vix_dates.firstSlice(), vix_dates.lastSlice() },
+    );
+}
+
+fn buildVixDaily(io: std.Io, a: std.mem.Allocator, from: []const u8, to: []const u8) ![]const u8 {
+    const sql = if (from.len > 0 and to.len > 0)
+        try std.fmt.allocPrint(a,
+            "SELECT cast(timestamp as long) ts, close FROM vix_1d" ++
+            " WHERE timestamp >= '{s}' AND timestamp < dateadd('d', 1, '{s}')" ++
+            " ORDER BY timestamp ASC",
+            .{ from, to },
+        )
+    else
+        try a.dupe(u8, "SELECT cast(timestamp as long) ts, close FROM vix_1d ORDER BY timestamp ASC");
+    defer a.free(sql);
+
+    var rd = try questdb.open(io, a, sql);
+    defer rd.deinit();
+
+    var out: std.ArrayList(u8) = .empty;
+    errdefer out.deinit(a);
+    try out.appendSlice(a, "[");
+
+    _ = rd.nextLine(); // skip the CSV column-name header row
+    var first = true;
+
+    while (rd.nextLine()) |line| {
+        if (line.len == 0) continue;
+
+        const c1 = std.mem.indexOfScalar(u8, line, ',') orelse continue;
+        const ts_micros = std.fmt.parseInt(i64, line[0..c1], 10) catch continue;
+        const close = std.fmt.parseFloat(f64, line[c1 + 1 ..]) catch continue;
+        const ts_secs = @divFloor(ts_micros, 1_000_000);
+
+        if (!first) try out.appendSlice(a, ",");
+        first = false;
+        const row = try std.fmt.allocPrint(a, "[{},{d}]", .{ ts_secs, close });
+        defer a.free(row);
+        try out.appendSlice(a, row);
+    }
+
+    if (!rd.complete) return error.IncompleteResponse;
+
+    try out.appendSlice(a, "]");
     return out.toOwnedSlice(a);
 }
 

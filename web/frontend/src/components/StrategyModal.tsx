@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { addAccountStrategy, KNOWN_MARCH_STRATEGIES } from '../api'
+import { addAccountStrategy, displayStrategyName, KNOWN_MARCH_STRATEGIES } from '../api'
 
 interface Props {
   open: boolean
@@ -65,7 +65,7 @@ export default function StrategyModal({ open, onClose, accountId }: Props) {
               className="flex-1 bg-black/20 border border-white/10 text-sm text-gray-200 rounded-md px-3 py-1.5 outline-none focus:border-white/25 transition-colors cursor-pointer"
             >
               {KNOWN_MARCH_STRATEGIES.map(s => (
-                <option key={s} value={s}>{s}</option>
+                <option key={s} value={s}>{displayStrategyName(s)}</option>
               ))}
             </select>
           </div>

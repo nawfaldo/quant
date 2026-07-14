@@ -7,6 +7,7 @@ import {
   fetchAccountStatuses,
   deleteMt5Account,
   deleteAccountStrategy,
+  displayStrategyName,
   setAccountStrategyActive,
   type AccountStatus,
 } from "../api";
@@ -453,7 +454,7 @@ function AccountStrategiesTree({
           >
             <div className="flex items-center gap-1.5 min-w-0">
               {/* Strategy name */}
-              <span className="font-mono truncate">{strat.strategy}</span>
+              <span className="font-mono truncate">{displayStrategyName(strat.strategy)}</span>
 
               {/* Symbol badge if exists */}
               {strat.symbol && (

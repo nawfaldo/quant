@@ -7,8 +7,8 @@ const montecarlo = @import("montecarlo.zig");
 const fxmod = @import("fx.zig");
 const sizing = @import("../sizings/vol_target.zig");
 
-const RthVwap = @import("../strategies/rth_vwap.zig").RthVwap;
-const ZaraMomentum = @import("../strategies/zara_momentum.zig").ZaraMomentum;
+const NoiseMomentum = @import("../strategies/idk/noise_momentum.zig").NoiseMomentum;
+const NightDrift = @import("../strategies/idk/night_drift.zig").NightDrift;
 
 const alloc = std.heap.page_allocator;
 
@@ -17,7 +17,7 @@ const alloc = std.heap.page_allocator;
 // collects (strategy, symbol, balance, lot, sizing, date range, costs), then
 // returns the full report + trade log + a Monte Carlo resampling as one JSON
 // blob. This is the live equivalent of the backtester's `/run` command — same
-// engine, same strategies, same drawdown/Sharpe math (see backtest/CLAUDE.md).
+// engine, same strategies, same drawdown/Sharpe math (see backtest/AGENT.md).
 // POST /api/run — run a backtest and return the full result as JSON.
 pub fn handle(req: *http.Ctx) !void {
     const body = req.body orelse return badBody(req);
@@ -30,12 +30,12 @@ pub fn handle(req: *http.Ctx) !void {
     // a fetch failure or no coverage simply omits the fx block). Only NQ has an
     // fx tick table, so other symbols get no fx view.
     var fx: ?fxmod.Repriced = if (std.mem.eql(u8, p.prefix, "nq"))
-        (fxmod.reprice(req.io, alloc, result.trades, p.params.cfg.instrument) catch null)
+        (fxmod.reprice(req.io, alloc, result.trades) catch null)
     else
         null;
     defer if (fx) |*f| f.deinit(alloc);
 
-    const json = buildJson(result, p.prefix, fx) catch |err| return fail(req, err);
+    const json = buildJson(result, p.prefix, engine.instrumentName(), fx) catch |err| return fail(req, err);
     defer alloc.free(json);
 
     try req.setContentType(.JSON);
@@ -57,7 +57,7 @@ pub fn handleSave(req: *http.Ctx) !void {
     // Persist the FX-execution book alongside the native one (best-effort, NQ
     // only) so the chart can overlay fx-priced trades for this saved backtest.
     if (std.mem.eql(u8, p.prefix, "nq")) {
-        if (fxmod.reprice(req.io, alloc, result.trades, p.params.cfg.instrument) catch null) |fx| {
+        if (fxmod.reprice(req.io, alloc, result.trades) catch null) |fx| {
             defer fx.deinit(alloc);
             saveFxTrades(id, fx.trades) catch |err| std.debug.print("save fx trades failed: {}\n", .{err});
         }
@@ -96,7 +96,7 @@ pub fn handleBacktestFx(req: *http.Ctx, id: i64) !void {
 
     // Only NQ-derived books can be re-priced against the NQ fx tick table.
     var fx: ?fxmod.Repriced = if (std.mem.indexOf(u8, src.symbol, "nq") != null)
-        (fxmod.reprice(req.io, alloc, src.trades, .forex) catch null)
+        (fxmod.reprice(req.io, alloc, src.trades) catch null)
     else
         null;
     defer if (fx) |*f| f.deinit(alloc);
@@ -107,7 +107,8 @@ pub fn handleBacktestFx(req: *http.Ctx, id: i64) !void {
     if (fx) |f| {
         try out.appendSlice(alloc, "{");
         const fxres = fxmod.resultFor(src.initial_bal, f.trades);
-        try appendBody(&out, fxres, src.symbol);
+        // The fx book is always forex-priced.
+        try appendBody(&out, fxres, src.symbol, "forex");
         const counts = try std.fmt.allocPrint(alloc, ",\"tradesInWindow\":{d},\"tradesTotal\":{d}", .{ f.in_window, f.total });
         defer alloc.free(counts);
         try out.appendSlice(alloc, counts);
@@ -136,6 +137,7 @@ const Parsed = struct {
     strategy: []const u8,
     save_name: []const u8,
     prefix: []const u8,
+    environment_id: ?i64,
     params: Params,
 };
 
@@ -155,7 +157,6 @@ fn parse(req: *http.Ctx, body: []const u8) !?Parsed {
         try req.sendJson("{\"error\":\"unknown symbol\"}");
         return null;
     };
-
     const sizing_str = jsonStr(body, "sizing");
     const sizing_mode: sizing.Mode = if (std.mem.eql(u8, sizing_str, "Vol Target"))
         .vol_target
@@ -173,11 +174,13 @@ fn parse(req: *http.Ctx, body: []const u8) !?Parsed {
     // full table is used (mirrors the CLI's "enter for full history").
     const from_raw = jsonStr(body, "fromDate");
     const to_raw = jsonStr(body, "toDate");
+    const environment = (try environmentFor(req, body)) orelse return null;
 
     return .{
         .strategy = strategy,
         .save_name = save_name,
         .prefix = prefix,
+        .environment_id = environment.id,
         .params = .{
             .balance = jsonNum(body, "initialBalance") orelse 0,
             .base_lot = jsonNum(body, "baseLot") orelse 0,
@@ -186,49 +189,99 @@ fn parse(req: *http.Ctx, body: []const u8) !?Parsed {
             .vol = vol,
             .cfg = .{
                 .symbol = prefix,
-                .instrument = .forex,
                 .from = if (isIsoDate(from_raw)) from_raw else null,
                 .to = if (isIsoDate(to_raw)) to_raw else null,
-                .spread = jsonNum(body, "spread") orelse engine.spread,
-                .slippage = jsonNum(body, "slippage") orelse engine.slippage,
+                .spread = environment.costs.spread,
+                .slippage = environment.costs.slippage,
                 .warmup_days = 90,
             },
         },
     };
 }
 
+const EnvironmentForRun = struct {
+    id: ?i64,
+    costs: db.EnvironmentCosts,
+};
+
+// Costs belong to the selected environment, not the browser request. A missing
+// rule deliberately stays at zero (the db helper initializes both fields to 0).
+fn environmentFor(req: *http.Ctx, body: []const u8) !?EnvironmentForRun {
+    const raw_id = jsonNum(body, "environmentId") orelse return .{ .id = null, .costs = .{} };
+    if (!std.math.isFinite(raw_id) or raw_id <= 0 or @floor(raw_id) != raw_id) {
+        req.setStatusNumeric(400);
+        try req.sendJson("{\"error\":\"invalid environment id\"}");
+        return null;
+    }
+    const id: i64 = @intFromFloat(raw_id);
+    const costs = db.getEnvironmentCosts(id) catch |err| {
+        std.debug.print("environment cost lookup error: {}\n", .{err});
+        req.setStatusNumeric(500);
+        try req.sendJson("{\"error\":\"environment read failed\"}");
+        return null;
+    } orelse {
+        req.setStatusNumeric(404);
+        try req.sendJson("{\"error\":\"environment not found\"}");
+        return null;
+    };
+    return .{ .id = id, .costs = costs };
+}
+
 // Run the engine for the parsed strategy. `parse` has already validated the name.
 fn dispatchRun(io: std.Io, p: Parsed) !engine.Result {
-    if (std.mem.eql(u8, p.strategy, "RTH VWAP")) return runStrategy(RthVwap, io, p.params);
-    if (std.mem.eql(u8, p.strategy, "Zara Momentum")) return runStrategy(ZaraMomentum, io, p.params);
+    if (std.mem.eql(u8, p.strategy, "Night Drift")) return runNightDrift(io, p.params);
+    if (std.mem.eql(u8, p.strategy, "Noise Momentum")) return runNoise(io, p.params);
     unreachable;
+}
+
+// Noise Momentum has no base-lot/leverage/sizing surface. It uses an internal
+// formula, so the request's generic sizing fields are ignored.
+fn runNoise(io: std.Io, p: Params) !engine.Result {
+    var cfg = p.cfg;
+    // Noise Momentum uses exact raw exits. A UI spread of 0.2 is an entry-only
+    // cost, so double the engine's full-spread input: the entry pays half of
+    // 0.4 (= 0.2), while cost_exact_fills=false leaves every exit uncharged.
+    cfg.spread = p.cfg.spread * 2.0;
+    var strat = NoiseMomentum{
+        .initial_balance = p.balance,
+        .account_equity = p.balance,
+    };
+    return engine.runWith(io, alloc, &strat, cfg);
 }
 
 // Display strategy name → canonical DB label (matches the CLI's STRATEGIES).
 fn saveName(strategy: []const u8) ?[]const u8 {
-    if (std.mem.eql(u8, strategy, "RTH VWAP")) return "RTH_VWAP";
-    if (std.mem.eql(u8, strategy, "Zara Momentum")) return "ZARA_MOMENTUM";
+    if (std.mem.eql(u8, strategy, "Night Drift")) return "NIGHT_DRIFT";
+    if (std.mem.eql(u8, strategy, "Noise Momentum")) return "NOISE_MOMENTUM";
     return null;
 }
 
-// Generic over the strategy type — RthVwap's parameter surface, exactly like
-// the CLI's `runStrategy`: contracts = base lot × leverage (the engine reads
-// strat.contracts at signal time).
-fn runStrategy(comptime S: type, io: std.Io, p: Params) !engine.Result {
-    var strat = S{
+fn runNightDrift(io: std.Io, p: Params) !engine.Result {
+    var cfg = p.cfg;
+    // Night Drift was tuned with an entry-only spread cost: a UI spread of 0.2
+    // means the long entry fills 0.2 points worse and exits fill raw. The shared
+    // engine interprets spread as full bid/ask and charges half per market fill,
+    // so double it here; Night Drift's TP/time exits use exact raw `exit_fill`s and
+    // therefore do not pay exit-side spread.
+    cfg.spread = p.cfg.spread * 2.0;
+    var strat = NightDrift{
         .initial_balance = p.balance,
-        .contracts = p.base_lot * p.leverage,
-        .leverage = p.leverage,
-        .sizing_mode = p.sizing_mode,
-        .vol = p.vol,
     };
-    return engine.runWith(io, alloc, &strat, p.cfg);
+    return engine.runWith(io, alloc, &strat, cfg);
 }
 
 fn fail(req: *http.Ctx, err: anyerror) !void {
     std.debug.print("run error: {}\n", .{err});
-    req.setStatusNumeric(503);
-    try req.sendJson("{\"error\":\"run failed\"}");
+    switch (err) {
+        error.UnsupportedSymbol => {
+            req.setStatusNumeric(422);
+            try req.sendJson("{\"error\":\"unsupported_symbol\"}");
+        },
+        else => {
+            req.setStatusNumeric(503);
+            try req.sendJson("{\"error\":\"run failed\"}");
+        },
+    }
 }
 
 // ── Report metrics ────────────────────────────────────────────────────────────
@@ -397,19 +450,20 @@ pub fn computeReport(result: engine.Result) Report {
 // ── JSON assembly ───────────────────────────────────────────────────────────
 // Field names mirror the saved-backtest shape (types.ts `Backtest`) so the
 // frontend renders a live run with the same components it uses for /stats.
-fn buildJson(result: engine.Result, prefix: []const u8, fx: ?fxmod.Repriced) ![]const u8 {
+fn buildJson(result: engine.Result, prefix: []const u8, instrument_name: []const u8, fx: ?fxmod.Repriced) ![]const u8 {
     var out: std.ArrayList(u8) = .empty;
     errdefer out.deinit(alloc);
 
     try out.appendSlice(alloc, "{");
-    try appendBody(&out, result, prefix);
+    try appendBody(&out, result, prefix, instrument_name);
 
     // FX-execution block — same shape as the native body, nested under "fx", plus
     // the in-window trade counts. Null when no trade fell inside the fx window.
     if (fx) |f| {
         try out.appendSlice(alloc, ",\"fx\":{");
         const fxres = fxmod.resultFor(result.initial_balance, f.trades);
-        try appendBody(&out, fxres, prefix);
+        // The fx book is always forex-priced.
+        try appendBody(&out, fxres, prefix, "forex");
         const counts = try std.fmt.allocPrint(alloc, ",\"tradesInWindow\":{d},\"tradesTotal\":{d}", .{ f.in_window, f.total });
         defer alloc.free(counts);
         try out.appendSlice(alloc, counts);
@@ -425,20 +479,18 @@ fn buildJson(result: engine.Result, prefix: []const u8, fx: ?fxmod.Repriced) ![]
 // Writes the report fields + drawdown + trades + montecarlo for one result,
 // WITHOUT the surrounding braces, so it can serve both the top-level object and
 // the nested "fx" object.
-pub fn appendBody(out: *std.ArrayList(u8), result: engine.Result, prefix: []const u8) !void {
+pub fn appendBody(out: *std.ArrayList(u8), result: engine.Result, prefix: []const u8, instrument_name: []const u8) !void {
     const r = computeReport(result);
 
     const head = try std.fmt.allocPrint(alloc,
-        \\"symbol":"{s}","instrument":"forex","first_ts":"{s}","last_ts":"{s}","total_days":{d},"num_trades":{d},"initial_bal":{d:.2},"final_bal":{d:.2},"net_growth":{d:.4},"sharpe":{d:.4},"total_win":{d:.2},"total_loss":{d:.2},"win_rate":{d:.4},"win_count":{d},"profit_factor":{d:.4},"expectancy":{d:.4},"max_lose_streak":{d},"avg_size":{d:.4},"min_size":{d:.4},"max_size":{d:.4},"avg_weekly":{d:.2},"avg_monthly":{d:.2},"avg_weekly_pct":{d:.4},"avg_monthly_pct":{d:.4}
+        \\"symbol":"{s}","instrument":"{s}","first_ts":"{s}","last_ts":"{s}","total_days":{d},"num_trades":{d},"initial_bal":{d:.2},"final_bal":{d:.2},"net_growth":{d:.4},"sharpe":{d:.4},"total_win":{d:.2},"total_loss":{d:.2},"win_rate":{d:.4},"win_count":{d},"profit_factor":{d:.4},"expectancy":{d:.4},"max_lose_streak":{d},"avg_size":{d:.4},"min_size":{d:.4},"max_size":{d:.4},"avg_weekly":{d:.2},"avg_monthly":{d:.2},"avg_weekly_pct":{d:.4},"avg_monthly_pct":{d:.4}
     , .{
-        prefix,                  result.first_ts,         result.last_ts,
-        r.total_days,            result.trades.len,       fin(result.initial_balance),
-        fin(r.final_balance),    fin(r.net_growth),       fin(r.sharpe),
-        fin(r.total_win),        fin(r.total_loss),       fin(r.win_rate),
-        r.win_count,             fin(r.profit_factor),    fin(r.expectancy),
-        r.max_lose_streak,       fin(r.avg_size),         fin(r.min_size),
-        fin(r.max_size),         fin(r.avg_weekly),       fin(r.avg_monthly),
-        fin(r.avg_weekly_pct),   fin(r.avg_monthly_pct),
+        prefix,            instrument_name,    result.first_ts,             result.last_ts,
+        r.total_days,      result.trades.len,  fin(result.initial_balance), fin(r.final_balance),
+        fin(r.net_growth), fin(r.sharpe),      fin(r.total_win),            fin(r.total_loss),
+        fin(r.win_rate),   r.win_count,        fin(r.profit_factor),        fin(r.expectancy),
+        r.max_lose_streak, fin(r.avg_size),    fin(r.min_size),             fin(r.max_size),
+        fin(r.avg_weekly), fin(r.avg_monthly), fin(r.avg_weekly_pct),       fin(r.avg_monthly_pct),
     });
     defer alloc.free(head);
     try out.appendSlice(alloc, head);
@@ -446,13 +498,13 @@ pub fn appendBody(out: *std.ArrayList(u8), result: engine.Result, prefix: []cons
     const dd = try std.fmt.allocPrint(alloc,
         \\,"max_drawdown":{d:.4},"max_drawdown_dollars":{d:.2},"max_drawdown_peak_date":"{s}","max_drawdown_trough_date":"{s}","avg_drawdown":{d:.4},"avg_drawdown_dollars":{d:.2},"max_intraday_drawdown":{d:.4},"max_intraday_drawdown_dollars":{d:.2},"max_intraday_drawdown_date":"{s}","avg_intraday_drawdown":{d:.4},"avg_intraday_drawdown_dollars":{d:.2},"max_daily_loss":{d:.2},"max_daily_loss_date":"{s}","avg_daily_loss":{d:.2}
     , .{
-        fin(result.max_drawdown),                   fin(result.max_drawdown_dollars),
-        result.max_drawdown_peak_date,              result.max_drawdown_trough_date,
-        fin(result.avg_drawdown),                   fin(result.avg_drawdown_dollars),
-        fin(result.max_intraday_drawdown),          fin(result.max_intraday_drawdown_dollars),
-        result.max_intraday_drawdown_date,          fin(result.avg_intraday_drawdown),
-        fin(result.avg_intraday_drawdown_dollars),  fin(r.max_daily_loss),
-        r.max_daily_loss_date,                      fin(r.avg_daily_loss),
+        fin(result.max_drawdown),                  fin(result.max_drawdown_dollars),
+        result.max_drawdown_peak_date,             result.max_drawdown_trough_date,
+        fin(result.avg_drawdown),                  fin(result.avg_drawdown_dollars),
+        fin(result.max_intraday_drawdown),         fin(result.max_intraday_drawdown_dollars),
+        result.max_intraday_drawdown_date,         fin(result.avg_intraday_drawdown),
+        fin(result.avg_intraday_drawdown_dollars), fin(r.max_daily_loss),
+        r.max_daily_loss_date,                     fin(r.avg_daily_loss),
     });
     defer alloc.free(dd);
     try out.appendSlice(alloc, dd);
@@ -517,12 +569,12 @@ fn appendMonteCarlo(out: *std.ArrayList(u8), result: engine.Result) !void {
     const head = try std.fmt.allocPrint(alloc,
         \\,"montecarlo":{{"initialBalance":{d:.2},"sims":{d},"steps":{d},"numPaths":{d},"p5":{d:.2},"p25":{d:.2},"p50":{d:.2},"p75":{d:.2},"p95":{d:.2},"pProfit":{d:.4},"pRuin":{d:.4},"ddP5":{d:.4},"ddP25":{d:.4},"ddP50":{d:.4},"ddP75":{d:.4},"ddP95":{d:.4}
     , .{
-        fin(mc.initial_balance), mc.sims,             p.n_steps,
-        render,                  fin(mc.final_balance[0]), fin(mc.final_balance[1]),
+        fin(mc.initial_balance),  mc.sims,                  p.n_steps,
+        render,                   fin(mc.final_balance[0]), fin(mc.final_balance[1]),
         fin(mc.final_balance[2]), fin(mc.final_balance[3]), fin(mc.final_balance[4]),
-        fin(mc.p_profit),        fin(mc.p_ruin),
-        fin(mc.max_drawdown[0]), fin(mc.max_drawdown[1]), fin(mc.max_drawdown[2]),
-        fin(mc.max_drawdown[3]), fin(mc.max_drawdown[4]),
+        fin(mc.p_profit),         fin(mc.p_ruin),           fin(mc.max_drawdown[0]),
+        fin(mc.max_drawdown[1]),  fin(mc.max_drawdown[2]),  fin(mc.max_drawdown[3]),
+        fin(mc.max_drawdown[4]),
     });
     defer alloc.free(head);
     try out.appendSlice(alloc, head);
@@ -560,9 +612,10 @@ fn persist(p: Parsed, result: engine.Result) !i64 {
     const r = computeReport(result);
 
     const meta = db.SaveMeta{
+        .environment_id = p.environment_id,
         .strategy = p.save_name,
         .symbol = p.prefix,
-        .instrument = "forex",
+        .instrument = engine.instrumentName(),
         .first_ts = result.first_ts[0..],
         .last_ts = result.last_ts[0..],
         .total_days = r.total_days,
@@ -720,10 +773,21 @@ fn jsonNum(body: []const u8, key: []const u8) ?f64 {
     return std.fmt.parseFloat(f64, body[start..p]) catch null;
 }
 
+// jsonNum → non-negative integer with a fallback (for period/day-count params).
+fn jsonU32(body: []const u8, key: []const u8, def: u32) u32 {
+    const v = jsonNum(body, key) orelse return def;
+    if (v < 0) return def;
+    return @intFromFloat(v);
+}
+
 fn symbolPrefix(label: []const u8) ?[]const u8 {
-    if (std.mem.eql(u8, label, "NQ") or std.mem.eql(u8, label, "nq")) return "nq";
-    if (std.mem.eql(u8, label, "GBPUSD") or std.mem.eql(u8, label, "gbpusd")) return "gbpusd";
-    if (std.mem.eql(u8, label, "EURUSD") or std.mem.eql(u8, label, "eurusd")) return "eurusd";
+    const supported = [_][]const u8{
+        "es", "nq", "ym", "rty", "cl", "bz", "ng", "rb", "ho",
+        "gc", "si", "hg", "pl",  "pa", "zc", "zw", "zs", "zm",
+        "zl", "kc", "ct", "sb",  "cc", "oj", "le", "he", "gf",
+        "zb", "zn", "zf", "zt",
+    };
+    for (supported) |prefix| if (std.ascii.eqlIgnoreCase(label, prefix)) return prefix;
     return null;
 }
 
@@ -772,20 +836,19 @@ fn daysBetween(first: [16]u8, last: [16]u8) i64 {
     return jdn(last) - jdn(first);
 }
 
-pub fn fetchZaraNoiseArea(io: std.Io, symbol: []const u8, from: []const u8, to: []const u8) ![]const u8 {
-    var strat = ZaraMomentum{};
+pub fn fetchNoiseArea(io: std.Io, symbol: []const u8, from: []const u8, to: []const u8) ![]const u8 {
+    var strat = NoiseMomentum{};
     const cfg = engine.Config{
         .symbol = symbol,
-        .instrument = .forex,
         .from = if (from.len > 0) from else null,
         .to = if (to.len > 0) to else null,
         .spread = engine.spread,
         .slippage = engine.slippage,
         .warmup_days = 90,
     };
-    const cols = engine.columnsFor(ZaraMomentum);
+    const cols = engine.columnsFor(NoiseMomentum);
     var tbuf: [40]u8 = undefined;
-    const table = try std.fmt.bufPrint(&tbuf, "{s}_{s}", .{ cfg.symbol, ZaraMomentum.timeframe });
+    const table = try std.fmt.bufPrint(&tbuf, "{s}_{s}", .{ cfg.symbol, NoiseMomentum.timeframe });
     const dataset = try engine.fetchDatasetCfg(io, alloc, cols, table, cfg);
     defer dataset.deinit();
 
@@ -809,20 +872,6 @@ pub fn fetchZaraNoiseArea(io: std.Io, symbol: []const u8, from: []const u8, to: 
                 const row = try std.fmt.allocPrint(alloc, "{s}{{\"time\":{d},\"ub\":{d:.4},\"lb\":{d:.4}}}", .{ comma, ts_secs, strat.ub, strat.lb });
                 defer alloc.free(row);
                 try out.appendSlice(alloc, row);
-
-                // The 15:30 bar carries the last slot's band (see
-                // zara_momentum.zig) but is itself stamped 15:30, so the
-                // polygon's right edge would sit at 15:30 instead of the
-                // true 16:00 session close. Emit one more point 30 min later
-                // (same ub/lb, flat edge) so the frontend fill/stroke reaches
-                // 16:00 instead of stopping half an hour short.
-                const ts_bytes = dataset.timestamps[i];
-                const is_eod = std.mem.eql(u8, ts_bytes[11..16], "15:30");
-                if (is_eod) {
-                    const row2 = try std.fmt.allocPrint(alloc, ",{{\"time\":{d},\"ub\":{d:.4},\"lb\":{d:.4}}}", .{ ts_secs + 1800, strat.ub, strat.lb });
-                    defer alloc.free(row2);
-                    try out.appendSlice(alloc, row2);
-                }
             }
         }
     }

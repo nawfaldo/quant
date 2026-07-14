@@ -138,11 +138,11 @@ def merge_into_dst(df: pd.DataFrame, dst: str) -> None:
     logger.info(f"  Wrote {written} new rows to {dst}.")
 
 
-# ── yf_nq_* → nq_* ────────────────────────────────────────────────────────────
+# ── yf_<prefix>_* → <prefix>_* ─────────────────────────────────────────────────
 
-def integrate_yf_timeframe(tf: str) -> bool:
-    src = f"yf_nq_{tf}"
-    dst = f"nq_{tf}"
+def integrate_yf_timeframe(tf: str, prefix: str) -> bool:
+    src = f"yf_{prefix}_{tf}"
+    dst = f"{prefix}_{tf}"
 
     if not table_exists(src):
         logger.info(f"{src} does not exist — skipping.")
@@ -162,11 +162,12 @@ def integrate_yf_timeframe(tf: str) -> bool:
     return True
 
 
-# ── bm_nq_ticks → nq_* (aggregate) ───────────────────────────────────────────
+# ── bm_<prefix>_ticks → <prefix>_* (aggregate) ─────────────────────────────────
 
-def aggregate_ticks_for_tf(tf: str) -> pd.DataFrame:
-    """Aggregate bm_nq_ticks into OHLCV bars for the given timeframe using SAMPLE BY."""
+def aggregate_ticks_for_tf(tf: str, prefix: str) -> pd.DataFrame:
+    """Aggregate bm_<prefix>_ticks into OHLCV bars for the given timeframe using SAMPLE BY."""
     sample = TF_SAMPLE_BY[tf]
+    tick_table = f"bm_{prefix}_ticks"
     result = exec_query(
         f"SELECT timestamp,"
         f" first(price) AS open,"
@@ -174,7 +175,7 @@ def aggregate_ticks_for_tf(tf: str) -> pd.DataFrame:
         f" min(price)   AS low,"
         f" last(price)  AS close,"
         f" sum(size)    AS volume"
-        f" FROM bm_nq_ticks"
+        f" FROM {tick_table}"
         f" SAMPLE BY {sample} FILL(NONE) ALIGN TO CALENDAR"
         f" ORDER BY timestamp ASC"
     )
@@ -182,20 +183,21 @@ def aggregate_ticks_for_tf(tf: str) -> pd.DataFrame:
                             ["timestamp", "open", "high", "low", "close", "volume"])
 
 
-def integrate_ticks() -> bool:
-    if not table_exists("bm_nq_ticks"):
-        logger.info("bm_nq_ticks does not exist — skipping.")
+def integrate_ticks(prefix: str) -> bool:
+    tick_table = f"bm_{prefix}_ticks"
+    if not table_exists(tick_table):
+        logger.info(f"{tick_table} does not exist — skipping.")
         return False
 
     src_info = exec_query(
-        "SELECT min(timestamp), max(timestamp), count() FROM bm_nq_ticks"
+        f"SELECT min(timestamp), max(timestamp), count() FROM {tick_table}"
     )["dataset"][0]
-    logger.info(f"bm_nq_ticks: {src_info[2]} rows  [{src_info[0]} → {src_info[1]}]")
+    logger.info(f"{tick_table}: {src_info[2]} rows  [{src_info[0]} → {src_info[1]}]")
 
     for tf in TIMEFRAMES:
-        dst = f"nq_{tf}"
-        logger.info(f"--- bm_nq_ticks → {dst} ({tf}) ---")
-        df = aggregate_ticks_for_tf(tf)
+        dst = f"{prefix}_{tf}"
+        logger.info(f"--- {tick_table} → {dst} ({tf}) ---")
+        df = aggregate_ticks_for_tf(tf, prefix)
         if df.empty:
             logger.info(f"  No bars produced for {tf}.")
             continue
@@ -206,30 +208,36 @@ def integrate_ticks() -> bool:
 
 # ── drop source tables ─────────────────────────────────────────────────────────
 
-def drop_sources(yf_integrated: list[str], ticks_integrated: bool) -> None:
+def drop_sources(prefix: str, yf_integrated: list[str], ticks_integrated: bool) -> None:
     logger.info("--- Dropping source tables ---")
     for tf in yf_integrated:
-        drop_table(f"yf_nq_{tf}")
+        drop_table(f"yf_{prefix}_{tf}")
     if ticks_integrated:
-        drop_table("bm_nq_ticks")
+        drop_table(f"bm_{prefix}_ticks")
 
 
 # ── main ───────────────────────────────────────────────────────────────────────
 
 def main() -> None:
-    # Drop incorrectly-created nq_ticks if present
-    if table_exists("nq_ticks"):
-        logger.info("Dropping stale nq_ticks table (superseded by OHLCV aggregation).")
-        drop_table("nq_ticks")
+    import argparse
+    parser = argparse.ArgumentParser(description="Sync all source tables into their canonical counterparts in QuestDB.")
+    parser.add_argument("--prefix", default="nq", choices=["nq", "es"], help="Table prefix to sync (nq or es)")
+    args = parser.parse_args()
+
+    prefix = args.prefix
+    stale_ticks = f"{prefix}_ticks"
+    if table_exists(stale_ticks):
+        logger.info(f"Dropping stale {stale_ticks} table (superseded by OHLCV aggregation).")
+        drop_table(stale_ticks)
 
     yf_integrated = []
     for tf in TIMEFRAMES:
-        if integrate_yf_timeframe(tf):
+        if integrate_yf_timeframe(tf, prefix):
             yf_integrated.append(tf)
 
-    ticks_integrated = integrate_ticks()
+    ticks_integrated = integrate_ticks(prefix)
 
-    drop_sources(yf_integrated, ticks_integrated)
+    drop_sources(prefix, yf_integrated, ticks_integrated)
     logger.info("Sync complete.")
 
 

@@ -136,7 +136,7 @@ const Consumer = struct {
 
 // Re-price `native` against fx_nq_ticks. Returns null when no trade falls inside
 // the coverage window (or there are no trades). Caller owns the result.
-pub fn reprice(io: std.Io, gpa: std.mem.Allocator, native: []const engine.Trade, inst: engine.Instrument) !?Repriced {
+pub fn reprice(io: std.Io, gpa: std.mem.Allocator, native: []const engine.Trade) !?Repriced {
     if (native.len == 0) return null;
 
     // Span of the native book, clamped to the fx coverage window.
@@ -230,7 +230,8 @@ pub fn reprice(io: std.Io, gpa: std.mem.Allocator, native: []const engine.Trade,
             .side = t.side,
             .entry_price = entry,
             .exit_price = exit,
-            .pnl = engine.calcPnl(t.side, entry, exit, t.contracts, inst),
+            // The fx overlay always prices as a forex CFD ($1/point).
+            .pnl = engine.calcPnl(t.side, entry, exit, t.contracts),
             .contracts = t.contracts,
         });
     }
