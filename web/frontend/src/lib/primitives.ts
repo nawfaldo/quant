@@ -4,11 +4,13 @@ import {
   type IPrimitivePaneView, type IPrimitivePaneRenderer,
 } from 'lightweight-charts'
 import type { CanvasRenderingTarget2D } from 'fancy-canvas'
-import type { Trade } from '../types'
+import type { Bar, Trade } from '../types'
 
 const MAX_VISIBLE_LINES = 1000
 const TRADE_LOOKBACK    = 500
 const MAX_TEXT_LABELS   = 50   // only draw pnl text when few enough trades are on screen
+const BACKTEST_TRADE_COLOR = '#f59e0b' // amber: distinct from white candles
+const LIVE_TRADE_COLOR = '#22d3ee'     // cyan: separates live trades from backtests
 
 /*
 function triangle(ctx: CanvasRenderingContext2D, cx: number, cy: number, h: number, up: boolean) {
@@ -79,7 +81,7 @@ class TradeLinesRenderer implements IPrimitivePaneRenderer {
       ctx.save()
       ctx.lineWidth    = hpr
       ctx.setLineDash([3 * hpr, 3 * hpr])
-      ctx.strokeStyle  = 'rgba(255,255,255,0.45)'
+      ctx.strokeStyle  = 'rgba(245,158,11,0.65)'
       ctx.beginPath()
       for (let i = startIdx; i < n; i++) {
         if (et[i] > to) break
@@ -98,11 +100,14 @@ class TradeLinesRenderer implements IPrimitivePaneRenderer {
       // --- entry/exit arrow markers + optional pnl text ---
       ctx.save()
       ctx.setLineDash([])
-      ctx.fillStyle = '#ffffff'
-      const h = 4 * hpr
+      ctx.fillStyle = BACKTEST_TRADE_COLOR
+      ctx.strokeStyle = 'rgba(15,15,15,0.9)'
+      ctx.lineWidth = 1.25 * hpr
+      ctx.lineJoin = 'round'
+      const h = 6 * hpr
       const drawText = visibleCount <= MAX_TEXT_LABELS
       if (drawText) {
-        ctx.font = `${10 * vpr}px sans-serif`
+        ctx.font = `600 ${12 * vpr}px sans-serif`
         ctx.textAlign = 'center'
         ctx.textBaseline = 'bottom'
       }
@@ -123,7 +128,9 @@ class TradeLinesRenderer implements IPrimitivePaneRenderer {
           const v = pnl[i]
           const gain = v >= 0 ? '+$' + v.toFixed(2) : '-$' + Math.abs(v).toFixed(2)
           const qtyStr = Number.isInteger(qty[i]) ? qty[i].toString() : qty[i].toFixed(2).replace(/\.?0+$/, '')
-          ctx.fillText(`${qtyStr}  ${gain}`, ex1, ey1 - h - 2 * vpr)
+          const label = `${qtyStr}  ${gain}`
+          ctx.strokeText(label, ex1, ey1 - h - 2 * vpr)
+          ctx.fillText(label, ex1, ey1 - h - 2 * vpr)
         }
       }
       ctx.restore()
@@ -228,6 +235,7 @@ function drawStandardArrow(ctx: CanvasRenderingContext2D, cx: number, cy: number
   }
   ctx.closePath();
   ctx.fill();
+  ctx.stroke();
 }
 
 class ActivePositionsRenderer implements IPrimitivePaneRenderer {
@@ -259,10 +267,13 @@ class ActivePositionsRenderer implements IPrimitivePaneRenderer {
     target.useBitmapCoordinateSpace(({ context: ctx, horizontalPixelRatio: hpr, verticalPixelRatio: vpr }) => {
       ctx.save()
       ctx.setLineDash([])
-      const h = 4 * hpr
+      const h = 6 * hpr
 
-      ctx.font = `${10 * vpr}px sans-serif`
+      ctx.font = `600 ${12 * vpr}px sans-serif`
       ctx.textAlign = 'center'
+      ctx.strokeStyle = 'rgba(15,15,15,0.9)'
+      ctx.lineWidth = 1.25 * hpr
+      ctx.lineJoin = 'round'
 
       for (const pos of p.positions) {
         if (!pos.time || pos.time < from || pos.time > to) continue
@@ -274,7 +285,7 @@ class ActivePositionsRenderer implements IPrimitivePaneRenderer {
         const cx = x * hpr, cy = y * vpr
         
         // Draw the standard arrow pointing to the exact price
-        ctx.fillStyle = '#ffffff'
+        ctx.fillStyle = LIVE_TRADE_COLOR
         drawStandardArrow(ctx, cx, cy, h, pos.isLong)
 
         // Draw the text (e.g. "Buy 0.01 +$10") at the exact price
@@ -285,12 +296,14 @@ class ActivePositionsRenderer implements IPrimitivePaneRenderer {
         const text = `${sideWord} ${pos.volume.toFixed(2)} ${formattedProfit}`
         
         // Draw text slightly above/below the triangle depending on type
-        ctx.fillStyle = '#d1d5db'
+        ctx.fillStyle = LIVE_TRADE_COLOR
         if (pos.isLong) {
           ctx.textBaseline = 'bottom'
+          ctx.strokeText(text, cx, cy - h - 2 * vpr)
           ctx.fillText(text, cx, cy - h - 2 * vpr)
         } else {
           ctx.textBaseline = 'top'
+          ctx.strokeText(text, cx, cy + h + 2 * vpr)
           ctx.fillText(text, cx, cy + h + 2 * vpr)
         }
       }
@@ -378,7 +391,7 @@ class HistoricalTradesRenderer implements IPrimitivePaneRenderer {
       ctx.save()
       ctx.lineWidth = 1.5 * hpr
       ctx.setLineDash([4 * hpr, 4 * hpr])
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.45)'
+      ctx.strokeStyle = 'rgba(34,211,238,0.65)'
       ctx.beginPath()
       for (const t of p.trades) {
         if (t.et > to || t.xt < from) continue
@@ -393,11 +406,14 @@ class HistoricalTradesRenderer implements IPrimitivePaneRenderer {
       ctx.stroke()
       ctx.restore()
 
-      // 2. Draw standard entry and exit arrows (white)
+      // 2. Draw standard entry and exit arrows in the live-trade accent.
       ctx.save()
       ctx.setLineDash([])
-      ctx.fillStyle = '#ffffff'
-      const h = 4 * hpr
+      ctx.fillStyle = LIVE_TRADE_COLOR
+      ctx.strokeStyle = 'rgba(15,15,15,0.9)'
+      ctx.lineWidth = 1.25 * hpr
+      ctx.lineJoin = 'round'
+      const h = 6 * hpr
       for (const t of p.trades) {
         if (t.et > to || t.xt < from) continue
         const x1 = ts.timeToCoordinate(t.et as UTCTimestamp)
@@ -611,6 +627,358 @@ export class NoiseAreaPrimitive implements ISeriesPrimitive {
 
   setData(points: NoisePoint[] | null) {
     this.points = points
+    this._requestUpdate?.()
+  }
+}
+
+export interface SessionVolumeProfileRow {
+  price: number
+  volume: number
+  inValueArea: boolean
+}
+
+export interface SessionVolumeProfile {
+  startTime: number
+  endTime: number
+  rows: SessionVolumeProfileRow[]
+  pocPrice: number
+  maxVolume: number
+}
+
+const PROFILE_VALUE_AREA_FRACTION = 0.40
+
+interface ProfileAccumulator {
+  startTime: number
+  endTime: number
+  volumes: Map<number, number>
+}
+
+function profileDayKey(time: number) {
+  // March timestamps are ET wall-clock values stored as fake UTC, so an epoch
+  // day boundary here is the displayed market-day boundary. Keep one profile
+  // for that entire day; do not split it at RTH open or close.
+  return Math.floor(time / 86400)
+}
+
+export function buildSessionVolumeProfiles(
+  candles: Bar[],
+  tickSize: number,
+  _tfSeconds: number,
+): SessionVolumeProfile[] {
+  if (candles.length === 0 || tickSize <= 0) return []
+
+  const sessions = new Map<number, ProfileAccumulator>()
+  for (const candle of candles) {
+    const time = candle.time as number
+    const volume = candle.volume ?? 0
+    if (!Number.isFinite(time) || !Number.isFinite(volume) || volume <= 0) continue
+
+    const key = profileDayKey(time)
+    let session = sessions.get(key)
+    if (!session) {
+      session = { startTime: time, endTime: time, volumes: new Map() }
+      sessions.set(key, session)
+    }
+    session.endTime = time
+
+    // OHLCV bars do not contain trade-at-price detail. Distribute each bar's
+    // volume uniformly over every tick row it touched. This produces the dense,
+    // continuous session silhouette expected from a volume profile while
+    // remaining a frontend-only approximation.
+    const lowBin = Math.round(candle.low / tickSize)
+    const highBin = Math.round(candle.high / tickSize)
+    if (!Number.isFinite(lowBin) || !Number.isFinite(highBin)) continue
+    const firstBin = Math.min(lowBin, highBin)
+    const lastBin = Math.max(lowBin, highBin)
+    const volumePerBin = volume / (lastBin - firstBin + 1)
+    for (let bin = firstBin; bin <= lastBin; bin++) {
+      session.volumes.set(bin, (session.volumes.get(bin) ?? 0) + volumePerBin)
+    }
+  }
+
+  const profiles: SessionVolumeProfile[] = []
+  for (const session of sessions.values()) {
+    const entries = [...session.volumes.entries()].sort((a, b) => a[0] - b[0])
+    if (entries.length === 0) continue
+    const totalVolume = entries.reduce((sum, [, volume]) => sum + volume, 0)
+    const ranked = entries.slice().sort((a, b) => b[1] - a[1])
+    const [pocBin, maxVolume] = ranked[0]
+    const pocIndex = entries.findIndex(([bin]) => bin === pocBin)
+    const valueAreaBins = new Set<number>([pocBin])
+    let valueAreaVolume = maxVolume
+    let lowerIndex = pocIndex - 1
+    let upperIndex = pocIndex + 1
+    // Build a contiguous 40% value area outwards from POC, always taking the
+    // higher-volume neighboring row first.
+    while (
+      valueAreaVolume < totalVolume * PROFILE_VALUE_AREA_FRACTION &&
+      (lowerIndex >= 0 || upperIndex < entries.length)
+    ) {
+      const lowerVolume = lowerIndex >= 0 ? entries[lowerIndex][1] : -1
+      const upperVolume = upperIndex < entries.length ? entries[upperIndex][1] : -1
+      const nextIndex = upperVolume > lowerVolume ? upperIndex++ : lowerIndex--
+      const [bin, volume] = entries[nextIndex]
+      valueAreaBins.add(bin)
+      valueAreaVolume += volume
+    }
+
+    profiles.push({
+      startTime: session.startTime,
+      endTime: session.endTime,
+      pocPrice: pocBin * tickSize,
+      maxVolume,
+      rows: entries.map(([bin, volume]) => ({
+          price: bin * tickSize,
+          volume,
+          inValueArea: valueAreaBins.has(bin),
+        })),
+    })
+  }
+  return profiles.sort((a, b) => a.startTime - b.startTime)
+}
+
+class SessionVolumeProfileRenderer implements IPrimitivePaneRenderer {
+  private primitive: SessionVolumeProfilePrimitive
+  constructor(primitive: SessionVolumeProfilePrimitive) { this.primitive = primitive }
+
+  draw(target: CanvasRenderingTarget2D) {
+    const p = this.primitive
+    const series = p.getSeries()
+    const chart = p.getChart()
+    if (!series || !chart || p.profiles.length === 0) return
+
+    const timeScale = chart.timeScale()
+    const range = timeScale.getVisibleRange()
+    if (!range) return
+    const from = range.from as number
+    const to = range.to as number
+    const barSpacing = timeScale.options().barSpacing
+
+    target.useBitmapCoordinateSpace(({ context: ctx, horizontalPixelRatio: hpr, verticalPixelRatio: vpr }) => {
+      ctx.save()
+      ctx.setLineDash([])
+
+      for (const profile of p.profiles) {
+        if (profile.endTime < from || profile.startTime > to) continue
+        const startX = timeScale.timeToCoordinate(profile.startTime as UTCTimestamp)
+        const endX = timeScale.timeToCoordinate(profile.endTime as UTCTimestamp)
+        if (startX === null || endX === null || profile.maxVolume <= 0) continue
+
+        const firstRowY = series.priceToCoordinate(profile.rows[0].price)
+        const lastRowY = series.priceToCoordinate(profile.rows[profile.rows.length - 1].price)
+        if (firstRowY === null || lastRowY === null) continue
+        // Tie width to the visible price-range height so the complete profile
+        // has the compact, near-square footprint of a conventional SVP. Cap it
+        // at the session's own on-screen width so compressed charts never let a
+        // profile spill into the next session.
+        const profileHeight = Math.abs(lastRowY - firstRowY) + barSpacing
+        const sessionWidth = Math.max(barSpacing, endX - startX + barSpacing)
+        const profileWidth = Math.max(
+          3,
+          Math.min(320, profileHeight * 0.90, sessionWidth),
+        )
+        const left = (startX - barSpacing * 0.45) * hpr
+
+        for (const row of profile.rows) {
+          const centerY = series.priceToCoordinate(row.price)
+          const nextY = series.priceToCoordinate(row.price + p.tickSize)
+          if (centerY === null || nextY === null) continue
+          const rowHeight = Math.max(1, Math.abs(nextY - centerY) * vpr)
+          const width = Math.max(1, profileWidth * (row.volume / profile.maxVolume) * hpr)
+          const right = left + width
+          const top = centerY * vpr - rowHeight / 2
+
+          ctx.fillStyle = row.inValueArea
+            ? 'rgba(255,255,255,0.32)'
+            : 'rgba(255,255,255,0.10)'
+          ctx.fillRect(left, top, width, Math.max(1, rowHeight - vpr * 0.5))
+
+          if (row.price === profile.pocPrice) {
+            const inset = Math.min(2 * hpr, width * 0.08)
+            ctx.beginPath()
+            ctx.moveTo(left + inset, centerY * vpr)
+            ctx.lineTo(right - inset, centerY * vpr)
+            ctx.strokeStyle = 'rgba(255,255,255,0.95)'
+            ctx.lineWidth = Math.max(1, vpr)
+            ctx.stroke()
+          }
+        }
+      }
+      ctx.restore()
+    })
+  }
+}
+
+class SessionVolumeProfileView implements IPrimitivePaneView {
+  private primitive: SessionVolumeProfilePrimitive
+  constructor(primitive: SessionVolumeProfilePrimitive) { this.primitive = primitive }
+  renderer(): IPrimitivePaneRenderer { return new SessionVolumeProfileRenderer(this.primitive) }
+  zOrder() { return 'top' as const }
+}
+
+export class SessionVolumeProfilePrimitive implements ISeriesPrimitive {
+  private _series: ISeriesApi<'Candlestick'> | null = null
+  private _chart: IChartApiBase<Time> | null = null
+  private _requestUpdate: (() => void) | null = null
+  private _view = new SessionVolumeProfileView(this)
+  profiles: SessionVolumeProfile[] = []
+  tickSize = 0.25
+
+  attached(p: SeriesAttachedParameter) {
+    this._series = p.series as ISeriesApi<'Candlestick'>
+    this._chart = p.chart
+    this._requestUpdate = p.requestUpdate
+  }
+  detached() { this._series = null; this._chart = null }
+  updateAllViews() {}
+  paneViews() { return [this._view] }
+  getSeries() { return this._series }
+  getChart() { return this._chart }
+
+  setData(profiles: SessionVolumeProfile[]) {
+    this.profiles = profiles
+    this._requestUpdate?.()
+  }
+
+  setCandles(candles: Bar[], tickSize: number, tfSeconds: number) {
+    this.tickSize = tickSize
+    this.setData(buildSessionVolumeProfiles(candles, tickSize, tfSeconds))
+  }
+}
+
+export interface VolumeDeltaBubble {
+  time: number
+  price: number
+  delta: number
+  below: boolean
+}
+
+function deltaLabel(delta: number) {
+  const value = Math.abs(delta)
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`
+  if (value >= 1_000) return `${(value / 1_000).toFixed(1).replace(/\.0$/, '')}K`
+  return Number.isInteger(value)
+    ? value.toLocaleString('en-US')
+    : value.toFixed(1).replace(/\.0$/, '')
+}
+
+class VolumeDeltaBubblesRenderer implements IPrimitivePaneRenderer {
+  private primitive: VolumeDeltaBubblesPrimitive
+  constructor(primitive: VolumeDeltaBubblesPrimitive) { this.primitive = primitive }
+
+  draw(target: CanvasRenderingTarget2D) {
+    const p = this.primitive
+    const series = p.getSeries()
+    const chart = p.getChart()
+    if (!series || !chart || p.points.length === 0) return
+
+    const timeScale = chart.timeScale()
+    const range = timeScale.getVisibleRange()
+    if (!range) return
+    const from = range.from as number
+    const to = range.to as number
+    const visiblePoints = p.points.filter((point) => point.time >= from && point.time <= to)
+    if (visiblePoints.length === 0) return
+    const magnitudes = visiblePoints
+      .map((point) => Math.abs(point.delta))
+      .sort((a, b) => a - b)
+    // Cap scaling at the visible 90th percentile so one extreme print does not
+    // make every other bubble microscopic.
+    const scaleMax = magnitudes[Math.floor((magnitudes.length - 1) * 0.9)] || 1
+
+    target.useBitmapCoordinateSpace(({ context: ctx, horizontalPixelRatio: hpr, verticalPixelRatio: vpr }) => {
+      ctx.save()
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'bottom'
+
+      for (const point of visiblePoints) {
+        const x = timeScale.timeToCoordinate(point.time as UTCTimestamp)
+        const candleY = series.priceToCoordinate(point.price)
+        if (x === null || candleY === null) continue
+
+        const text = deltaLabel(point.delta)
+        const strength = Math.min(1, Math.sqrt(Math.abs(point.delta) / scaleMax))
+        const pixelRatio = Math.max(hpr, vpr)
+        const radius = (7 + 17 * strength) * pixelRatio
+        const cx = x * hpr
+        const candleEdge = candleY * vpr
+        const cy = candleEdge + (point.below ? radius * 0.72 : -radius * 0.72)
+        const rgb = point.delta > 0 ? '8,153,129' : '242,54,69'
+        const fillOpacity = 0.08 + 0.42 * strength
+        const strokeOpacity = 0.25 + 0.55 * strength
+
+        ctx.beginPath()
+        ctx.arc(cx, cy, radius, 0, Math.PI * 2)
+        ctx.fillStyle = `rgba(${rgb},${fillOpacity})`
+        ctx.fill()
+        ctx.strokeStyle = `rgba(${rgb},${strokeOpacity})`
+        ctx.lineWidth = 1.5 * Math.max(hpr, vpr)
+        ctx.stroke()
+
+        ctx.font = `600 ${12 * vpr}px sans-serif`
+        ctx.fillStyle = '#ffffff'
+        ctx.textBaseline = point.delta > 0 ? 'top' : 'bottom'
+        const labelY = point.delta > 0
+          ? cy + radius + 4 * vpr
+          : cy - radius - 4 * vpr
+        ctx.fillText(text, cx, labelY)
+      }
+      ctx.restore()
+    })
+  }
+}
+
+class VolumeDeltaBubblesView implements IPrimitivePaneView {
+  private primitive: VolumeDeltaBubblesPrimitive
+  constructor(primitive: VolumeDeltaBubblesPrimitive) { this.primitive = primitive }
+  renderer(): IPrimitivePaneRenderer { return new VolumeDeltaBubblesRenderer(this.primitive) }
+  zOrder() { return 'top' as const }
+}
+
+export class VolumeDeltaBubblesPrimitive implements ISeriesPrimitive {
+  private _series: ISeriesApi<'Candlestick'> | null = null
+  private _chart: IChartApiBase<Time> | null = null
+  private _requestUpdate: (() => void) | null = null
+  private _view = new VolumeDeltaBubblesView(this)
+  points: VolumeDeltaBubble[] = []
+
+  attached(p: SeriesAttachedParameter) {
+    this._series = p.series as ISeriesApi<'Candlestick'>
+    this._chart = p.chart
+    this._requestUpdate = p.requestUpdate
+  }
+  detached() { this._series = null; this._chart = null }
+  updateAllViews() {}
+  paneViews() { return [this._view] }
+  getSeries() { return this._series }
+  getChart() { return this._chart }
+
+  setData(points: VolumeDeltaBubble[]) {
+    this.points = points.slice().sort((a, b) => a.time - b.time)
+    this._requestUpdate?.()
+  }
+
+  setCandle(time: number, open: number, high: number, low: number, close: number, delta: number) {
+    const index = this.points.findIndex((point) => point.time === time)
+    const positiveDivergence = close < open && delta > 0
+    const negativeDivergence = close > open && delta < 0
+    if (!positiveDivergence && !negativeDivergence) {
+      if (index >= 0) this.points.splice(index, 1)
+      this._requestUpdate?.()
+      return
+    }
+
+    const point: VolumeDeltaBubble = {
+      time,
+      price: positiveDivergence ? low : high,
+      delta,
+      below: positiveDivergence,
+    }
+    if (index >= 0) this.points[index] = point
+    else {
+      this.points.push(point)
+      this.points.sort((a, b) => a.time - b.time)
+    }
     this._requestUpdate?.()
   }
 }

@@ -810,6 +810,32 @@ pub fn onRequest(req: *http.Ctx) !void {
         return;
     }
 
+    if (std.mem.eql(u8, path, "/api/march/indicators/volume-delta")) {
+        const query = req.query orelse "";
+        const q_symbol = queryParam(query, "symbol") orelse "nq";
+        const tf = queryParam(query, "tf") orelse "1m";
+        const q_from = queryParam(query, "from") orelse "";
+        const q_to = queryParam(query, "to") orelse "";
+        const from = if (isIsoDate(q_from)) q_from else "";
+        const to = if (isIsoDate(q_to)) q_to else "";
+
+        if (!std.mem.eql(u8, q_symbol, "nq") and !std.mem.eql(u8, q_symbol, "es")) {
+            req.setStatusNumeric(400);
+            try req.sendJson("{\"error\":\"unknown symbol for march\"}");
+            return;
+        }
+
+        const body = cache.fetchMarchVolumeDelta(req.io, alloc, q_symbol, tf, from, to) catch |err| {
+            std.debug.print("volume delta fetch error: {}\n", .{err});
+            req.setStatusNumeric(503);
+            try req.sendJson("{\"error\":\"fetch failed\"}");
+            return;
+        };
+        defer alloc.free(body);
+        try sendJson(req, body);
+        return;
+    }
+
     if (std.mem.eql(u8, path, "/api/march/fx-candles/bin")) {
         const query = req.query orelse "";
         const tf = queryParam(query, "tf") orelse "1m";

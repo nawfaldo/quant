@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { fetchBacktests } from '../api'
 import type { Backtest } from '../types'
 import { SpinnerIcon } from './icons'
+import LiquidGlassSwitch from './LiquidGlassSwitch'
 
 interface Props {
   open: boolean
@@ -40,7 +41,7 @@ export default function BacktestsModal({ open, onClose, visibleIds, loadingIds, 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/60" onClick={onClose} />
-      <div className="relative z-10 w-[500px] h-[300px] bg-[#222831] backdrop-blur rounded-lg shadow-2xl flex flex-col">
+      <div className="relative z-10 w-[500px] h-[300px] bg-[#1A1A1E] backdrop-blur rounded-lg shadow-2xl flex flex-col">
         <div className="px-4 py-3 flex items-center justify-between">
           <span className="text-xs font-semibold tracking-widest uppercase text-gray-500">Backtests</span>
           <button onClick={onClose} className="text-gray-600 hover:text-gray-300 transition-colors p-0.5">
@@ -88,11 +89,13 @@ function BacktestRow({ backtest, visible, loading, onToggle }: {
       ) : (
         <button
           onClick={onToggle}
-          className={`w-8 h-4 rounded-full transition-colors flex-shrink-0 relative focus:outline-none ${visible ? 'bg-blue-500' : 'bg-gray-700'}`}
+          type="button"
+          role="switch"
+          aria-checked={visible}
+          aria-label={`${visible ? 'Hide' : 'Show'} ${backtest.strategy} backtest`}
+          className="flex-shrink-0 rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/70 focus-visible:ring-offset-2 focus-visible:ring-offset-[#1A1A1E]"
         >
-          <span
-            className={`absolute left-0 top-0.5 w-3 h-3 rounded-full bg-white transition-transform ${visible ? 'translate-x-4' : 'translate-x-0.5'}`}
-          />
+          <LiquidGlassSwitch checked={visible} />
         </button>
       )}
     </div>
