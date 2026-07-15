@@ -2,9 +2,10 @@
 """Download, replace, aggregate, and verify Yahoo Finance candles in QuestDB.
 
 Yahoo Finance supplies underlying OHLCV bars, not historical option candles.
-The seven complete calendar days ending yesterday of 1-minute bars are written to Parquet,
-imported into the seven standard timeframe tables, and that range is replaced
-on reruns.
+The seven complete calendar days ending two days ago of 1-minute bars are
+written to Parquet, imported into the seven standard timeframe tables, and
+that range is replaced on reruns.  Keeping a full-day publication buffer
+prevents a still-partial prior date from being imported.
 """
 
 from __future__ import annotations
@@ -36,6 +37,7 @@ TIMEFRAME_SUFFIXES = ("1m", "5m", "15m", "30m", "1h", "4h", "1d")
 REQUIRED_COLUMNS = {"ts", "underlying", "osi", "open", "high", "low", "close", "volume"}
 LOOKBACK_DAYS = 7
 YAHOO_1M_REQUEST_DAYS = 7
+YAHOO_AVAILABILITY_LAG_DAYS = 2
 
 
 def parse_timezone(value: str) -> ZoneInfo:
@@ -45,11 +47,17 @@ def parse_timezone(value: str) -> ZoneInfo:
         raise argparse.ArgumentTypeError(f"invalid IANA timezone: {value!r}") from exc
 
 
+def latest_fully_available_date(timezone: ZoneInfo, now: datetime | None = None) -> date:
+    """Return the newest date safe to request from Yahoo's intraday feed."""
+    current = datetime.now(timezone) if now is None else now.astimezone(timezone)
+    return current.date() - timedelta(days=YAHOO_AVAILABILITY_LAG_DAYS)
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Download the seven complete days ending yesterday of Yahoo Finance 1-minute "
-            "candles, replace that QuestDB range, and aggregate all timeframes."
+            "Download seven fully available days ending two days ago of Yahoo Finance "
+            "1-minute candles, replace that QuestDB range, and aggregate all timeframes."
         )
     )
     parser.add_argument("--symbol", required=True, help="Yahoo Finance ticker to fetch")
@@ -317,7 +325,10 @@ def verify_import(host: str, http_port: int, base_table: str, start: date, end: 
 
 def main() -> int:
     args = parse_args()
-    end = datetime.now(args.timezone).date() - timedelta(days=1)
+    # Yahoo can expose a partial previous date before all of its intraday bars
+    # have settled.  Leave one full calendar day between today and the newest
+    # requested date so a partial day can never replace a complete partition.
+    end = latest_fully_available_date(args.timezone)
     start = end - timedelta(days=LOOKBACK_DAYS - 1)
     symbol = args.symbol.upper()
     try:
