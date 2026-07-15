@@ -1,0 +1,719 @@
+import { BACKEND_URL, type Backtest, type Trade, type MarchSettings, type MarchLayouts, type MarchWorkspace, type MonteCarloData, type Environment, type EnvironmentRule, type EnvironmentStrategy, type CreateEnvironmentInput } from './types'
+import type { UTCTimestamp } from 'lightweight-charts'
+
+const HEADER_BYTES = 8
+
+const TRADE_MAGIC     = 0x54524445
+const TRADE_ROW_BYTES = 25
+
+export async function fetchBacktests(): Promise<Backtest[]> {
+  const res = await fetch(`${BACKEND_URL}/api/backtests`)
+  if (!res.ok) throw new Error(`Backend error: ${res.status}`)
+  return res.json()
+}
+
+export async function deleteBacktest(id: number): Promise<void> {
+  const res = await fetch(`${BACKEND_URL}/api/backtests/${id}`, {
+    method: 'DELETE',
+  })
+  if (!res.ok) throw new Error(`Backend error: ${res.status}`)
+}
+
+// FX-execution view of a SAVED backtest: re-prices its stored trades from
+// fx_nq_ticks on demand. Returns null when no trade falls in the fx window
+// (or the backtest is not NQ-derived).
+export async function fetchBacktestFx(id: number): Promise<FxResult | null> {
+  const res = await fetch(`${BACKEND_URL}/api/backtests/${id}/fx`)
+  if (!res.ok) throw new Error(`Backend error: ${res.status}`)
+  const data = await res.json()
+  return parseFx(data.fx)
+}
+
+
+// Daily VIX closes from the backend's vix_1d table (imported by
+// data_manipulation/fetch_vix.py). Wire format is compact JSON pairs
+// [[epoch_secs, close], ...]; timestamps are fake-UTC ET like everything else.
+export interface VixPoint {
+  t: number // epoch seconds (fake-UTC ET)
+  c: number // VIX close
+}
+
+export async function fetchVix(from?: string, to?: string): Promise<VixPoint[]> {
+  const params = new URLSearchParams()
+  if (from) params.set('from', from)
+  if (to) params.set('to', to)
+  const qs = params.toString()
+  const res = await fetch(`${BACKEND_URL}/api/vix${qs ? `?${qs}` : ''}`)
+  if (!res.ok) throw new Error(`Backend error: ${res.status}`)
+  const data: [number, number][] = await res.json()
+  return data.map(([t, c]) => ({ t, c }))
+}
+
+export interface DatabaseSummaryItem {
+  name: 'ES' | 'NQ' | 'QQQ Options' | 'VIX'
+  bytes: number
+  firstDate: string
+  lastDate: string
+}
+
+export async function fetchDatabaseSummary(): Promise<DatabaseSummaryItem[]> {
+  const res = await fetch(`${BACKEND_URL}/api/database/summary`)
+  if (!res.ok) throw new Error(`Backend error: ${res.status}`)
+  return res.json()
+}
+
+export async function fetchMarchSettings(): Promise<MarchSettings> {
+  const res = await fetch(`${BACKEND_URL}/api/march/settings`)
+  if (!res.ok) throw new Error(`Backend error: ${res.status}`)
+  return res.json()
+}
+
+export async function saveMarchSettings(s: MarchSettings): Promise<void> {
+  await fetch(`${BACKEND_URL}/api/march/settings`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(s),
+  })
+}
+
+export async function fetchMarchLayouts(): Promise<MarchLayouts> {
+  const res = await fetch(`${BACKEND_URL}/api/march/layouts`)
+  if (!res.ok) throw new Error(`Backend error: ${res.status}`)
+  return res.json()
+}
+
+export async function saveMarchLayouts(m: MarchLayouts): Promise<void> {
+  await fetch(`${BACKEND_URL}/api/march/layouts`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(m),
+  })
+}
+
+export async function fetchMarchWorkspace(): Promise<MarchWorkspace | null> {
+  const res = await fetch(`${BACKEND_URL}/api/march/workspace`)
+  if (!res.ok) throw new Error(`Backend error: ${res.status}`)
+  return res.json()
+}
+
+export async function saveMarchWorkspace(workspace: MarchWorkspace): Promise<void> {
+  const res = await fetch(`${BACKEND_URL}/api/march/workspace`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(workspace),
+  })
+  if (!res.ok) throw new Error(`Backend error: ${res.status}`)
+}
+
+export async function fetchEnvironments(): Promise<Environment[]> {
+  const res = await fetch(`${BACKEND_URL}/api/environments`)
+  if (!res.ok) throw new Error(`Backend error: ${res.status}`)
+  return res.json()
+}
+
+export async function fetchEnvironmentStrategies(environmentId: number): Promise<EnvironmentStrategy[]> {
+  const res = await fetch(`${BACKEND_URL}/api/environments/${environmentId}/strategies`)
+  if (!res.ok) throw new Error(`Backend error: ${res.status}`)
+  return res.json()
+}
+
+export async function fetchEnvironmentRules(environmentId: number): Promise<EnvironmentRule[]> {
+  const res = await fetch(`${BACKEND_URL}/api/environments/${environmentId}/rules`)
+  if (!res.ok) throw new Error(`Backend error: ${res.status}`)
+  return res.json()
+}
+
+export async function createEnvironmentRule(environmentId: number, input: Omit<EnvironmentRule, 'id'>): Promise<void> {
+  const res = await fetch(`${BACKEND_URL}/api/environments/${environmentId}/rules`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ type: input.type, value: String(input.value) }),
+  })
+  if (!res.ok) {
+    let detail = `Backend error: ${res.status}`
+    try { const data = await res.json(); if (data?.error) detail = data.error } catch { /* keep status */ }
+    throw new Error(detail)
+  }
+}
+
+export async function updateEnvironmentRule(environmentId: number, input: Omit<EnvironmentRule, 'id'>): Promise<void> {
+  const res = await fetch(`${BACKEND_URL}/api/environments/${environmentId}/rules`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ type: input.type, value: String(input.value) }),
+  })
+  if (!res.ok) {
+    let detail = `Backend error: ${res.status}`
+    try { const data = await res.json(); if (data?.error) detail = data.error } catch { /* keep status */ }
+    throw new Error(detail)
+  }
+}
+
+export async function deleteEnvironmentRule(environmentId: number, type: string): Promise<void> {
+  const res = await fetch(`${BACKEND_URL}/api/environments/${environmentId}/rules`, {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ type }),
+  })
+  if (!res.ok) {
+    let detail = `Backend error: ${res.status}`
+    try { const data = await res.json(); if (data?.error) detail = data.error } catch { /* keep status */ }
+    throw new Error(detail)
+  }
+}
+
+export async function createEnvironment(input: CreateEnvironmentInput): Promise<number> {
+  const res = await fetch(`${BACKEND_URL}/api/environments`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    // The backend uses its small shared string-field parser, so send the
+    // boolean and numeric form values as strings.
+    body: JSON.stringify({ ...input, isMt5: input.isMt5 ? 'true' : 'false' }),
+  })
+  if (!res.ok) {
+    let detail = `Backend error: ${res.status}`
+    try {
+      const data = await res.json()
+      if (data?.error) detail = data.error
+    } catch { /* keep the status message */ }
+    throw new Error(detail)
+  }
+  return (await res.json()).id as number
+}
+
+const MC_MAGIC = 0x4D435054
+const MC_HEADER_BYTES = 68
+
+export async function fetchMonteCarloData(id: number): Promise<MonteCarloData> {
+  const res = await fetch(`${BACKEND_URL}/api/montecarlo/${id}`)
+  if (res.status === 404) throw Object.assign(new Error('no_mc_data'), { code: 'not_found' })
+  if (!res.ok) throw new Error(`Backend error: ${res.status}`)
+  const buf = await res.arrayBuffer()
+  const view = new DataView(buf)
+  if (view.getUint32(0, true) !== MC_MAGIC) throw new Error('Bad MC magic')
+  const numPaths = view.getUint32(4, true)
+  const steps = view.getUint32(8, true)
+  const initialBalance = view.getFloat32(12, true)
+  const p5   = view.getFloat32(16, true)
+  const p25  = view.getFloat32(20, true)
+  const p50  = view.getFloat32(24, true)
+  const p75  = view.getFloat32(28, true)
+  const p95  = view.getFloat32(32, true)
+  const pProfit = view.getFloat32(36, true)
+  const pRuin   = view.getFloat32(40, true)
+  const sims = view.getUint32(44, true)
+  const ddP5  = view.getFloat32(48, true)
+  const ddP25 = view.getFloat32(52, true)
+  const ddP50 = view.getFloat32(56, true)
+  const ddP75 = view.getFloat32(60, true)
+  const ddP95 = view.getFloat32(64, true)
+  // Step values for path 0 (actual trade counts at each checkpoint)
+  let off = MC_HEADER_BYTES
+  const stepValues = new Uint32Array(steps)
+  for (let s = 0; s < steps; s++) {
+    stepValues[s] = view.getUint32(off, true)
+    off += 4
+  }
+  const paths: Float32Array[] = []
+  for (let i = 0; i < numPaths; i++) {
+    const path = new Float32Array(steps)
+    for (let s = 0; s < steps; s++) {
+      path[s] = view.getFloat32(off, true)
+      off += 4
+    }
+    paths.push(path)
+  }
+  return { numPaths, sims, steps, stepValues, initialBalance, p5, p25, p50, p75, p95, pProfit, pRuin, ddP5, ddP25, ddP50, ddP75, ddP95, paths }
+}
+
+// ── On-demand backtest run (Test page) ───────────────────────────────────────
+// POSTs the wizard params to the Zig engine and returns a fully-computed run:
+// the report (same fields as a saved Backtest), the trade log, and a Monte Carlo
+// resampling — all live, no DB round-trip.
+
+export interface RunParams {
+  environmentId: string
+  strategy: string
+  symbol: string
+  instrument: string
+  initialBalance: string
+  baseLot: string
+  leverage: string
+  sizing: string
+  volTarget?: string
+  volHalflife?: string
+  volMaxMult?: string
+  volMinDays?: string
+  fromDate: string
+  toDate: string
+}
+
+// The report half of /api/run mirrors the saved-backtest shape, minus the DB-only
+// id/run_at fields, plus initial_bal/final_bal supplied by the engine.
+export type RunReport = Omit<Backtest, 'id' | 'run_at'>
+
+// FX-execution view: the same trade book re-priced from fx_nq_ticks (100ms
+// latency, ±0.10 spread, 2026 coverage window). Same shape as RunResult plus
+// the count of trades that fell inside the fx window.
+export interface FxResult {
+  report: RunReport
+  trades: Trade[]
+  monteCarlo: MonteCarloData | null
+  tradesInWindow: number
+  tradesTotal: number
+}
+
+export interface RunResult {
+  report: RunReport
+  trades: Trade[]
+  monteCarlo: MonteCarloData | null
+  fx: FxResult | null
+}
+
+interface RunMonteCarloJson {
+  initialBalance: number
+  sims: number
+  steps: number
+  numPaths: number
+  p5: number
+  p25: number
+  p50: number
+  p75: number
+  p95: number
+  pProfit: number
+  pRuin: number
+  ddP5: number
+  ddP25: number
+  ddP50: number
+  ddP75: number
+  ddP95: number
+  stepValues: number[]
+  paths: number[][]
+}
+
+function parseTrades(raw: { trades?: Trade[] }): Trade[] {
+  return (raw.trades ?? []).map((t: Trade) => ({
+    side: t.side,
+    et: t.et as UTCTimestamp,
+    xt: t.xt as UTCTimestamp,
+    ep: t.ep,
+    xp: t.xp,
+    pnl: t.pnl,
+    qty: t.qty,
+  }))
+}
+
+function parseMonteCarlo(mc: RunMonteCarloJson | null | undefined): MonteCarloData | null {
+  if (!mc) return null
+  return {
+    numPaths: mc.numPaths,
+    sims: mc.sims,
+    steps: mc.steps,
+    stepValues: Uint32Array.from(mc.stepValues),
+    initialBalance: mc.initialBalance,
+    p5: mc.p5,
+    p25: mc.p25,
+    p50: mc.p50,
+    p75: mc.p75,
+    p95: mc.p95,
+    pProfit: mc.pProfit,
+    pRuin: mc.pRuin,
+    ddP5: mc.ddP5,
+    ddP25: mc.ddP25,
+    ddP50: mc.ddP50,
+    ddP75: mc.ddP75,
+    ddP95: mc.ddP95,
+    paths: mc.paths.map((p) => Float32Array.from(p)),
+  }
+}
+
+// Parse the nested fx-execution block (same shape as the top-level result).
+function parseFx(fx: Record<string, unknown> | null | undefined): FxResult | null {
+  if (!fx) return null
+  const { trades: _t, montecarlo: mc, tradesInWindow, tradesTotal, ...report } = fx
+  return {
+    report: report as unknown as RunReport,
+    trades: parseTrades(fx as { trades?: Trade[] }),
+    monteCarlo: parseMonteCarlo(mc as RunMonteCarloJson | null),
+    tradesInWindow: (tradesInWindow as number) ?? 0,
+    tradesTotal: (tradesTotal as number) ?? 0,
+  }
+}
+
+export async function runBacktest(params: RunParams): Promise<RunResult> {
+  const res = await fetch(`${BACKEND_URL}/api/run`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+  })
+  if (!res.ok) {
+    let detail = `Backend error: ${res.status}`
+    try {
+      const j = await res.json()
+      if (j?.detail || j?.error) detail = j.detail || j.error
+    } catch { /* keep default */ }
+    throw new Error(detail)
+  }
+  const data = await res.json()
+
+  const trades = parseTrades(data)
+  const monteCarlo = parseMonteCarlo(data.montecarlo)
+  const fx = parseFx(data.fx)
+
+  // Strip trades/montecarlo/fx from the report object; the rest is the Backtest shape.
+  const { trades: _t, montecarlo: _m, fx: _fx, ...report } = data
+  return { report: report as RunReport, trades, monteCarlo, fx }
+}
+
+// Persist a run into app.db (re-runs server-side with a fixed Monte Carlo seed,
+// so the saved result matches the preview). Returns the new backtest id.
+export async function saveRun(params: RunParams): Promise<number> {
+  const res = await fetch(`${BACKEND_URL}/api/run/save`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+  })
+  if (!res.ok) {
+    let detail = `Backend error: ${res.status}`
+    try {
+      const j = await res.json()
+      if (j?.detail || j?.error) detail = j.detail || j.error
+    } catch { /* keep default */ }
+    throw new Error(detail)
+  }
+  const data = await res.json()
+  return data.id as number
+}
+
+export interface CombineParams {
+  environmentId: string
+  ids: number[]
+  initialBalance: string
+  fromDate: string
+  toDate: string
+}
+
+export async function combineBacktests(params: CombineParams): Promise<RunResult> {
+  const res = await fetch(`${BACKEND_URL}/api/combine`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+  })
+  if (!res.ok) {
+    let detail = `Backend error: ${res.status}`
+    try { const j = await res.json(); if (j?.error) detail = j.error } catch { /* keep */ }
+    throw new Error(detail)
+  }
+  const data = await res.json()
+  if (typeof data.symbol !== 'string') throw new Error('Unexpected response — restart the backend')
+  const trades = parseTrades(data)
+  const monteCarlo = parseMonteCarlo(data.montecarlo)
+  const fx = parseFx(data.fx)
+  const { trades: _t, montecarlo: _m, fx: _fx, ...report } = data
+  return { report: report as RunReport, trades, monteCarlo, fx }
+}
+
+export async function saveCombine(params: CombineParams): Promise<number> {
+  const res = await fetch(`${BACKEND_URL}/api/combine/save`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+  })
+  if (!res.ok) {
+    let detail = `Backend error: ${res.status}`
+    try { const j = await res.json(); if (j?.error) detail = j.error } catch { /* keep */ }
+    throw new Error(detail)
+  }
+  const data = await res.json()
+  return data.id as number
+}
+
+// ── Tune (grid-search) ──────────────────────────────────────────────────────
+
+export interface TuneCombo {
+  growth: number
+  drawdown: number
+  score: number
+  baseLot: number
+  leverage: number
+  volTarget?: number
+  volHalflife?: number
+  volMaxMult?: number
+  volMinDays?: number
+}
+
+export interface TuneResult {
+  totalCombos: number
+  bestGrowth: TuneCombo[]
+  minDrawdown: TuneCombo[]
+  bestOfTwo: TuneCombo[]
+  grid?: TuneCombo[]   // every swept combo — powers the Sensitivity heatmap
+}
+
+export interface TuneParams {
+  environmentId: string
+  strategy: string
+  symbol: string
+  instrument: string
+  initialBalance: string
+  baseLot: string          // comma-separated for grid sweep
+  leverage: string         // comma-separated for grid sweep
+  sizing: string
+  volTarget?: string       // comma-separated for grid sweep
+  volHalflife?: string
+  volMaxMult?: string
+  volMinDays?: string
+  fromDate: string
+  toDate: string
+}
+
+export async function runTune(params: TuneParams): Promise<TuneResult> {
+  const res = await fetch(`${BACKEND_URL}/api/tune`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+  })
+  if (!res.ok) {
+    let detail = `Backend error: ${res.status}`
+    try {
+      const j = await res.json()
+      if (j?.error) detail = j.error
+    } catch { /* keep default */ }
+    throw new Error(detail)
+  }
+  return res.json()
+}
+
+export interface TuneStatus {
+  status: 'running' | 'completed' | 'failed'
+  progress?: number
+  total?: number
+  result?: TuneResult
+  error?: string
+}
+
+export async function fetchTuneStatus(): Promise<TuneStatus> {
+  const res = await fetch(`${BACKEND_URL}/api/tune/status`)
+  if (!res.ok) throw new Error(`Backend error: ${res.status}`)
+  return res.json()
+}
+
+export async function fetchTrades(id: number): Promise<Trade[]> {
+  const res = await fetch(`${BACKEND_URL}/api/trades/${id}`)
+  if (!res.ok) throw new Error(`Backend error: ${res.status}`)
+  const buf = await res.arrayBuffer()
+  const view = new DataView(buf)
+  if (view.getUint32(0, true) !== TRADE_MAGIC) throw new Error('Bad trades magic')
+  const count = view.getUint32(4, true)
+  const data: Trade[] = new Array(count)
+  let off = HEADER_BYTES
+  for (let i = 0; i < count; i++) {
+    data[i] = {
+      side: view.getUint8(off) === 0 ? 'long' : 'short',
+      et:   view.getUint32(off + 1,  true) as UTCTimestamp,
+      xt:   view.getUint32(off + 5,  true) as UTCTimestamp,
+      ep:   view.getFloat32(off + 9,  true),
+      xp:   view.getFloat32(off + 13, true),
+      pnl:  view.getFloat32(off + 17, true),
+      qty:  view.getFloat32(off + 21, true),
+    }
+    off += TRADE_ROW_BYTES
+  }
+  return data
+}
+
+// FX-execution trades for a saved backtest (persisted at save time, re-priced
+// from fx_nq_ticks). Same binary format as fetchTrades; empty for non-NQ books.
+export async function fetchTradesFx(id: number): Promise<Trade[]> {
+  const res = await fetch(`${BACKEND_URL}/api/trades/${id}/fx`)
+  if (!res.ok) throw new Error(`Backend error: ${res.status}`)
+  const buf = await res.arrayBuffer()
+  const view = new DataView(buf)
+  if (view.getUint32(0, true) !== TRADE_MAGIC) throw new Error('Bad trades magic')
+  const count = view.getUint32(4, true)
+  const data: Trade[] = new Array(count)
+  let off = HEADER_BYTES
+  for (let i = 0; i < count; i++) {
+    data[i] = {
+      side: view.getUint8(off) === 0 ? 'long' : 'short',
+      et:   view.getUint32(off + 1,  true) as UTCTimestamp,
+      xt:   view.getUint32(off + 5,  true) as UTCTimestamp,
+      ep:   view.getFloat32(off + 9,  true),
+      xp:   view.getFloat32(off + 13, true),
+      pnl:  view.getFloat32(off + 17, true),
+      qty:  view.getFloat32(off + 21, true),
+    }
+    off += TRADE_ROW_BYTES
+  }
+  return data
+}
+
+// ── March strategy API (served on main web port 8080 via /api/march/) ────────
+
+export interface MarchStrategy {
+  name: string
+  active: boolean
+}
+
+export async function fetchMarchStrategies(): Promise<MarchStrategy[]> {
+  const res = await fetch(`${BACKEND_URL}/api/march/strategies`)
+  if (!res.ok) throw new Error(`March API error: ${res.status}`)
+  return res.json()
+}
+
+export async function setMarchStrategyOn(name: string): Promise<void> {
+  const res = await fetch(`${BACKEND_URL}/api/march/strategies/${name}/on`, { method: 'PUT' })
+  if (!res.ok) throw new Error(`March API error: ${res.status}`)
+}
+
+export async function setMarchStrategyOff(name: string): Promise<void> {
+  const res = await fetch(`${BACKEND_URL}/api/march/strategies/${name}/off`, { method: 'PUT' })
+  if (!res.ok) throw new Error(`March API error: ${res.status}`)
+}
+
+export type AccountStatusKind = 'ready' | 'incomplete' | 'error' | 'offline'
+
+export interface AccountStatus {
+  account_id: number
+  login: string | number
+  status: AccountStatusKind
+  detail: string
+  balance?: number
+  equity?: number
+  currency?: string
+}
+
+// Live MT5 EA heartbeat per account, served by the Rust backend.
+export async function fetchAccountStatuses(): Promise<AccountStatus[]> {
+  const res = await fetch(`${BACKEND_URL}/api/march/mt5/accounts/status`)
+  if (!res.ok) throw new Error(`March MT5 API error: ${res.status}`)
+  return res.json()
+}
+
+export interface ActivePosition {
+  account: string | number
+  account_name: string
+  ticket: number
+  type: 'long' | 'short'
+  symbol: string
+  volume: number
+  profit: number
+  open_price: number
+  strategy?: string
+  zig_entry_price?: number
+  zig_entry_time?: number
+}
+
+export async function fetchActivePositions(): Promise<ActivePosition[]> {
+  const res = await fetch(`${BACKEND_URL}/api/march/mt5/positions`)
+  if (!res.ok) throw new Error(`March MT5 API error: ${res.status}`)
+  return res.json()
+}
+
+// ── MT5 accounts (stored in march.db) ────────────────────────────────────────
+
+export interface Mt5Account {
+  id: number
+  name: string
+  login: string
+  server: string
+}
+
+export interface AccountStrategy {
+  id: number
+  strategy: string
+  symbol: string
+  active: boolean
+}
+
+export async function fetchMt5Accounts(): Promise<Mt5Account[]> {
+  const res = await fetch(`${BACKEND_URL}/api/march/mt5/accounts`)
+  if (!res.ok) throw new Error(`March API error: ${res.status}`)
+  return res.json()
+}
+
+export async function addMt5Account(account: {
+  name: string
+  login: string
+  server: string
+}): Promise<number> {
+  const res = await fetch(`${BACKEND_URL}/api/march/mt5/accounts`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(account),
+  })
+  if (!res.ok) throw new Error(`March API error: ${res.status}`)
+  const data = await res.json()
+  return data.id as number
+}
+
+export async function deleteMt5Account(id: number): Promise<void> {
+  const res = await fetch(`${BACKEND_URL}/api/march/mt5/accounts/${id}`, { method: 'DELETE' })
+  if (!res.ok) throw new Error(`March API error: ${res.status}`)
+}
+
+export async function fetchAccountStrategies(accountId: number): Promise<AccountStrategy[]> {
+  const res = await fetch(`${BACKEND_URL}/api/march/mt5/accounts/${accountId}/strategies`)
+  if (!res.ok) throw new Error(`March API error: ${res.status}`)
+  return res.json()
+}
+
+export async function addAccountStrategy(
+  accountId: number,
+  data: { strategy: string; symbol: string },
+): Promise<void> {
+  const res = await fetch(`${BACKEND_URL}/api/march/mt5/accounts/${accountId}/strategies`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  })
+  if (!res.ok) throw new Error(`March API error: ${res.status}`)
+}
+
+export async function deleteAccountStrategy(accountId: number, strategyId: number): Promise<void> {
+  const res = await fetch(`${BACKEND_URL}/api/march/mt5/accounts/${accountId}/strategies/${strategyId}`, {
+    method: 'DELETE',
+  })
+  if (!res.ok) throw new Error(`March API error: ${res.status}`)
+}
+
+export async function setAccountStrategyActive(
+  accountId: number,
+  strategyId: number,
+  active: boolean,
+): Promise<void> {
+  const res = await fetch(
+    `${BACKEND_URL}/api/march/mt5/accounts/${accountId}/strategies/${strategyId}/${active ? 'on' : 'off'}`,
+    { method: 'PUT' },
+  )
+  if (!res.ok) throw new Error(`March API error: ${res.status}`)
+}
+
+// Known strategy names that can be attached to an account. Mirrors the Zig
+// registry in the Rust March API.
+export const KNOWN_MARCH_STRATEGIES = ['night_drift', 'min_loop'] as const
+
+export function displayStrategyName(strategy: string): string {
+  return strategy === 'night_drift' ? 'Night Drift' : strategy
+}
+
+export interface LiveTrade {
+  id: number
+  strategy_name: string
+  side: 'long' | 'short'
+  contract: number
+  zig_entry_price: number
+  zig_close_price: number
+  mt5_entry_price: number
+  mt5_close_price: number
+  zig_open_time: string
+  zig_close_time: string
+  mt5_open_time: string
+  mt5_close_time: string
+}
+
+export async function fetchLiveTradeHistory(): Promise<LiveTrade[]> {
+  const res = await fetch(`${BACKEND_URL}/api/march/trades`)
+  if (!res.ok) throw new Error(`March API error: ${res.status}`)
+  return res.json()
+}
