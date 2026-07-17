@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { createEnvironmentRule, fetchBacktests, fetchEnvironmentRules, fetchEnvironments, updateEnvironmentRule, deleteEnvironmentRule } from '../api'
+import { createEnvironmentRule, fetchBacktests, fetchEnvironmentRules, fetchEnvironments, updateEnvironmentRule, deleteEnvironmentRule, deleteBacktest } from '../api'
 import { type Environment } from '../types'
 import BacktestResultSidebar from '../components/backtests/BacktestResultSidebar'
 import PageShell from '../components/layout/PageShell'
@@ -165,6 +165,18 @@ export default function EnvironmentDetailPage({ selectedEnv, onBack }: Environme
       await queryClient.invalidateQueries({ queryKey: ['environment-rules', selectedEnv.id] })
     } catch (error) {
       alert(error instanceof Error ? error.message : 'Could not delete rule.')
+    }
+  }
+
+  const handleDeleteBacktest = async (id: number) => {
+    if (!window.confirm('Are you sure you want to delete this backtest?')) return
+    try {
+      await deleteBacktest(id)
+      await queryClient.invalidateQueries({ queryKey: ['backtests'] })
+      sessionStorage.removeItem(backtestSidebarStorageKey)
+      setSelectedBacktestId(null)
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'Could not delete backtest.')
     }
   }
 
@@ -385,6 +397,7 @@ export default function EnvironmentDetailPage({ selectedEnv, onBack }: Environme
         <BacktestResultSidebar
           key={selectedBacktest.id}
           backtest={selectedBacktest}
+          onDelete={() => handleDeleteBacktest(selectedBacktest.id)}
         />
       )}
 

@@ -227,7 +227,8 @@ export default function EnvironmentPage() {
                   type="text"
                   value={name}
                   onChange={(e) => setName(e.target.value)}
-                  placeholder="idk"
+                  maxLength={100}
+                  placeholder="Environment name"
                   className="w-full bg-black/20 border border-[#212124] text-sm text-gray-200 px-3 py-2 outline-none transition-colors placeholder:text-gray-600 select-text"
                 />
               </div>

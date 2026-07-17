@@ -100,7 +100,7 @@ async fn saves_backtest_trades_and_montecarlo() {
         exit_raw: 101.0,
     };
     let id = db
-        .save_backtest("TEST", None, &Value::Object(report), &[trade])
+        .save_backtest("TEST", None, &Value::Object(report), &[trade], None)
         .await
         .unwrap();
     assert_eq!(db.trades_binary(id, false).await.unwrap().len(), 33);
@@ -115,7 +115,7 @@ async fn seaorm_round_trips_environment_and_march_records() {
 
     let environment = db
         .create_environment(&CreateEnvironment {
-            name: "paper".into(),
+            name: "sandbox".into(),
             is_mt5: false,
             server: String::new(),
             login: String::new(),

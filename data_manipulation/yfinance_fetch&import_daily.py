@@ -71,7 +71,8 @@ def parse_args() -> argparse.Namespace:
         "--date",
         dest="date_range",
         type=parse_date_range,
-        required=True,
+        required=False,
+        default=None,
         metavar="DD/MM/YY-DD/MM/YY",
         help="inclusive date range in --timezone",
     )
@@ -236,6 +237,25 @@ def table_exists(host: str, port: int, table: str) -> bool:
     ) == 1
 
 
+def get_latest_date(host: str, port: int, table: str, timezone: ZoneInfo) -> date | None:
+    """Query QuestDB for the maximum timestamp in a table and return its local date."""
+    if not table_exists(host, port, table):
+        return None
+    try:
+        result = questdb_exec(host, port, f"select max(timestamp) from {table}")
+        dataset = result.get("dataset")
+        if dataset and dataset[0] and dataset[0][0] is not None:
+            ts_str = dataset[0][0]
+            if ts_str.endswith("Z"):
+                ts_str = ts_str[:-1] + "+00:00"
+            dt_utc = datetime.fromisoformat(ts_str)
+            dt_naive = dt_utc.replace(tzinfo=None)
+            return dt_naive.date()
+    except Exception as exc:
+        print(f"Warning: failed to query latest timestamp for {table}: {exc}", file=sys.stderr)
+    return None
+
+
 def range_bounds(start: date, end: date) -> tuple[str, str]:
     return (
         f"{start.isoformat()}T00:00:00.000000Z",
@@ -320,11 +340,19 @@ def verify_import(host: str, http_port: int, table: str, start: date, end: date,
 
 def main() -> int:
     args = parse_args()
-    start, end = args.date_range
     symbol = args.symbol.upper()
     try:
         base_table = safe_identifier(args.table_prefix)
         table = safe_identifier(f"{base_table}_1d")
+        if args.date_range is not None:
+            start, end = args.date_range
+        else:
+            end = datetime.now(args.timezone).date() - timedelta(days=1)
+            start = get_latest_date(args.questdb_host, args.questdb_http_port, table, args.timezone)
+            if start is None:
+                start = date(1990, 1, 2)
+            elif start > end:
+                start = end
         with tempfile.TemporaryDirectory(prefix="yfinance-import-") as temporary_dir:
             output = Path(temporary_dir) / default_output(symbol, start, end)
             print(

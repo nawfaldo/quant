@@ -1,4 +1,6 @@
-use crate::{database::CreateEnvironment, error::ApiError, state::AppState};
+use crate::{
+    database::CreateEnvironment, error::ApiError, state::AppState, strategies::for_environment,
+};
 use actix_web::{HttpResponse, web};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -39,12 +41,9 @@ async fn create(
     if name.is_empty() {
         return Err(ApiError::BadRequest("name is required".into()));
     }
-    if !name
-        .bytes()
-        .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
-    {
+    if name.chars().count() > 100 {
         return Err(ApiError::BadRequest(
-            "name must use only letters, numbers, hyphens, or underscores".into(),
+            "name must be 100 characters or fewer".into(),
         ));
     }
     let is_mt5 = body
@@ -152,13 +151,5 @@ async fn strategies(
         .environment_name(*id)
         .await?
         .ok_or_else(|| ApiError::NotFound("environment not found".into()))?;
-    let result = if name == "idk" {
-        json!([
-            { "id": "night_drift", "name": "Night Drift" },
-            { "id": "noise_momentum", "name": "Noise Momentum" },
-        ])
-    } else {
-        json!([])
-    };
-    Ok(HttpResponse::Ok().json(result))
+    Ok(HttpResponse::Ok().json(for_environment(&name)))
 }

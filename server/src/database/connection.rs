@@ -21,6 +21,40 @@ const DEFAULT_SETTINGS: &[(&str, &str)] = &[
     ("march_bottom_height", "400"),
 ];
 
+const RETIRED_PAPER_ENVIRONMENTS_CLEANUP: &str = r#"
+DELETE FROM montecarlo_paths
+WHERE mc_id IN (
+  SELECT id FROM montecarlo WHERE source_id IN (
+    SELECT id FROM backtests WHERE environment_id IN (
+      SELECT id FROM environments WHERE name IN ('paper', 'paper2') COLLATE NOCASE
+    )
+  )
+);
+DELETE FROM montecarlo
+WHERE source_id IN (
+  SELECT id FROM backtests WHERE environment_id IN (
+    SELECT id FROM environments WHERE name IN ('paper', 'paper2') COLLATE NOCASE
+  )
+);
+DELETE FROM fx_trades
+WHERE backtest_id IN (
+  SELECT id FROM backtests WHERE environment_id IN (
+    SELECT id FROM environments WHERE name IN ('paper', 'paper2') COLLATE NOCASE
+  )
+);
+DELETE FROM trades
+WHERE backtest_id IN (
+  SELECT id FROM backtests WHERE environment_id IN (
+    SELECT id FROM environments WHERE name IN ('paper', 'paper2') COLLATE NOCASE
+  )
+);
+DELETE FROM backtests
+WHERE environment_id IN (
+  SELECT id FROM environments WHERE name IN ('paper', 'paper2') COLLATE NOCASE
+);
+DELETE FROM environments WHERE name IN ('paper', 'paper2') COLLATE NOCASE;
+"#;
+
 #[derive(Clone)]
 pub struct Database {
     path: Arc<PathBuf>,
@@ -49,6 +83,9 @@ impl Database {
     pub async fn initialize(&self) -> Result<(), ApiError> {
         let connection = self.orm().await?;
         connection.execute_unprepared(SCHEMA).await?;
+        connection
+            .execute_unprepared(RETIRED_PAPER_ENVIRONMENTS_CLEANUP)
+            .await?;
         for (key, value) in DEFAULT_SETTINGS {
             connection
                 .execute(Statement::from_sql_and_values(

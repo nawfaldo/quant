@@ -1,13 +1,20 @@
 use super::{
+    drawdown::DrawdownTracker,
     prepare::PreparedRun,
     request::RunRequest,
-    tuning::report::{Drawdowns, montecarlo, report},
+    tuning::report::{montecarlo, report},
     types::{Action, Bar, Instrument, Side, Strategy, Trade},
 };
 use crate::{
     error::ApiError,
     sizing::{VolTarget, VolTargetConfig},
-    strategies::idk::{night_drift::NightDrift, noise_momentum::NoiseMomentum},
+    strategies::{
+        StrategyEnvironment,
+        idk::{
+            night_drift::NightDrift as IdkNightDrift,
+            noise_momentum::NoiseMomentum as IdkNoiseMomentum,
+        },
+    },
 };
 use serde_json::Value;
 
@@ -34,9 +41,13 @@ fn execute_with_sizing(
 ) -> Result<RunResult, ApiError> {
     let mut engine = prepared.engine.clone();
     engine.sizing = sizing;
-    let result = match request.strategy.as_str() {
-        "Night Drift" => run_engine(&prepared.bars, NightDrift::default(), engine),
-        "Noise Momentum" => run_engine(&prepared.bars, NoiseMomentum::default(), engine),
+    let result = match (request.strategy_environment, request.strategy.as_str()) {
+        (StrategyEnvironment::Idk, "Night Drift") => {
+            run_engine(&prepared.bars, IdkNightDrift::default(), engine)
+        }
+        (StrategyEnvironment::Idk, "Noise Momentum") => {
+            run_engine(&prepared.bars, IdkNoiseMomentum::default(), engine)
+        }
         _ => return Err(ApiError::BadRequest("unknown strategy".into())),
     };
     Ok(result)
@@ -76,25 +87,9 @@ fn run_engine<S: Strategy>(bars: &[Bar], mut strategy: S, cfg: EngineConfig) -> 
     let mut trades = Vec::new();
     let mut position: Option<Position> = None;
     let mut equity = cfg.initial;
-    let mut peak = equity;
-    let mut peak_day = cfg.start_day;
-    let mut max_dd = 0.0f64;
-    let mut max_dd_dollars = 0.0f64;
-    let mut max_dd_peak = cfg.start_day;
-    let mut max_dd_trough = cfg.start_day;
-    let mut dd_sum = 0.0;
-    let mut dd_dollars_sum = 0.0;
-    let mut dd_count = 0usize;
-    let mut current_day = cfg.start_day;
-    let mut day_peak = equity;
-    let mut day_max = 0.0f64;
-    let mut day_max_dollars = 0.0f64;
-    let mut max_idd = 0.0f64;
-    let mut max_idd_dollars = 0.0f64;
-    let mut max_idd_day = cfg.start_day;
-    let mut idd_sum = 0.0;
-    let mut idd_dollars_sum = 0.0;
-    let mut idd_days = 0usize;
+    let max_drawdown_dollars = strategy.max_drawdown_dollars();
+    let mut equity_peak = equity;
+    let mut drawdowns = DrawdownTracker::new(equity, cfg.start_day);
     let mut sizing_day = None;
     let mut volatility_target = cfg
         .sizing
@@ -111,78 +106,32 @@ fn run_engine<S: Strategy>(bars: &[Bar], mut strategy: S, cfg: EngineConfig) -> 
         if let Some(target) = &mut volatility_target {
             target.on_bar(bar.close, day_changed);
         }
-        let action = strategy.update(*bar, equity);
+        let mut action = strategy.update(*bar, equity);
         if day < cfg.start_day {
             strategy.discard(action);
             continue;
         }
-        let mut mtm = equity;
-        if let Some(p) = &position {
-            mtm = match action {
-                Action::Close { price, fraction } if fraction >= 1.0 => {
-                    let exit = fill(price, p.side == Side::Short, &cfg);
-                    equity + net_pnl(p, exit, cfg.commission, cfg.instrument, &cfg.symbol)
-                }
-                _ => {
-                    equity
-                        + pnl(
-                            p.side,
-                            p.entry,
-                            bar.close,
-                            p.quantity,
-                            cfg.instrument,
-                            &cfg.symbol,
-                        )
-                        - cfg.commission * p.quantity
-                }
-            };
+        let flatten_after_bar = strategy.session_end_minute().is_some_and(|session_end| {
+            let minute = bar.ts.rem_euclid(86_400) as usize / 60;
+            minute < session_end
+                && bars.get(bar_index + 1).is_none_or(|next| {
+                    next.ts.div_euclid(86_400) != day
+                        || next.ts.rem_euclid(86_400) as usize / 60 > session_end
+                })
+        });
+        let mut mtm = marked_equity(equity, position.as_ref(), action, *bar, &cfg);
+        if let (Some(limit), Some(open)) = (max_drawdown_dollars, position.as_ref()) {
+            let floor = equity_peak - limit;
+            if mtm < floor {
+                action = Action::Close {
+                    price: exit_raw_for_equity(open, equity, floor, &cfg),
+                    fraction: 1.0,
+                };
+                mtm = floor;
+            }
         }
-        if mtm > peak {
-            peak = mtm;
-            peak_day = day;
-        }
-        let dd_dollars = peak - mtm;
-        let dd = if peak > 0.0 {
-            dd_dollars / peak * 100.0
-        } else {
-            0.0
-        };
-        if dd > max_dd {
-            max_dd = dd;
-            max_dd_dollars = dd_dollars;
-            max_dd_peak = peak_day;
-            max_dd_trough = day;
-        }
-        dd_sum += dd;
-        dd_dollars_sum += dd_dollars;
-        dd_count += 1;
-        if day != current_day {
-            idd_sum += day_max;
-            idd_dollars_sum += day_max_dollars;
-            idd_days += 1;
-            current_day = day;
-            day_peak = mtm;
-            day_max = 0.0;
-            day_max_dollars = 0.0;
-        }
-        if mtm > day_peak {
-            day_peak = mtm;
-        }
-        let dollars = day_peak - mtm;
-        let pct = if day_peak > 0.0 {
-            dollars / day_peak * 100.0
-        } else {
-            0.0
-        };
-        if pct > day_max {
-            day_max = pct;
-            day_max_dollars = dollars;
-        }
-        if pct > max_idd {
-            max_idd = pct;
-            max_idd_dollars = dollars;
-            max_idd_day = day;
-        }
+        equity_peak = equity_peak.max(mtm);
+        drawdowns.observe(mtm, day);
         match action {
             Action::Hold => {}
             Action::Enter {
@@ -190,33 +139,50 @@ fn run_engine<S: Strategy>(bars: &[Bar], mut strategy: S, cfg: EngineConfig) -> 
                 price,
                 quantity,
             } => {
-                if position.as_ref().is_some_and(|p| p.side == side) {
-                    continue;
+                if !position.as_ref().is_some_and(|p| p.side == side) {
+                    if let Some(old) = position.take() {
+                        let exit = fill(price, old.side == Side::Short, &cfg);
+                        let gain = net_pnl(&old, exit, cfg.commission, cfg.instrument, &cfg.symbol);
+                        equity += gain;
+                        trades.push(to_trade(old, fill_timestamp, exit, price, gain));
+                    }
+                    equity_peak = equity_peak.max(equity);
+                    let sized_quantity = if let (Some(risk_fraction), Some(stop)) =
+                        (strategy.entry_risk_fraction(), strategy.entry_stop_price())
+                    {
+                        risk_limited_quantity(
+                            side,
+                            price,
+                            stop,
+                            equity,
+                            equity_peak,
+                            risk_fraction,
+                            max_drawdown_dollars,
+                            &cfg,
+                        )
+                    } else {
+                        let raw_qty = cfg
+                            .sizing
+                            .map(|sizing| {
+                                let volatility_multiplier = volatility_target
+                                    .as_ref()
+                                    .map(VolTarget::multiplier)
+                                    .unwrap_or(1.0);
+                                sizing.base_lot * sizing.leverage * volatility_multiplier
+                            })
+                            .unwrap_or(quantity);
+                        Some(cfg.instrument.size(raw_qty))
+                    };
+                    if let Some(quantity) = sized_quantity {
+                        position = Some(Position {
+                            side,
+                            entry: fill(price, side == Side::Long, &cfg),
+                            raw: price,
+                            ts: fill_timestamp,
+                            quantity,
+                        });
+                    }
                 }
-                if let Some(old) = position.take() {
-                    let exit = fill(price, old.side == Side::Short, &cfg);
-                    let gain = net_pnl(&old, exit, cfg.commission, cfg.instrument, &cfg.symbol);
-                    equity += gain;
-                    trades.push(to_trade(old, fill_timestamp, exit, price, gain));
-                }
-                let raw_qty = cfg
-                    .sizing
-                    .map(|sizing| {
-                        let volatility_multiplier = volatility_target
-                            .as_ref()
-                            .map(VolTarget::multiplier)
-                            .unwrap_or(1.0);
-                        sizing.base_lot * sizing.leverage * volatility_multiplier
-                    })
-                    .unwrap_or(quantity);
-                let quantity = cfg.instrument.size(raw_qty);
-                position = Some(Position {
-                    side,
-                    entry: fill(price, side == Side::Long, &cfg),
-                    raw: price,
-                    ts: fill_timestamp,
-                    quantity,
-                });
             }
             Action::Close { price, fraction } => {
                 if let Some(mut old) = position.take() {
@@ -239,44 +205,142 @@ fn run_engine<S: Strategy>(bars: &[Bar], mut strategy: S, cfg: EngineConfig) -> 
                 }
             }
         }
+        if flatten_after_bar && let Some(old) = position.take() {
+            let mut raw_exit = bar.close;
+            let mut exit = fill(raw_exit, old.side == Side::Short, &cfg);
+            if let Some(limit) = max_drawdown_dollars {
+                let floor = equity_peak - limit;
+                let closing_equity =
+                    equity + net_pnl(&old, exit, cfg.commission, cfg.instrument, &cfg.symbol);
+                if closing_equity < floor {
+                    raw_exit = exit_raw_for_equity(&old, equity, floor, &cfg);
+                    exit = fill(raw_exit, old.side == Side::Short, &cfg);
+                }
+            }
+            let gain = net_pnl(&old, exit, cfg.commission, cfg.instrument, &cfg.symbol);
+            equity += gain;
+            trades.push(to_trade(old, bar.ts, exit, raw_exit, gain));
+            equity_peak = equity_peak.max(equity);
+            drawdowns.observe(equity, day);
+        }
     }
     if let (Some(old), Some(last)) = (position.take(), bars.last()) {
-        let exit = fill(last.close, old.side == Side::Short, &cfg);
+        let mut raw_exit = last.close;
+        let mut exit = fill(raw_exit, old.side == Side::Short, &cfg);
+        if let Some(limit) = max_drawdown_dollars {
+            let floor = equity_peak - limit;
+            let closing_equity =
+                equity + net_pnl(&old, exit, cfg.commission, cfg.instrument, &cfg.symbol);
+            if closing_equity < floor {
+                raw_exit = exit_raw_for_equity(&old, equity, floor, &cfg);
+                exit = fill(raw_exit, old.side == Side::Short, &cfg);
+            }
+        }
         let gain = net_pnl(&old, exit, cfg.commission, cfg.instrument, &cfg.symbol);
         equity += gain;
-        trades.push(to_trade(old, last.ts, exit, last.close, gain));
+        trades.push(to_trade(old, last.ts, exit, raw_exit, gain));
+        drawdowns.observe(equity, last.ts.div_euclid(86_400));
     }
-    idd_sum += day_max;
-    idd_dollars_sum += day_max_dollars;
-    idd_days += 1;
     let first = bars
         .iter()
         .find(|b| b.ts.div_euclid(86400) >= cfg.start_day)
         .map(|b| b.ts)
         .unwrap_or(bars[0].ts);
     let last = bars.last().unwrap().ts;
-    let mut body = report(
-        &trades,
-        &cfg,
-        first,
-        last,
-        equity,
-        Drawdowns {
-            max_dd,
-            max_dd_dollars,
-            max_dd_peak,
-            max_dd_trough,
-            avg_dd: dd_sum / dd_count.max(1) as f64,
-            avg_dd_dollars: dd_dollars_sum / dd_count.max(1) as f64,
-            max_idd,
-            max_idd_dollars,
-            max_idd_day,
-            avg_idd: idd_sum / idd_days.max(1) as f64,
-            avg_idd_dollars: idd_dollars_sum / idd_days.max(1) as f64,
-        },
-    );
-    body["montecarlo"] = montecarlo(&trades, cfg.initial);
+    let mut body = report(&trades, &cfg, first, last, equity, drawdowns.finish());
+    body["montecarlo"] = if let Some(limit) = strategy.monte_carlo_drawdown_ruin_dollars() {
+        let pnls = trades.iter().map(|trade| trade.pnl).collect::<Vec<_>>();
+        crate::backtest::monte_carlo::run_with_drawdown_ruin(&pnls, cfg.initial, limit)
+    } else {
+        montecarlo(&trades, cfg.initial)
+    };
     RunResult { body, trades }
+}
+
+fn marked_equity(
+    equity: f64,
+    position: Option<&Position>,
+    action: Action,
+    bar: Bar,
+    cfg: &EngineConfig,
+) -> f64 {
+    let Some(position) = position else {
+        return equity;
+    };
+    match action {
+        Action::Close { price, fraction } if fraction >= 1.0 => {
+            let exit = fill(price, position.side == Side::Short, cfg);
+            equity + net_pnl(position, exit, cfg.commission, cfg.instrument, &cfg.symbol)
+        }
+        _ => {
+            equity
+                + pnl(
+                    position.side,
+                    position.entry,
+                    bar.close,
+                    position.quantity,
+                    cfg.instrument,
+                    &cfg.symbol,
+                )
+                - cfg.commission * position.quantity
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn risk_limited_quantity(
+    side: Side,
+    raw_entry: f64,
+    raw_stop: f64,
+    equity: f64,
+    equity_peak: f64,
+    risk_fraction: f64,
+    max_drawdown_dollars: Option<f64>,
+    cfg: &EngineConfig,
+) -> Option<f64> {
+    let remaining_drawdown = max_drawdown_dollars
+        .map(|limit| (limit - (equity_peak - equity)).max(0.0))
+        .unwrap_or(f64::INFINITY);
+    let budget = (equity.max(0.0) * risk_fraction).min(remaining_drawdown);
+    if budget <= 0.0 {
+        return None;
+    }
+    let unit = Position {
+        side,
+        entry: fill(raw_entry, side == Side::Long, cfg),
+        raw: raw_entry,
+        ts: 0,
+        quantity: 1.0,
+    };
+    let stop = fill(raw_stop, side == Side::Short, cfg);
+    let loss_per_unit = -net_pnl(&unit, stop, cfg.commission, cfg.instrument, &cfg.symbol);
+    if !loss_per_unit.is_finite() || loss_per_unit <= 0.0 {
+        return None;
+    }
+    cfg.instrument.risk_size(budget / loss_per_unit)
+}
+
+fn exit_raw_for_equity(
+    position: &Position,
+    equity: f64,
+    target_equity: f64,
+    cfg: &EngineConfig,
+) -> f64 {
+    let point_value = cfg.instrument.point_value(&cfg.symbol);
+    let desired_pnl = target_equity - equity;
+    let movement = (desired_pnl + 2.0 * cfg.commission * position.quantity)
+        / (position.quantity * point_value);
+    let desired_fill = if position.side == Side::Long {
+        position.entry + movement
+    } else {
+        position.entry - movement
+    };
+    let cost = cfg.spread / 2.0 + cfg.slippage;
+    if position.side == Side::Long {
+        desired_fill + cost
+    } else {
+        desired_fill - cost
+    }
 }
 
 fn closed_size(open_quantity: f64, fraction: f64, instrument: Instrument) -> f64 {
@@ -342,6 +406,95 @@ fn to_trade(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct IntradayOnce {
+        bars_seen: usize,
+    }
+
+    struct RiskSizedOnce {
+        bars_seen: usize,
+    }
+
+    struct DrawdownLimitedOnce {
+        bars_seen: usize,
+    }
+
+    impl Strategy for IntradayOnce {
+        fn update(&mut self, bar: Bar, _equity: f64) -> Action {
+            self.bars_seen += 1;
+            if self.bars_seen == 1 {
+                Action::Enter {
+                    side: Side::Long,
+                    price: bar.close,
+                    quantity: 1.0,
+                }
+            } else {
+                Action::Hold
+            }
+        }
+
+        fn session_end_minute(&self) -> Option<usize> {
+            Some(930)
+        }
+    }
+
+    impl Strategy for RiskSizedOnce {
+        fn update(&mut self, _bar: Bar, _equity: f64) -> Action {
+            self.bars_seen += 1;
+            if self.bars_seen == 1 {
+                Action::Enter {
+                    side: Side::Long,
+                    price: 100.0,
+                    quantity: 999.0,
+                }
+            } else {
+                Action::Close {
+                    price: 90.0,
+                    fraction: 1.0,
+                }
+            }
+        }
+
+        fn entry_risk_fraction(&self) -> Option<f64> {
+            Some(0.03)
+        }
+
+        fn entry_stop_price(&self) -> Option<f64> {
+            Some(90.0)
+        }
+    }
+
+    impl Strategy for DrawdownLimitedOnce {
+        fn update(&mut self, _bar: Bar, _equity: f64) -> Action {
+            self.bars_seen += 1;
+            if self.bars_seen == 1 {
+                Action::Enter {
+                    side: Side::Long,
+                    price: 100.0,
+                    quantity: 10.0,
+                }
+            } else {
+                Action::Hold
+            }
+        }
+
+        fn max_drawdown_dollars(&self) -> Option<f64> {
+            Some(300.0)
+        }
+    }
+
+    fn bar(ts: i64, close: f64) -> Bar {
+        Bar {
+            ts,
+            open: close,
+            high: close,
+            low: close,
+            close,
+            volume: 1.0,
+            vix: 0.0,
+        }
+    }
+
     #[test]
     fn civil_dates_round_trip() {
         let d = parse_iso_days("2026-07-15").unwrap();
@@ -361,5 +514,78 @@ mod tests {
         };
         assert_eq!(fill(100.0, true, &c), 100.2);
         assert_eq!(fill(100.0, false, &c), 99.8);
+    }
+
+    #[test]
+    fn intraday_strategy_closes_at_last_bar_before_session_gap() {
+        let bars = [
+            bar(600 * 60, 100.0),
+            bar(601 * 60, 110.0),
+            bar(1_080 * 60, 50.0),
+        ];
+        let cfg = EngineConfig {
+            initial: 100.0,
+            instrument: Instrument::Forex,
+            symbol: "nq".into(),
+            spread: 0.0,
+            slippage: 0.0,
+            commission: 0.0,
+            start_day: 0,
+            sizing: None,
+        };
+
+        let result = run_engine(&bars, IntradayOnce { bars_seen: 0 }, cfg);
+
+        assert_eq!(result.trades.len(), 1);
+        assert_eq!(result.trades[0].entry_timestamp, 601 * 60);
+        assert_eq!(result.trades[0].exit_timestamp, 601 * 60);
+        assert_eq!(result.trades[0].exit_raw, 110.0);
+        assert_eq!(result.trades[0].pnl, 10.0);
+        assert_eq!(result.body["final_bal"], 110.0);
+    }
+
+    #[test]
+    fn risk_sizing_includes_costs_and_never_rounds_above_budget() {
+        let bars = [bar(600 * 60, 100.0), bar(601 * 60, 90.0)];
+        let cfg = EngineConfig {
+            initial: 5_000.0,
+            instrument: Instrument::Forex,
+            symbol: "nq".into(),
+            spread: 0.5,
+            slippage: 0.0,
+            commission: 0.0,
+            start_day: 0,
+            sizing: None,
+        };
+
+        let result = run_engine(&bars, RiskSizedOnce { bars_seen: 0 }, cfg);
+
+        assert_eq!(result.trades.len(), 1);
+        assert!((result.trades[0].quantity - 14.28).abs() < 1e-9);
+        assert!(result.trades[0].pnl.abs() <= 150.0);
+        assert!((result.trades[0].pnl + 149.94).abs() < 1e-9);
+    }
+
+    #[test]
+    fn strategy_drawdown_limit_forces_an_account_level_exit() {
+        let bars = [bar(600 * 60, 100.0), bar(601 * 60, 50.0)];
+        let cfg = EngineConfig {
+            initial: 1_000.0,
+            instrument: Instrument::Forex,
+            symbol: "nq".into(),
+            spread: 0.0,
+            slippage: 0.0,
+            commission: 0.0,
+            start_day: 0,
+            sizing: None,
+        };
+
+        let result = run_engine(&bars, DrawdownLimitedOnce { bars_seen: 0 }, cfg);
+
+        assert_eq!(result.trades.len(), 1);
+        assert_eq!(result.trades[0].exit_raw, 70.0);
+        assert_eq!(result.trades[0].pnl, -300.0);
+        assert_eq!(result.body["max_drawdown_dollars"], 300.0);
+        assert_eq!(result.body["final_bal"], 700.0);
     }
 }

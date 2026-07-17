@@ -1,5 +1,6 @@
 use super::{
     data::format_day,
+    drawdown::DrawdownTracker,
     engine::{EngineConfig, RunResult},
     tuning::report::{Drawdowns, montecarlo, report},
     types::{Instrument, Side},
@@ -44,77 +45,11 @@ pub fn combine_realized(
     let first = trades.first().map(|t| t.entry_timestamp).unwrap_or(0);
     let last = trades.last().map(|t| t.exit_timestamp).unwrap_or(0);
     let mut equity = initial;
-    let mut peak = initial;
-    let mut peak_day = first.div_euclid(86400);
-    let mut max_dd = 0.0f64;
-    let mut max_dollars = 0.0;
-    let mut peak_at_max = peak_day;
-    let mut trough = peak_day;
-    let mut sum = 0.0;
-    let mut sum_dollars = 0.0;
-    let mut current_day = peak_day;
-    let mut day_peak = initial;
-    let mut day_max = 0.0f64;
-    let mut day_max_dollars = 0.0;
-    let mut max_idd = 0.0f64;
-    let mut max_idd_dollars = 0.0;
-    let mut max_idd_day = current_day;
-    let mut idd_sum = 0.0;
-    let mut idd_dollars_sum = 0.0;
-    let mut idd_days = 0usize;
+    let mut drawdowns = DrawdownTracker::new(initial, first.div_euclid(86_400));
     for trade in &trades {
         let day = trade.exit_timestamp.div_euclid(86400);
-        if day != current_day {
-            idd_sum += day_max;
-            idd_dollars_sum += day_max_dollars;
-            idd_days += 1;
-            current_day = day;
-            day_peak = equity;
-            day_max = 0.0;
-            day_max_dollars = 0.0;
-        }
         equity += trade.pnl;
-        if equity > peak {
-            peak = equity;
-            peak_day = day;
-        }
-        let dollars = peak - equity;
-        let pct = if peak > 0.0 {
-            dollars / peak * 100.0
-        } else {
-            0.0
-        };
-        if pct > max_dd {
-            max_dd = pct;
-            max_dollars = dollars;
-            peak_at_max = peak_day;
-            trough = day;
-        }
-        sum += pct;
-        sum_dollars += dollars;
-        if equity > day_peak {
-            day_peak = equity;
-        }
-        let day_dollars = day_peak - equity;
-        let day_pct = if day_peak > 0.0 {
-            day_dollars / day_peak * 100.0
-        } else {
-            0.0
-        };
-        if day_pct > day_max {
-            day_max = day_pct;
-            day_max_dollars = day_dollars;
-        }
-        if day_pct > max_idd {
-            max_idd = day_pct;
-            max_idd_dollars = day_dollars;
-            max_idd_day = day;
-        }
-    }
-    if !trades.is_empty() {
-        idd_sum += day_max;
-        idd_dollars_sum += day_max_dollars;
-        idd_days += 1;
+        drawdowns.observe(equity, day);
     }
     let symbol = unique_label(sources.iter().map(|s| s.symbol.as_str()), "combined");
     let instrument = unique_label(sources.iter().map(|s| s.instrument.as_str()), "combined");
@@ -133,28 +68,7 @@ pub fn combine_realized(
         start_day: first.div_euclid(86400),
         sizing: None,
     };
-    let count = trades.len().max(1) as f64;
-    let days = idd_days.max(1) as f64;
-    let mut body = report(
-        &trades,
-        &cfg,
-        first,
-        last,
-        equity,
-        Drawdowns {
-            max_dd,
-            max_dd_dollars: max_dollars,
-            max_dd_peak: peak_at_max,
-            max_dd_trough: trough,
-            avg_dd: sum / count,
-            avg_dd_dollars: sum_dollars / count,
-            max_idd,
-            max_idd_dollars,
-            max_idd_day,
-            avg_idd: idd_sum / days,
-            avg_idd_dollars: idd_dollars_sum / days,
-        },
-    );
+    let mut body = report(&trades, &cfg, first, last, equity, drawdowns.finish());
     body["instrument"] = Value::String(instrument);
     body["strategy"] = Value::String(strategy);
     body["montecarlo"] = montecarlo(&trades, initial);
@@ -296,27 +210,11 @@ async fn mark_to_market(
     let mut open_position = 0usize;
     let mut close_position = 0usize;
 
-    let mut peak = initial;
-    let mut peak_day = 0;
-    let mut maximum = Drawdowns {
-        max_dd: 0.0,
-        max_dd_dollars: 0.0,
-        max_dd_peak: 0,
-        max_dd_trough: 0,
-        avg_dd: 0.0,
-        avg_dd_dollars: 0.0,
-        max_idd: 0.0,
-        max_idd_dollars: 0.0,
-        max_idd_day: 0,
-        avg_idd: 0.0,
-        avg_idd_dollars: 0.0,
-    };
-    let mut drawdown_count = 0usize;
-    let mut current_day = None;
-    let mut day_peak = initial;
-    let mut day_maximum = 0.0;
-    let mut day_maximum_dollars = 0.0;
-    let mut intraday_days = 0usize;
+    let start_day = opens
+        .first()
+        .map(|event| event.ts.div_euclid(86_400))
+        .unwrap_or(0);
+    let mut drawdowns = DrawdownTracker::new(initial, start_day);
 
     loop {
         let mut timestamp = opens.get(open_position).map(|event| event.ts);
@@ -372,69 +270,9 @@ async fn mark_to_market(
             }
         }
         let day = timestamp.div_euclid(86_400);
-        if equity > peak {
-            peak = equity;
-            peak_day = day;
-        }
-        let dollars = peak - equity;
-        let percent = if peak > 0.0 {
-            dollars / peak * 100.0
-        } else {
-            0.0
-        };
-        if percent > maximum.max_dd {
-            maximum.max_dd = percent;
-            maximum.max_dd_dollars = dollars;
-            maximum.max_dd_peak = peak_day;
-            maximum.max_dd_trough = day;
-        }
-        maximum.avg_dd += percent;
-        maximum.avg_dd_dollars += dollars;
-        drawdown_count += 1;
-
-        if current_day != Some(day) {
-            if current_day.is_some() {
-                maximum.avg_idd += day_maximum;
-                maximum.avg_idd_dollars += day_maximum_dollars;
-                intraday_days += 1;
-            }
-            current_day = Some(day);
-            day_peak = equity;
-            day_maximum = 0.0;
-            day_maximum_dollars = 0.0;
-        }
-        day_peak = day_peak.max(equity);
-        let day_dollars = day_peak - equity;
-        let day_percent = if day_peak > 0.0 {
-            day_dollars / day_peak * 100.0
-        } else {
-            0.0
-        };
-        if day_percent > day_maximum {
-            day_maximum = day_percent;
-            day_maximum_dollars = day_dollars;
-        }
-        if day_percent > maximum.max_idd {
-            maximum.max_idd = day_percent;
-            maximum.max_idd_dollars = day_dollars;
-            maximum.max_idd_day = day;
-        }
+        drawdowns.observe(equity, day);
     }
-
-    if current_day.is_some() {
-        maximum.avg_idd += day_maximum;
-        maximum.avg_idd_dollars += day_maximum_dollars;
-        intraday_days += 1;
-    }
-    if drawdown_count > 0 {
-        maximum.avg_dd /= drawdown_count as f64;
-        maximum.avg_dd_dollars /= drawdown_count as f64;
-    }
-    if intraday_days > 0 {
-        maximum.avg_idd /= intraday_days as f64;
-        maximum.avg_idd_dollars /= intraday_days as f64;
-    }
-    Ok(maximum)
+    Ok(drawdowns.finish())
 }
 
 fn apply_drawdowns(body: &mut Value, drawdowns: Drawdowns) {

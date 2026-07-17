@@ -94,6 +94,18 @@ impl Instrument {
             _ => raw.round().max(1.0),
         }
     }
+
+    pub(crate) fn risk_size(self, raw: f64) -> Option<f64> {
+        let size = match self {
+            Self::Forex => (raw / 0.01).floor() * 0.01,
+            Self::Mini | Self::Micro => raw.floor(),
+        };
+        let minimum = match self {
+            Self::Forex => 0.01,
+            Self::Mini | Self::Micro => 1.0,
+        };
+        (size >= minimum).then_some(size)
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -113,6 +125,21 @@ pub(crate) enum Action {
 pub(crate) trait Strategy {
     fn update(&mut self, bar: Bar, equity: f64) -> Action;
     fn discard(&mut self, _action: Action) {}
+    fn session_end_minute(&self) -> Option<usize> {
+        None
+    }
+    fn entry_risk_fraction(&self) -> Option<f64> {
+        None
+    }
+    fn entry_stop_price(&self) -> Option<f64> {
+        None
+    }
+    fn max_drawdown_dollars(&self) -> Option<f64> {
+        None
+    }
+    fn monte_carlo_drawdown_ruin_dollars(&self) -> Option<f64> {
+        None
+    }
 }
 
 #[cfg(test)]
@@ -140,5 +167,12 @@ mod tests {
         assert_eq!(value["xp"], 101.0);
         assert_eq!(value["qty"], 0.5);
         assert!(value.get("entry_timestamp").is_none());
+    }
+
+    #[test]
+    fn forex_risk_size_supports_centilots_without_rounding_up() {
+        assert_eq!(Instrument::Forex.risk_size(0.509), Some(0.5));
+        assert_eq!(Instrument::Forex.risk_size(0.009), None);
+        assert_eq!(Instrument::Mini.risk_size(0.99), None);
     }
 }

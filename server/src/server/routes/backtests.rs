@@ -4,6 +4,7 @@ use crate::{
     error::ApiError,
     fx::{self, Repriced},
     state::AppState,
+    strategies::StrategyEnvironment,
 };
 use actix_web::{HttpResponse, web};
 use serde::Deserialize;
@@ -86,10 +87,8 @@ async fn run(
     state: web::Data<AppState>,
     request: web::Json<RunRequest>,
 ) -> Result<HttpResponse, ApiError> {
-    let costs = state
-        .db
-        .environment_costs(request.environment_id()?)
-        .await?;
+    let mut request = request.into_inner();
+    let costs = configure_strategy_environment(&state, &mut request).await?;
     let mut result = backtest::run(&state.questdb, &request, costs).await?;
     attach_fx_preview(&state, &request, &mut result).await;
     Ok(HttpResponse::Ok().json(result.body))
@@ -98,8 +97,9 @@ async fn save_run(
     state: web::Data<AppState>,
     request: web::Json<RunRequest>,
 ) -> Result<HttpResponse, ApiError> {
+    let mut request = request.into_inner();
+    let costs = configure_strategy_environment(&state, &mut request).await?;
     let environment_id = request.environment_id()?;
-    let costs = state.db.environment_costs(environment_id).await?;
     let result = backtest::run(&state.questdb, &request, costs).await?;
     let strategy = match request.strategy.as_str() {
         "Night Drift" => "NIGHT_DRIFT",
@@ -108,7 +108,7 @@ async fn save_run(
     };
     let id = state
         .db
-        .save_backtest(strategy, environment_id, &result.body, &result.trades)
+        .save_backtest(strategy, environment_id, &result.body, &result.trades, None)
         .await?;
     if supports_fx(&request.symbol, &request.instrument) {
         match fx::reprice(&state.questdb, &result.trades).await {
@@ -124,6 +124,23 @@ async fn save_run(
         }
     }
     Ok(HttpResponse::Ok().json(json!({"id":id})))
+}
+
+async fn configure_strategy_environment(
+    state: &AppState,
+    request: &mut RunRequest,
+) -> Result<crate::database::EnvironmentCosts, ApiError> {
+    let environment_id = request
+        .environment_id()?
+        .ok_or_else(|| ApiError::BadRequest("missing environment id".into()))?;
+    let name = state
+        .db
+        .environment_name(environment_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound("environment not found".into()))?;
+    request.strategy_environment = StrategyEnvironment::from_name(&name)
+        .ok_or_else(|| ApiError::BadRequest("environment has no registered strategies".into()))?;
+    state.db.environment_costs(Some(environment_id)).await
 }
 
 async fn attach_fx_preview(
@@ -246,7 +263,7 @@ async fn save_combine(
         .unwrap_or("COMBINED");
     let id = state
         .db
-        .save_backtest(strategy, environment, &result.body, &result.trades)
+        .save_backtest(strategy, environment, &result.body, &result.trades, None)
         .await?;
     Ok(HttpResponse::Ok().json(json!({"id":id})))
 }

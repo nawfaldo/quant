@@ -31,7 +31,6 @@ pub async fn serve(state: AppState, bind: (&str, u16)) -> anyhow::Result<()> {
                     .send_wildcard()
                     .allow_any_method()
                     .allow_any_header()
-                    .disable_preflight()
                     .max_age(3600),
             )
             .configure(routes::configure)
