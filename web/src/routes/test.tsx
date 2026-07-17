@@ -258,7 +258,7 @@ export default function TestPage() {
   const selectedEnvironment = environments.find(
     (environment) => String(environment.id) === selectedEnvironmentId,
   );
-  // Paper-sized strategies don't expose Base Lot / Leverage steps.
+  // Internally sized strategies don't expose Base Lot / Leverage steps.
   // generic Sizing step (None / Vol Target) has been removed from the
   // wizard entirely — sizing always defaults to "" (backend treats that as
   // .none, see server/src/bt/run.rs).
@@ -277,10 +277,10 @@ export default function TestPage() {
     : environmentStrategies;
   // Internally sized strategies own their lot/leverage calculation.
   const isNightDrift = selectedStrategy === "Night Drift";
-  const isPaperSized =
+  const isInternallySized =
     isNightDrift ||
     selectedStrategy.startsWith("Noise Momentum");
-  const quantityFilled = isPaperSized || baseLot.trim() !== "";
+  const quantityFilled = isInternallySized || baseLot.trim() !== "";
   const showEnvironment = isCommandFilled;
   const showStrategy = isRunOrTune && isEnvironmentFilled;
   const showSymbol = showStrategy && selectedStrategy !== "";
@@ -1268,7 +1268,7 @@ export default function TestPage() {
                       />
                     </div>
 
-                    {!isPaperSized && (
+                    {!isInternallySized && (
                       <div className="flex flex-col gap-1.5">
                         <span className="text-xs font-semibold tracking-wider text-gray-400 uppercase select-none">
                           {questionLabel("Leverage", leverage.trim() !== "")}
@@ -1291,7 +1291,7 @@ export default function TestPage() {
 
                   </div>
 
-                  {!isPaperSized && (
+                  {!isInternallySized && (
                     <div className="flex flex-col gap-1.5">
                       <span className="text-xs font-semibold tracking-wider text-gray-400 uppercase select-none">
                         {questionLabel("Base Lot", baseLot.trim() !== "")}

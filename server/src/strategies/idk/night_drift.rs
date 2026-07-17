@@ -1,5 +1,22 @@
 use crate::backtest::types::{Action, Bar, Side, Strategy};
 
+// Calibrated on 2018-2024 NQ one-minute bars with a 0.2-point spread.
+// 2025 onward was kept out of the parameter ranking as a holdout period.
+const SIGMA_LOOKBACK: usize = 60;
+const PRE_CLOSE_END: u16 = 960;
+const CLOSE_DELTA_START: u16 = 900;
+const CLOSE_DELTA_END: u16 = 960;
+const MAX_RELATIVE_CLOSE_DELTA: f64 = 0.3;
+const MIN_SELLOFF_SIGMA: f64 = 0.0;
+const MAX_SELLOFF_SIGMA: f64 = 3.0;
+const ENTRY_MINUTE: u16 = 1170;
+const EXIT_MINUTE: u16 = 390;
+const TARGET_SIGMA: f64 = 1.8;
+const STOP_SIGMA: f64 = 1.2;
+const BASE_SIZE: f64 = 0.91;
+const SELLOFF_BOOST: f64 = 1.3;
+const WEEKDAY_MASK: u8 = 0b10111;
+
 #[derive(Default)]
 pub(crate) struct NightDrift {
     current_day: Option<i64>,
@@ -7,6 +24,8 @@ pub(crate) struct NightDrift {
     day_close: f64,
     pre_close: f64,
     pre_ready: bool,
+    close_delta: f64,
+    close_volume: f64,
     previous_close: Option<f64>,
     diffs: std::collections::VecDeque<f64>,
     sigma: Option<f64>,
@@ -16,28 +35,43 @@ pub(crate) struct NightDrift {
     expected_day: i64,
     active_sigma: f64,
     target: Option<f64>,
+    stop: Option<f64>,
     entry_selloff: f64,
 }
 impl NightDrift {
+    fn estimated_delta(bar: Bar) -> f64 {
+        let range = bar.high - bar.low;
+        if range > 0.0 {
+            ((2.0 * bar.close - bar.high - bar.low) / range) * bar.volume
+        } else {
+            0.0
+        }
+    }
+
     fn clear(&mut self) {
         self.armed = false;
         self.in_position = false;
         self.target = None;
+        self.stop = None;
         self.active_sigma = 0.0;
         self.entry_selloff = 0.0;
     }
     fn complete_day(&mut self) {
         if let Some(previous) = self.previous_close {
-            if self.diffs.len() == 14 {
+            if self.diffs.len() == SIGMA_LOOKBACK {
                 self.diffs.pop_front();
             }
             self.diffs.push_back(self.day_close - previous);
         }
         self.previous_close = Some(self.day_close);
-        self.sigma = if self.diffs.len() == 14 {
-            let mean = self.diffs.iter().sum::<f64>() / 14.0;
-            Some((self.diffs.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / 13.0).sqrt())
-                .filter(|v| *v > 0.0)
+        self.sigma = if self.diffs.len() == SIGMA_LOOKBACK {
+            let mean = self.diffs.iter().sum::<f64>() / SIGMA_LOOKBACK as f64;
+            Some(
+                (self.diffs.iter().map(|v| (v - mean).powi(2)).sum::<f64>()
+                    / (SIGMA_LOOKBACK - 1) as f64)
+                    .sqrt(),
+            )
+            .filter(|v| *v > 0.0)
         } else {
             None
         };
@@ -48,7 +82,10 @@ impl NightDrift {
         let minute = (timestamp.rem_euclid(86_400) / 60) as u16;
 
         if self.in_position {
-            if self.target.is_some_and(|target| price >= target) || (305..1170).contains(&minute) {
+            if self.stop.is_some_and(|stop| price <= stop)
+                || self.target.is_some_and(|target| price >= target)
+                || (EXIT_MINUTE..ENTRY_MINUTE).contains(&minute)
+            {
                 self.clear();
                 return Action::Close {
                     price,
@@ -65,13 +102,14 @@ impl NightDrift {
             self.clear();
             return Action::Hold;
         }
-        if day != self.expected_day || minute < 1170 {
+        if day != self.expected_day || minute < ENTRY_MINUTE {
             return Action::Hold;
         }
 
         self.armed = false;
         self.in_position = true;
-        self.target = Some(price + 1.4 * self.active_sigma);
+        self.target = Some(price + TARGET_SIGMA * self.active_sigma);
+        self.stop = Some(price - STOP_SIGMA * self.active_sigma);
         Action::Enter {
             side: Side::Long,
             price,
@@ -90,13 +128,29 @@ impl Strategy for NightDrift {
             self.current_day = Some(day);
             self.day_open = bar.open;
             self.pre_ready = false;
+            self.close_delta = 0.0;
+            self.close_volume = 0.0;
         }
         self.day_close = bar.close;
-        if minute < 1020 {
+        if minute < PRE_CLOSE_END {
             self.pre_close = bar.close;
             self.pre_ready = true;
         }
+        if (CLOSE_DELTA_START..CLOSE_DELTA_END).contains(&minute) {
+            self.close_delta += Self::estimated_delta(bar);
+            self.close_volume += bar.volume;
+        }
         if self.in_position {
+            if let Some(stop) = self.stop
+                && bar.low <= stop
+            {
+                let price = bar.open.min(stop);
+                self.clear();
+                return Action::Close {
+                    price,
+                    fraction: 1.0,
+                };
+            }
             if let Some(target) = self.target
                 && bar.high >= target
             {
@@ -107,7 +161,7 @@ impl Strategy for NightDrift {
                     fraction: 1.0,
                 };
             }
-            if (305..1170).contains(&minute) {
+            if (EXIT_MINUTE..ENTRY_MINUTE).contains(&minute) {
                 let price = bar.open;
                 self.clear();
                 return Action::Close {
@@ -122,13 +176,22 @@ impl Strategy for NightDrift {
             self.clear();
             if let Some(sigma) = self.sigma {
                 let weekday = (day + 3).rem_euclid(7);
-                let allowed = weekday <= 1;
+                let allowed = weekday <= 4 && WEEKDAY_MASK & (1 << weekday) != 0;
                 let selloff = if self.pre_ready {
                     (self.day_open - self.pre_close) / sigma
                 } else {
                     0.0
                 };
-                if allowed && bar.vix >= 15.0 && selloff > 0.05 {
+                let relative_delta = if self.close_volume > 0.0 {
+                    self.close_delta / self.close_volume
+                } else {
+                    0.0
+                };
+                if allowed
+                    && selloff > MIN_SELLOFF_SIGMA
+                    && selloff < MAX_SELLOFF_SIGMA
+                    && relative_delta < MAX_RELATIVE_CLOSE_DELTA
+                {
                     self.armed = true;
                     self.expected_day = day;
                     self.active_sigma = sigma;
@@ -136,12 +199,17 @@ impl Strategy for NightDrift {
                 }
             }
         }
-        if self.armed && day == self.expected_day && minute >= 1170 {
+        if self.armed && day == self.expected_day && minute >= ENTRY_MINUTE {
             self.armed = false;
             self.in_position = true;
-            self.target = Some(bar.open + 1.4 * self.active_sigma);
-            let boost = if self.entry_selloff >= 0.6 { 1.55 } else { 1.0 };
-            let quantity = 1.41 * (equity / 6000.0).max(0.0) * boost;
+            self.target = Some(bar.open + TARGET_SIGMA * self.active_sigma);
+            self.stop = Some(bar.open - STOP_SIGMA * self.active_sigma);
+            let boost = if self.entry_selloff >= 0.6 {
+                SELLOFF_BOOST
+            } else {
+                1.0
+            };
+            let quantity = BASE_SIZE * (equity / 6000.0).max(0.0) * boost;
             return Action::Enter {
                 side: Side::Long,
                 price: bar.open,
@@ -154,5 +222,59 @@ impl Strategy for NightDrift {
         if matches!(action, Action::Enter { .. }) {
             self.clear();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn bar(open: f64, high: f64, low: f64, close: f64, volume: f64) -> Bar {
+        Bar {
+            ts: 0,
+            open,
+            high,
+            low,
+            close,
+            volume,
+            vix: 0.0,
+        }
+    }
+
+    #[test]
+    fn estimated_delta_matches_the_web_volume_delta_formula() {
+        assert_eq!(
+            NightDrift::estimated_delta(bar(5.0, 10.0, 0.0, 10.0, 100.0)),
+            100.0
+        );
+        assert_eq!(
+            NightDrift::estimated_delta(bar(5.0, 10.0, 0.0, 0.0, 100.0)),
+            -100.0
+        );
+        assert_eq!(
+            NightDrift::estimated_delta(bar(5.0, 5.0, 5.0, 5.0, 100.0)),
+            0.0
+        );
+    }
+
+    #[test]
+    fn stop_is_conservatively_checked_before_target() {
+        let mut strategy = NightDrift {
+            in_position: true,
+            target: Some(110.0),
+            stop: Some(90.0),
+            ..NightDrift::default()
+        };
+
+        let action = strategy.update(bar(100.0, 120.0, 80.0, 100.0, 1.0), 1_000.0);
+
+        assert!(matches!(
+            action,
+            Action::Close {
+                price: 90.0,
+                fraction: 1.0
+            }
+        ));
+        assert!(!strategy.in_position);
     }
 }

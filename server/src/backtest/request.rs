@@ -1,10 +1,12 @@
 use super::engine::PositionSizing;
-use crate::{error::ApiError, sizing::VolTargetConfig};
+use crate::{error::ApiError, sizing::VolTargetConfig, strategies::StrategyEnvironment};
 use serde::Deserialize;
 
 #[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RunRequest {
+    #[serde(skip, default)]
+    pub(crate) strategy_environment: StrategyEnvironment,
     pub environment_id: Option<String>,
     pub strategy: String,
     pub symbol: String,

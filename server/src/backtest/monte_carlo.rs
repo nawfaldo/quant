@@ -7,14 +7,49 @@ const RUIN_FRACTION: f64 = 0.5;
 const SEED: u64 = 1;
 
 pub fn run(pnls: &[f64], initial_balance: f64) -> Value {
-    run_with_format(pnls, initial_balance, true)
+    run_with_format(pnls, initial_balance, true, RuinRule::BalanceFraction)
+}
+
+/// Runs the standard simulation but defines ruin as a peak-to-trough dollar
+/// drawdown strictly exceeding `drawdown_limit`.
+pub fn run_with_drawdown_ruin(pnls: &[f64], initial_balance: f64, drawdown_limit: f64) -> Value {
+    run_with_format(
+        pnls,
+        initial_balance,
+        true,
+        RuinRule::DrawdownDollars(drawdown_limit),
+    )
 }
 
 pub(crate) fn run_for_storage(pnls: &[f64], initial_balance: f64) -> Value {
-    run_with_format(pnls, initial_balance, false)
+    run_with_format(pnls, initial_balance, false, RuinRule::BalanceFraction)
 }
 
-fn run_with_format(pnls: &[f64], initial_balance: f64, formatted: bool) -> Value {
+pub(crate) fn run_for_storage_with_drawdown_ruin(
+    pnls: &[f64],
+    initial_balance: f64,
+    drawdown_limit: f64,
+) -> Value {
+    run_with_format(
+        pnls,
+        initial_balance,
+        false,
+        RuinRule::DrawdownDollars(drawdown_limit),
+    )
+}
+
+#[derive(Clone, Copy)]
+enum RuinRule {
+    BalanceFraction,
+    DrawdownDollars(f64),
+}
+
+fn run_with_format(
+    pnls: &[f64],
+    initial_balance: f64,
+    formatted: bool,
+    ruin_rule: RuinRule,
+) -> Value {
     if pnls.is_empty() {
         return Value::Null;
     }
@@ -36,6 +71,7 @@ fn run_with_format(pnls: &[f64], initial_balance: f64, formatted: bool) -> Value
             initial_balance,
             jump_probability,
             &checkpoints,
+            ruin_rule,
             &mut random,
         );
         profitable += usize::from(outcome.final_balance > initial_balance);
@@ -100,6 +136,7 @@ fn simulate(
     initial_balance: f64,
     jump_probability: f64,
     checkpoints: &[u32],
+    ruin_rule: RuinRule,
     random: &mut Xoshiro256,
 ) -> Simulation {
     let mut source_index = random.index(pnls.len());
@@ -118,10 +155,14 @@ fn simulate(
     for applied in 1..=pnls.len() {
         equity += pnls[source_index];
         peak = peak.max(equity);
+        let drawdown_dollars = peak - equity;
         if peak > 0.0 {
-            max_drawdown = max_drawdown.max((peak - equity) / peak * 100.0);
+            max_drawdown = max_drawdown.max(drawdown_dollars / peak * 100.0);
         }
-        ruined |= equity <= initial_balance * RUIN_FRACTION;
+        ruined |= match ruin_rule {
+            RuinRule::BalanceFraction => equity <= initial_balance * RUIN_FRACTION,
+            RuinRule::DrawdownDollars(limit) => drawdown_dollars > limit,
+        };
 
         while checkpoints.get(checkpoint_index) == Some(&(applied as u32)) {
             path.push(equity);
@@ -279,5 +320,12 @@ mod tests {
         let second = run(&[10.0, -20.0, 5.0, -2.0], 100.0);
         assert_eq!(first, second);
         assert_eq!(first["steps"], 5);
+    }
+
+    #[test]
+    fn drawdown_ruin_uses_the_requested_dollar_limit() {
+        let result = run_with_drawdown_ruin(&[-20.0], 100.0, 10.0);
+
+        assert_eq!(result["pRuin"], 1.0);
     }
 }

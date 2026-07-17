@@ -3,6 +3,7 @@ use crate::{
     backtest::{self, RunRequest},
     error::ApiError,
     state::AppState,
+    strategies::StrategyEnvironment,
 };
 use actix_web::{HttpResponse, web};
 use serde::Serialize;
@@ -178,6 +179,7 @@ async fn start(
         return Err(ApiError::BadRequest("invalid grid size".into()));
     }
     let request = RunRequest {
+        strategy_environment: StrategyEnvironment::default(),
         environment_id: Some(text(&body, "environmentId")),
         strategy: text(&body, "strategy"),
         symbol: text(&body, "symbol"),
@@ -193,8 +195,18 @@ async fn start(
         from_date: text(&body, "fromDate"),
         to_date: text(&body, "toDate"),
     };
-    let environment = request.environment_id()?;
-    let costs = state.db.environment_costs(environment).await?;
+    let environment = request
+        .environment_id()?
+        .ok_or_else(|| ApiError::BadRequest("missing environment id".into()))?;
+    let name = state
+        .db
+        .environment_name(environment)
+        .await?
+        .ok_or_else(|| ApiError::NotFound("environment not found".into()))?;
+    let mut request = request;
+    request.strategy_environment = StrategyEnvironment::from_name(&name)
+        .ok_or_else(|| ApiError::BadRequest("environment has no registered strategies".into()))?;
+    let costs = state.db.environment_costs(Some(environment)).await?;
     state
         .tune
         .set(json!({"status":"running","progress":0,"total":total}));

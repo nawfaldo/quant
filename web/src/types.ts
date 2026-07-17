@@ -126,8 +126,8 @@ export interface EnvironmentRule {
 }
 
 export interface EnvironmentStrategy {
-  id: 'night_drift' | 'noise_momentum'
-  name: 'Night Drift' | 'Noise Momentum'
+  id: string
+  name: string
 }
 
 export interface CreateEnvironmentInput {

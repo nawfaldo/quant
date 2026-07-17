@@ -82,8 +82,8 @@ impl NoiseMomentum {
             self.day_open
         };
         (
-            self.day_open.max(reference) * (1.0 + 1.35 * sigma),
-            self.day_open.min(reference) * (1.0 - 1.35 * sigma),
+            self.day_open.max(reference) * (1.0 + 1.20 * sigma),
+            self.day_open.min(reference) * (1.0 - 1.20 * sigma),
         )
     }
 }
@@ -176,7 +176,11 @@ impl Strategy for NoiseMomentum {
             let (upper, lower) = (self.upper_bound, self.lower_bound);
             let long = bar.high >= upper;
             let short = bar.low <= lower;
-            if long != short {
+            // The noon breakout has negative expectancy on both sides, while
+            // late-afternoon shorts are especially vulnerable to reversals.
+            // Keep those unstable buckets out of the signal set.
+            let unstable_time = minute == 720 || (minute == 870 && short);
+            if long != short && !unstable_time {
                 let side = if long { Side::Long } else { Side::Short };
                 let price = if long {
                     bar.open.max(upper)
@@ -190,7 +194,7 @@ impl Strategy for NoiseMomentum {
                     1.0
                 };
                 let margin = if long { 0.25 } else { 0.30 };
-                let quantity = ((equity.max(0.0) / margin) * scale * 1.15 / price / 0.01)
+                let quantity = ((equity.max(0.0) / margin) * scale * 1.0 / price / 0.01)
                     .round()
                     .max(1.0)
                     * 0.01;
@@ -217,5 +221,9 @@ impl Strategy for NoiseMomentum {
         self.heads[slot] = ((head + 1) % 14) as u8;
         self.counts[slot] = self.counts[slot].saturating_add(1).min(14);
         action
+    }
+
+    fn session_end_minute(&self) -> Option<usize> {
+        Some(930)
     }
 }

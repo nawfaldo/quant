@@ -213,6 +213,7 @@ impl Database {
         environment_id: Option<i64>,
         report: &JsonValue,
         trades: &[Trade],
+        monte_carlo_drawdown_ruin_limit: Option<f64>,
     ) -> Result<i64, ApiError> {
         let transaction = self.orm().await?.begin().await?;
         let columns = REPORT_FIELDS.join(",");
@@ -248,7 +249,13 @@ impl Database {
                 .and_then(JsonValue::as_f64)
                 .unwrap_or_default();
             let pnls = trades.iter().map(|trade| trade.pnl).collect::<Vec<_>>();
-            let monte_carlo = crate::backtest::monte_carlo::run_for_storage(&pnls, initial);
+            let monte_carlo = if let Some(limit) = monte_carlo_drawdown_ruin_limit {
+                crate::backtest::monte_carlo::run_for_storage_with_drawdown_ruin(
+                    &pnls, initial, limit,
+                )
+            } else {
+                crate::backtest::monte_carlo::run_for_storage(&pnls, initial)
+            };
             save_monte_carlo(&transaction, id, &monte_carlo).await?;
         }
         transaction.commit().await?;
