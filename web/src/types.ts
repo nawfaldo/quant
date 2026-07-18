@@ -1,6 +1,6 @@
 import type { CandlestickData, UTCTimestamp } from 'lightweight-charts'
 
-export const BACKEND_URL = 'http://localhost:8080'
+export const BACKEND_URL = ''
 
 export type Bar = CandlestickData<UTCTimestamp> & { volume?: number }
 
@@ -93,11 +93,13 @@ export interface MonteCarloData {
 }
 
 export interface Indicators {
+  bookmap_heatmap: boolean
   vwap: boolean
   noise_area: boolean
   volume: boolean
   volume_delta_bubbles: boolean
   session_volume_profile: boolean
+  cvd: boolean
 }
 
 export interface MarchSettings {
@@ -180,16 +182,19 @@ export function makeDefaultPanelConfig(): LayoutPanelConfig {
     from: recentFrom,
     to: today,
     indicators: {
+      bookmap_heatmap: false,
       vwap: false,
       noise_area: false,
       volume: false,
       volume_delta_bubbles: false,
       session_volume_profile: false,
+      cvd: false,
     },
   }
 }
 
 export const TIMEFRAMES = [
+  { label: 'Tick', seconds: 1,    table: 'tick' },
   { label: '1m',  seconds: 60,    table: '1m'  },
   { label: '5m',  seconds: 300,   table: '5m'  },
   { label: '15m', seconds: 900,   table: '15m' },

@@ -1,8 +1,9 @@
 """
-Bookmap Trades Collector Addon (High Performance)
-================================
-Captures real-time trades from all subscribed instruments (ES, NQ, etc.)
-and saves to QuestDB via InfluxDB Line Protocol.
+Bookmap Trades + L2 DOM Collector Addon (High Performance)
+===========================================================
+Captures real-time trades and every market-by-price (L2/DOM) update from all
+subscribed instruments (ES, NQ, etc.) and saves them to QuestDB via InfluxDB
+Line Protocol.
 
 Highly optimized for low latency and high throughput using background flushing.
 
@@ -63,11 +64,15 @@ instruments: Dict[str, Dict[str, Any]] = {}
 volume_delta: Dict[str, Dict[str, float]] = defaultdict(lambda: {"buy_vol": 0.0, "sell_vol": 0.0})
 alias_to_symbol: Dict[str, str] = {}
 event_counts: Dict[str, int] = defaultdict(int)
+depth_sequence: Dict[str, int] = defaultdict(int)
+bids_book: Dict[str, Dict[float, float]] = defaultdict(dict)
+asks_book: Dict[str, Dict[float, float]] = defaultdict(dict)
 
 # Ingestion caches (speeds up on_trade callback by avoiding dict/string operations)
 pips_cache: Dict[str, float] = {}
 size_mult_cache: Dict[str, float] = {}
 table_name_cache: Dict[str, str] = {}
+depth_table_name_cache: Dict[str, str] = {}
 
 # Ingress Sender & Thread Lock
 sender: Optional[Sender] = None
@@ -202,12 +207,12 @@ def start_ws_server() -> None:
             print(f"[WS] server crashed: {e}", flush=True)
     threading.Thread(target=_run, daemon=True, name="ws-server").start()
 
-def ws_push(sym: str, t_ns: int, price: float, size: float, side: str) -> None:
+def ws_push(sym: str, t_ns: int, price: float, size: float, side: str, bid: float, ask: float) -> None:
     """Non-blocking hand-off of one trade to the WS loop. Safe to call from the
     Bookmap on_trade callback thread. No-op when nobody is watching."""
     if ws_loop is None or ws_queue is None or not ws_clients:
         return
-    row = f'{{"sym":"{sym}","ts":{t_ns},"price":{price},"size":{size},"side":"{side}"}}'
+    row = f'{{"sym":"{sym}","ts":{t_ns},"price":{price},"size":{size},"side":"{side}","best_bid":{bid},"best_ask":{ask}}}'
     try:
         ws_loop.call_soon_threadsafe(ws_queue.put_nowait, row)
     except RuntimeError:
@@ -265,13 +270,26 @@ def handle_subscribe_instrument(
         pips_cache[alias] = pips
         size_mult_cache[alias] = size_multiplier
         table_name_cache[alias] = f"bm_{symbol.lower()}_ticks"
+        depth_table_name_cache[alias] = f"bm_{symbol.lower()}_depth"
 
         # Reset volume state
         volume_delta[alias] = {"buy_vol": 0.0, "sell_vol": 0.0}
 
-        # Subscribe only to trades
+        # Keep trades, and subscribe to every market-by-price L2/DOM update.
+        # A depth subscription begins with Bookmap's current book snapshot,
+        # followed by individual price-level changes. A size of zero removes
+        # the corresponding bid/ask level from the reconstructed DOM.
         bm.subscribe_to_trades(addon, alias, 2)
         print(f"[COLLECTOR] >> Subscribed to TRADES for {alias}", flush=True)
+        if supported_features.get("depth", False):
+            bm.subscribe_to_depth(addon, alias, 1)
+            print(f"[COLLECTOR] >> Subscribed to L2 DOM for {alias}", flush=True)
+        else:
+            print(
+                f"[COLLECTOR] >> L2 DOM unavailable for {alias} "
+                "(the connected Bookmap feed does not advertise depth)",
+                flush=True,
+            )
 
     except Exception as e:
         print(f"[COLLECTOR] ERROR in subscribe: {e}", flush=True)
@@ -282,6 +300,7 @@ def handle_unsubscribe_instrument(addon: Any, alias: str) -> None:
     try:
         print(f"[COLLECTOR] Unsubscribing: {alias}", flush=True)
         print(f"[COLLECTOR] Total trade events received: {event_counts.get(f'{alias}_trades', 0)}", flush=True)
+        print(f"[COLLECTOR] Total L2 DOM events received: {event_counts.get(f'{alias}_depth', 0)}", flush=True)
         
         # Flush pending buffers
         with sender_lock:
@@ -297,6 +316,8 @@ def handle_unsubscribe_instrument(addon: Any, alias: str) -> None:
         pips_cache.pop(alias, None)
         size_mult_cache.pop(alias, None)
         table_name_cache.pop(alias, None)
+        depth_table_name_cache.pop(alias, None)
+        depth_sequence.pop(alias, None)
     except Exception as e:
         print(f"[COLLECTOR] ERROR in unsubscribe: {e}", flush=True)
 
@@ -334,8 +355,12 @@ def on_trade(
         
         t_ns = get_ny_timestamp_ns()
 
+        # Resolve BBO for trade record
+        best_bid = max(bids_book[alias].keys()) if bids_book[alias] else price
+        best_ask = min(asks_book[alias].keys()) if asks_book[alias] else price
+
         # Live path first: push to browsers immediately (lowest latency, ~1-10ms).
-        ws_push(alias_to_symbol.get(alias, ""), t_ns, price, size, side)
+        ws_push(alias_to_symbol.get(alias, ""), t_ns, price, size, side, best_bid, best_ask)
 
         # Persistence path: buffered ILP write to QuestDB (historical backfill).
         send_row_safe(
@@ -350,6 +375,8 @@ def on_trade(
                 "buy_vol":       v_delta["buy_vol"],
                 "sell_vol":      v_delta["sell_vol"],
                 "delta":         delta,
+                "best_bid":      best_bid,
+                "best_ask":      best_ask,
             },
             at=TimestampNanos(t_ns),
         )
@@ -359,15 +386,73 @@ def on_trade(
         traceback.print_exc()
 
 
+def on_depth(
+    addon: Any, alias: str, is_bid: bool, price_level: int, size_level: int
+) -> None:
+    """Persist one aggregated market-by-price L2/DOM update.
+
+    Bookmap sends every currently visible DOM level immediately after a depth
+    subscription (the initial snapshot), then calls this handler for each
+    change.  This is intentionally an append-only event log: replaying it in
+    timestamp/sequence order recreates the DOM exactly as received.  A
+    ``size`` of zero means the level was removed.
+    """
+    try:
+        pips = pips_cache.get(alias, 1.0)
+        size_multiplier = size_mult_cache.get(alias, 0.0)
+        price = int(price_level) * pips
+        size = size_level / size_multiplier if size_multiplier != 0.0 else float(size_level)
+        side = "BID" if is_bid else "ASK"
+
+        # Maintain bids/asks books locally
+        book = bids_book[alias] if is_bid else asks_book[alias]
+        if size == 0.0:
+            book.pop(price, None)
+        else:
+            book[price] = size
+
+        event_counts[f"{alias}_depth"] += 1
+        count = event_counts[f"{alias}_depth"]
+        depth_sequence[alias] += 1
+        sequence = depth_sequence[alias]
+
+        if count <= 5 or count % 10000 == 0:
+            print(
+                f"[COLLECTOR] L2 #{count} | {alias} | {side} | "
+                f"price={price} size={size} seq={sequence}",
+                flush=True,
+            )
+
+        send_row_safe(
+            depth_table_name_cache[alias],
+            symbols={"side": side},
+            columns={
+                # Normalized values are convenient for SQL research.
+                "price": price,
+                "size": size,
+                # Preserve the exact Bookmap values for lossless replay.
+                "price_level": int(price_level),
+                "size_level": int(size_level),
+                # Disambiguates receive order if two events share a timestamp.
+                "sequence": sequence,
+            },
+            at=TimestampNanos(get_ny_timestamp_ns()),
+        )
+
+    except Exception as e:
+        print(f"[COLLECTOR] ERROR in on_depth: {e}", flush=True)
+        traceback.print_exc()
+
+
 # ============================================================================
 # MAIN
 # ============================================================================
 
 if __name__ == "__main__":
     print("=" * 60, flush=True)
-    print("[COLLECTOR] Bookmap Trades Collector - Optimized (QuestDB)", flush=True)
+    print("[COLLECTOR] Bookmap Trades + L2 DOM Collector - Optimized (QuestDB)", flush=True)
     print(f"[COLLECTOR] QuestDB: {QUESTDB_CONF}", flush=True)
-    print(f"[COLLECTOR] Mode: ASYNC REAL-TIME TRADES", flush=True)
+    print(f"[COLLECTOR] Mode: ASYNC REAL-TIME TRADES + L2 DOM", flush=True)
     print("=" * 60, flush=True)
 
     # Warm up the sender connection
@@ -383,10 +468,12 @@ if __name__ == "__main__":
 
     addon = bm.create_addon()
 
-    # Register trades handler only
+    # Register handlers before subscribing, otherwise Bookmap can emit data
+    # before this addon is ready to receive it.
     bm.add_trades_handler(addon, on_trade)
+    bm.add_depth_handler(addon, on_depth)
 
-    print("[COLLECTOR] Handlers registered: TRADES", flush=True)
+    print("[COLLECTOR] Handlers registered: TRADES, L2 DOM", flush=True)
     print("[COLLECTOR] Waiting for Bookmap to subscribe instruments...", flush=True)
     print("[COLLECTOR] Make sure addon is ENABLED on your ES/NQ charts!", flush=True)
 
