@@ -516,6 +516,8 @@ export function MarchWorkspace() {
         volume: stored.indicators.volume === true,
         volumeDeltaBubbles: stored.indicators.volume_delta_bubbles === true,
         sessionVolumeProfile: stored.indicators.session_volume_profile === true,
+        bookmapHeatmap: stored.indicators.bookmap_heatmap === true,
+        cvd: stored.indicators.cvd === true,
       },
       setSymbol: (s: "nq" | "es") => updateMarchPanel(marchLayout, i, { symbol: s }),
       setTf: (t: TF) => updateMarchPanel(marchLayout, i, { tf: t.table }),
@@ -938,11 +940,13 @@ function StrategyModal({ open, onClose, accountId }: {
 }
 
 const INDICATOR_ROWS: { key: keyof Indicators; label: string }[] = [
+  { key: "bookmap_heatmap", label: "Bookmap Heatmap" },
   { key: "session_volume_profile", label: "Session Volume Profile" },
   { key: "volume", label: "Volume Bars" },
   { key: "volume_delta_bubbles", label: "Volume Delta Bubbles" },
   { key: "vwap", label: "VWAP" },
   { key: "noise_area", label: "Noise Area" },
+  { key: "cvd", label: "Cumulative Volume Delta (CVD)" },
 ];
 
 function IndicatorsModal({ open, onClose, indicators, onToggle }: {
@@ -952,7 +956,7 @@ function IndicatorsModal({ open, onClose, indicators, onToggle }: {
   onToggle: (key: keyof Indicators) => void;
 }) {
   return (
-    <ModalShell open={open} onClose={onClose} title="Indicators" className="h-[300px]">
+    <ModalShell open={open} onClose={onClose} title="Indicators" className="h-[350px]">
       <div className="px-2 py-2">
         {INDICATOR_ROWS.map(({ key, label }) => (
           <button

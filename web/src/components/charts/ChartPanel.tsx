@@ -17,7 +17,10 @@ import {
   NoiseAreaPrimitive,
   SessionVolumeProfilePrimitive,
   VolumeDeltaBubblesPrimitive,
+  BookmapHeatmapPrimitive,
+  type BookmapHeatmapPoint,
   type VolumeDeltaBubble,
+  TickBubblesPrimitive,
 } from "../../lib/primitives";
 import { useQuery } from "@tanstack/react-query";
 import { useApp } from "../../context/AppContext";
@@ -38,6 +41,8 @@ export interface PanelConfig {
   volume: boolean;
   volumeDeltaBubbles: boolean;
   sessionVolumeProfile: boolean;
+  bookmapHeatmap: boolean;
+  cvd: boolean;
 }
 
 interface ChartPanelProps {
@@ -69,18 +74,31 @@ interface Tick {
   size: number;
   side: "BUY" | "SELL";
   sym?: string; // present on WS pushes (addon broadcasts all instruments)
+  best_bid?: number;
+  best_ask?: number;
+}
+
+async function fetchMarchTicks(
+  symbol: string,
+  since?: number,
+): Promise<Tick[]> {
+  const params = new URLSearchParams({ symbol });
+  if (since !== undefined) params.set("since", String(since));
+  const res = await fetch(`${BACKEND_URL}/api/march/ticks?${params.toString()}`);
+  if (!res.ok) throw new Error(`Backend error: ${res.status}`);
+  return res.json();
 }
 
 // The Bookmap addon's live-push WebSocket server (runs on the Windows host,
 // same machine as the browser). Bypasses QuestDB + the server for sub-100ms ticks.
-const MARCH_WS_PORT = 8765;
+// const MARCH_WS_PORT = 8765;
 
 // RTH open, in minutes since ET midnight. The 24h VWAP re-anchors here (and at
 // midnight) — see server/src/server/cache.rs for the matching server-side
 // computation used by the main web chart.
-const RTH_OPEN_MIN  = 9 * 60 + 30; // 09:30 ET
-const RTH_CLOSE_MIN = 16 * 60;     // 16:00 ET
-const SESSION_PROFILE_ROW_SIZE = 15.0;
+const RTH_OPEN_MIN = 9 * 60 + 30; // 09:30 ET
+const RTH_CLOSE_MIN = 16 * 60; // 16:00 ET
+const SESSION_PROFILE_ROW_SIZE = 5.0;
 
 async function fetchMarchCandles(
   symbol: string,
@@ -135,6 +153,62 @@ async function fetchMarchVolumeDelta(
   );
   if (!res.ok) throw new Error(`Backend error: ${res.status}`);
   return res.json();
+}
+
+interface VolumeProfileDeltaBin {
+  day: number;
+  price_bin: number;
+  delta: number;
+}
+
+async function fetchMarchVolumeProfileDelta(
+  symbol: string,
+  tickSize: number,
+  from?: string,
+  to?: string,
+): Promise<VolumeProfileDeltaBin[]> {
+  const params = new URLSearchParams({ symbol, tick_size: tickSize.toString() });
+  if (from) params.set("from", from);
+  if (to) params.set("to", to);
+  const res = await fetch(
+    `${BACKEND_URL}/api/march/indicators/volume-profile-delta?${params.toString()}`,
+  );
+  if (!res.ok) throw new Error(`Backend error: ${res.status}`);
+  return res.json();
+}
+
+async function fetchBookmapHeatmap(
+  symbol: string,
+  tf: TF,
+  from?: string,
+  to?: string,
+  since?: number,
+  signal?: AbortSignal,
+): Promise<BookmapHeatmapPoint[]> {
+  const params = new URLSearchParams({ symbol, tf: tf.table });
+  if (from) params.set("from", from);
+  if (to) params.set("to", to);
+  if (since !== undefined) params.set("since", String(since));
+  const res = await fetch(
+    `${BACKEND_URL}/api/march/indicators/bookmap-heatmap/bin?${params.toString()}`,
+    { signal },
+  );
+  if (!res.ok) throw new Error(`Backend error: ${res.status}`);
+  const view = new DataView(await res.arrayBuffer());
+  if (view.byteLength < 8 || view.getUint32(0, true) !== 0x54414548)
+    throw new Error("Bad heatmap response magic");
+  const count = view.getUint32(4, true);
+  if (view.byteLength !== 8 + count * 12)
+    throw new Error("Truncated heatmap response");
+  const points = new Array<BookmapHeatmapPoint>(count);
+  for (let i = 0, off = 8; i < count; i++, off += 12) {
+    points[i] = {
+      time: view.getUint32(off, true),
+      price: view.getFloat32(off + 4, true),
+      size: view.getFloat32(off + 8, true),
+    };
+  }
+  return points;
 }
 
 // fx_nq overlay candles: same binary format as the march candles, aggregated
@@ -216,7 +290,11 @@ function fillGaps(
     const curr = candles[i];
     const gap = (curr.time as number) - (prev.time as number);
     if (gap > tfSecs && gap <= maxGapToFill) {
-      for (let t = (prev.time as number) + tfSecs; t < (curr.time as number); t += tfSecs) {
+      for (
+        let t = (prev.time as number) + tfSecs;
+        t < (curr.time as number);
+        t += tfSecs
+      ) {
         out.push({ time: t as UTCTimestamp });
       }
     }
@@ -235,9 +313,21 @@ export default function ChartPanel({
   onOpenBacktests,
 }: ChartPanelProps) {
   const {
-    symbol, tf, mode, fromDate, toDate,
-    vwap, noiseArea, volume, volumeDeltaBubbles, sessionVolumeProfile,
+    symbol,
+    tf,
+    mode,
+    fromDate,
+    toDate,
+    vwap,
+    noiseArea,
+    volume,
+    volumeDeltaBubbles,
+    sessionVolumeProfile,
+    bookmapHeatmap,
+    cvd,
   } = config;
+
+  const isTickMode = tf.table === 'tick';
 
   const containerRef = useRef<HTMLDivElement>(null);
   const { visibleTradeStrategies, allTrades, allFxTrades } = useApp();
@@ -256,6 +346,10 @@ export default function ChartPanel({
   const chartRef = useRef<any>(null);
   const vwapSeriesRef = useRef<any>(null);
   const volumeSeriesRef = useRef<any>(null);
+  const bidSeriesRef = useRef<any>(null);
+  const askSeriesRef = useRef<any>(null);
+  const cvdSeriesRef = useRef<any>(null);
+  const cvdPointsRef = useRef<{ time: UTCTimestamp; value: number }[]>([]);
   const candleHistoryRef = useRef<Bar[]>([]);
   const historicalDeltaRef = useRef(new Map<number, number>());
   const liveDeltaRef = useRef(new Map<number, number>());
@@ -270,8 +364,12 @@ export default function ChartPanel({
   const tradeLinesPrimitive = useRef(new TradeLinesPrimitive());
   const fxTradeLinesPrimitive = useRef(new TradeLinesPrimitive());
   const noiseAreaPlugin = useRef(new NoiseAreaPrimitive());
-  const sessionVolumeProfilePlugin = useRef(new SessionVolumeProfilePrimitive());
+  const sessionVolumeProfilePlugin = useRef(
+    new SessionVolumeProfilePrimitive(),
+  );
   const volumeDeltaBubblesPlugin = useRef(new VolumeDeltaBubblesPrimitive());
+  const bookmapHeatmapPlugin = useRef(new BookmapHeatmapPrimitive());
+  const tickBubblesPlugin = useRef(new TickBubblesPrimitive());
 
   const { data: positions } = useQuery({
     queryKey: ["activePositions"],
@@ -303,8 +401,8 @@ export default function ChartPanel({
         background: { type: ColorType.Solid, color: "#0F0F0F" },
         textColor: "#d1d5db",
         panes: {
-          separatorColor: "#0F0F0F",
-          separatorHoverColor: "#0F0F0F",
+          separatorColor: "#212124",
+          separatorHoverColor: "#212124",
         },
       },
       grid: {
@@ -334,40 +432,79 @@ export default function ChartPanel({
       rightPriceScale: { borderColor: "#212124" },
     });
 
-    const series = chart.addSeries(CandlestickSeries, {
-      upColor: "#FFFFFF",
-      downColor: "#000000",
-      borderUpColor: "#FFFFFF",
-      borderDownColor: "#FFFFFF",
-      wickUpColor: "#FFFFFF",
-      wickDownColor: "#FFFFFF",
-      // The right-edge latest-price label is meaningful only while the chart
-      // ends at Now. Historical date ranges keep the price scale unlabelled.
-      lastValueVisible: mode === "latest",
-      priceLineVisible: mode === "latest",
-    });
+    // In tick mode, use two LineSeries (green for Bid, red for Ask); otherwise CandlestickSeries.
+    const isTickModeLocal = tf.table === 'tick';
+    const series = isTickModeLocal
+      ? chart.addSeries(LineSeries, {
+          color: "#00c864", // Green for Bid
+          lineWidth: 2,
+          priceLineColor: "#00c864",
+          lastValueVisible: mode === "latest",
+          priceLineVisible: mode === "latest",
+          crosshairMarkerVisible: false,
+        })
+      : chart.addSeries(CandlestickSeries, {
+          upColor: "#FFFFFF",
+          downColor: "#000000",
+          borderUpColor: "#FFFFFF",
+          borderDownColor: "#FFFFFF",
+          wickUpColor: "#FFFFFF",
+          wickDownColor: "#FFFFFF",
+          priceLineColor: "#FFFFFF",
+          // The right-edge latest-price label is meaningful only while the chart
+          // ends at Now. Historical date ranges keep the price scale unlabelled.
+          lastValueVisible: mode === "latest",
+          priceLineVisible: mode === "latest",
+        });
     setChartSeries(series);
     chartRef.current = chart;
-    series.attachPrimitive(activePositionsPlugin.current);
-    series.attachPrimitive(historicalTradesPlugin.current);
-    series.attachPrimitive(tradeLinesPrimitive.current);
-    series.attachPrimitive(noiseAreaPlugin.current);
-    series.attachPrimitive(sessionVolumeProfilePlugin.current);
-    series.attachPrimitive(volumeDeltaBubblesPlugin.current);
-    sessionVolumeProfilePlugin.current.setData([]);
-    volumeDeltaBubblesPlugin.current.setData([]);
-    historicalDeltaRef.current.clear();
-    liveDeltaRef.current.clear();
+    bookmapHeatmapPlugin.current.setTimeStep(isTickModeLocal ? 60 : tf.seconds);
+    bookmapHeatmapPlugin.current.setSymbol(symbol);
+    series.attachPrimitive(bookmapHeatmapPlugin.current);
+    if (isTickModeLocal) {
+      bidSeriesRef.current = series;
+      askSeriesRef.current = chart.addSeries(LineSeries, {
+        color: "#dc3232", // Red for Ask
+        lineWidth: 2,
+        priceLineColor: "#dc3232",
+        lastValueVisible: mode === "latest",
+        priceLineVisible: mode === "latest",
+        crosshairMarkerVisible: false,
+      });
+      // Tick mode: only heatmap + tick bubbles + active positions
+      tickBubblesPlugin.current.setPriceStep(symbol === 'es' ? 0.25 : 0.25);
+      tickBubblesPlugin.current.clear();
+      series.attachPrimitive(tickBubblesPlugin.current);
+      series.attachPrimitive(activePositionsPlugin.current);
+    } else {
+      bidSeriesRef.current = null;
+      askSeriesRef.current = null;
+      // Normal mode: attach all primitives
+      series.attachPrimitive(activePositionsPlugin.current);
+      series.attachPrimitive(historicalTradesPlugin.current);
+      series.attachPrimitive(tradeLinesPrimitive.current);
+      series.attachPrimitive(noiseAreaPlugin.current);
+      series.attachPrimitive(sessionVolumeProfilePlugin.current);
+      series.attachPrimitive(volumeDeltaBubblesPlugin.current);
+      sessionVolumeProfilePlugin.current.setData([]);
+      volumeDeltaBubblesPlugin.current.setData([]);
+      historicalDeltaRef.current.clear();
+      liveDeltaRef.current.clear();
+    }
 
-    const vwapSeries = chart.addSeries(LineSeries, {
-      color: "#60a5fa",
-      lineWidth: 1,
-      priceLineVisible: false,
-      lastValueVisible: false,
-      crosshairMarkerVisible: false,
-      visible: vwap,
-    });
+    const vwapSeries = isTickModeLocal
+      ? null
+      : chart.addSeries(LineSeries, {
+          color: "#00aaff",
+          lineWidth: 1,
+          priceLineVisible: false,
+          lastValueVisible: false,
+          crosshairMarkerVisible: false,
+          visible: vwap,
+        });
     vwapSeriesRef.current = vwapSeries;
+
+
 
     // The fx_nq overlay candles live in a SECOND pane (created on demand by the
     // toggle effect below), so NQ keeps its own full pane + price axis on top and
@@ -393,14 +530,20 @@ export default function ChartPanel({
     let formingVol: number = 0;
     let profileFrameId: number | null = null;
 
+    let cvdAccumulator: number = 0;
+    let curCvdDay: number = -1;
+    let cvdAnchored: boolean = false;
+
     function scheduleSessionVolumeProfileUpdate() {
-      if (!sessionVolumeProfileEnabledRef.current || profileFrameId !== null) return;
+      if (!sessionVolumeProfileEnabledRef.current || profileFrameId !== null)
+        return;
       profileFrameId = window.requestAnimationFrame(() => {
         profileFrameId = null;
         sessionVolumeProfilePlugin.current.setCandles(
           candleHistoryRef.current,
-          SESSION_PROFILE_ROW_SIZE,
+          symbol === "es" ? 2.0 : SESSION_PROFILE_ROW_SIZE,
           tf.seconds,
+          symbol,
         );
       });
     }
@@ -408,6 +551,64 @@ export default function ChartPanel({
     // Apply one batch of ticks to the chart. Never throws — bad ticks are
     // skipped individually so a single rejected bar can't stop the stream.
     function applyTicks(ticks: Tick[]) {
+      // Tick mode: route ticks to the line series + tick bubbles primitive.
+      if (isTickModeLocal) {
+        for (const tick of ticks) {
+          if (!Number.isFinite(tick.ts) || !Number.isFinite(tick.price)) continue;
+          if (lastTickNanos === null || tick.ts > lastTickNanos)
+            lastTickNanos = tick.ts;
+          const tsSecs = Math.floor(tick.ts / 1_000_000_000);
+          const size = Number.isFinite(tick.size) ? tick.size : 0;
+          const side = tick.side?.toUpperCase();
+          const isBuy = side === "BUY";
+          const bidPrice = tick.best_bid ?? tick.price;
+          const askPrice = tick.best_ask ?? tick.price;
+
+          const barDay = Math.floor(tsSecs / 86400);
+          const barMin = Math.floor((tsSecs % 86400) / 60);
+          let cvdReset = false;
+          if (barDay !== curCvdDay) {
+            curCvdDay = barDay;
+            cvdAnchored = false;
+            if (barMin >= RTH_OPEN_MIN) {
+              cvdAnchored = true;
+              cvdReset = true;
+            }
+          }
+          if (!cvdAnchored && barMin >= RTH_OPEN_MIN) {
+            cvdAnchored = true;
+            cvdReset = true;
+          }
+
+          if (cvdReset) {
+            cvdAccumulator = 0;
+          }
+
+          const signedSize = side === "BUY" ? size : side === "SELL" ? -size : 0;
+          cvdAccumulator += signedSize;
+
+          const newPoint = { time: tsSecs as UTCTimestamp, value: cvdAccumulator };
+          const points = cvdPointsRef.current;
+          if (points.length > 0 && points[points.length - 1].time === tsSecs) {
+            points[points.length - 1] = newPoint;
+          } else {
+            points.push(newPoint);
+          }
+
+          try {
+            bidSeriesRef.current?.update({ time: tsSecs as UTCTimestamp, value: bidPrice });
+            askSeriesRef.current?.update({ time: tsSecs as UTCTimestamp, value: askPrice });
+            cvdSeriesRef.current?.update(newPoint);
+            if (size > 0) {
+              tickBubblesPlugin.current.addTick(tsSecs, tick.price, size, isBuy);
+            }
+          } catch {
+            // lightweight-charts rejected this point; skip it.
+          }
+        }
+        return;
+      }
+
       const tfSecs = tf.seconds;
 
       for (const tick of ticks) {
@@ -423,13 +624,44 @@ export default function ChartPanel({
 
         try {
           const side = tick.side?.toUpperCase();
-          const signedSize = side === "BUY" ? size : side === "SELL" ? -size : 0;
+          const signedSize =
+            side === "BUY" ? size : side === "SELL" ? -size : 0;
           if (signedSize !== 0) {
             liveDeltaRef.current.set(
               candleStartSecs,
               (liveDeltaRef.current.get(candleStartSecs) ?? 0) + signedSize,
             );
+            if (sessionVolumeProfileEnabledRef.current && tick.side) {
+              sessionVolumeProfilePlugin.current.addLiveTick(
+                tsSecs,
+                tick.price,
+                size,
+                tick.side,
+              );
+            }
           }
+
+          // Update CVD value (resets at RTH Open 9:30)
+          const barDay = Math.floor(candleStartSecs / 86400);
+          const barMin = Math.floor((candleStartSecs % 86400) / 60);
+          let cvdReset = false;
+          if (barDay !== curCvdDay) {
+            curCvdDay = barDay;
+            cvdAnchored = false;
+            if (barMin >= RTH_OPEN_MIN) {
+              cvdAnchored = true;
+              cvdReset = true;
+            }
+          }
+          if (!cvdAnchored && barMin >= RTH_OPEN_MIN) {
+            cvdAnchored = true;
+            cvdReset = true;
+          }
+
+          if (cvdReset) {
+            cvdAccumulator = 0;
+          }
+          cvdAccumulator += signedSize;
 
           if (lastCandle && candleStartSecs === lastTime) {
             lastCandle.close = tick.price;
@@ -491,9 +723,8 @@ export default function ChartPanel({
             volumeSeriesRef.current.update({
               time: lastCandle.time,
               value: formingVol,
-              color: lastCandle.close >= lastCandle.open
-                ? "#089981"
-                : "#F23645",
+              color:
+                lastCandle.close >= lastCandle.open ? "#089981" : "#F23645",
             });
           }
           if (lastCandle) {
@@ -508,7 +739,8 @@ export default function ChartPanel({
             scheduleSessionVolumeProfileUpdate();
 
             if (volumeDeltaBubblesEnabledRef.current) {
-              const delta = (historicalDeltaRef.current.get(candleStartSecs) ?? 0) +
+              const delta =
+                (historicalDeltaRef.current.get(candleStartSecs) ?? 0) +
                 (liveDeltaRef.current.get(candleStartSecs) ?? 0);
               volumeDeltaBubblesPlugin.current.setCandle(
                 candleStartSecs,
@@ -521,9 +753,18 @@ export default function ChartPanel({
             }
           }
 
+          const newPoint = { time: candleStartSecs as UTCTimestamp, value: cvdAccumulator };
+          const points = cvdPointsRef.current;
+          if (points.length > 0 && points[points.length - 1].time === candleStartSecs) {
+            points[points.length - 1] = newPoint;
+          } else {
+            points.push(newPoint);
+          }
+          cvdSeriesRef.current?.update(newPoint);
+
           // VWAP for the forming bar (24h) = completed Σ(typical×vol) in this
           // session plus the forming bar folded in, over the matching volume.
-          if (lastCandle) {
+          if (lastCandle && vwapSeries) {
             const curTypical =
               (lastCandle.high + lastCandle.low + lastCandle.close) / 3;
             const denom = sessionVol + formingVol;
@@ -540,7 +781,8 @@ export default function ChartPanel({
       }
     }
 
-    const WS_URL = `ws://${window.location.hostname}:${MARCH_WS_PORT}`;
+    const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+    const WS_URL = `${wsProtocol}//${window.location.host}/bookmap`;
 
     // Live stream over WebSocket. Fail-safe: a dropped connection (Bookmap
     // closed, addon restart) never errors — it flips to idle and auto-reconnects.
@@ -598,6 +840,114 @@ export default function ChartPanel({
 
       const isLatest = mode === "latest";
 
+      // Tick mode: fetch historical ticks from /api/march/ticks and display them as bid/ask lines + bubbles
+      if (isTickModeLocal) {
+        try {
+          const sinceNanos = new Date(fromDate + "T00:00:00Z").getTime() * 1_000_000;
+          const ticks = await fetchMarchTicks(symbol, sinceNanos);
+          if (!active) return;
+
+          // Aggregate historical ticks by second for lightweight-charts LineSeries (must be unique timestamps)
+          const bidPoints: { time: UTCTimestamp; value: number }[] = [];
+          const askPoints: { time: UTCTimestamp; value: number }[] = [];
+          const cvdPoints: { time: UTCTimestamp; value: number }[] = [];
+          const bubblePoints: any[] = [];
+
+          // Sort ticks chronologically
+          ticks.sort((a, b) => a.ts - b.ts);
+
+          let localCvdAcc = 0;
+          let localCvdDay = -1;
+          let localCvdAnchored = false;
+
+          // Build unique arrays of bid/ask/cvd points
+          for (const tick of ticks) {
+            const tsSecs = Math.floor(tick.ts / 1_000_000_000);
+            const bidPrice = tick.best_bid ?? tick.price;
+            const askPrice = tick.best_ask ?? tick.price;
+
+            // CVD accumulation
+            const barDay = Math.floor(tsSecs / 86400);
+            const barMin = Math.floor((tsSecs % 86400) / 60);
+            let cvdReset = false;
+            if (barDay !== localCvdDay) {
+              localCvdDay = barDay;
+              localCvdAnchored = false;
+              if (barMin >= RTH_OPEN_MIN) {
+                localCvdAnchored = true;
+                cvdReset = true;
+              }
+            }
+            if (!localCvdAnchored && barMin >= RTH_OPEN_MIN) {
+              localCvdAnchored = true;
+              cvdReset = true;
+            }
+
+            if (cvdReset) {
+              localCvdAcc = 0;
+            }
+
+            const signedSize = tick.side?.toUpperCase() === "BUY" ? tick.size : tick.side?.toUpperCase() === "SELL" ? -tick.size : 0;
+            localCvdAcc += signedSize;
+
+            // To ensure unique ascending order in setData, only add/overwrite the last one for this second
+            const indexInBid = bidPoints.findIndex(p => p.time === tsSecs);
+            if (indexInBid >= 0) {
+              bidPoints[indexInBid].value = bidPrice;
+              askPoints[indexInBid].value = askPrice;
+              cvdPoints[indexInBid].value = localCvdAcc;
+            } else {
+              bidPoints.push({ time: tsSecs as UTCTimestamp, value: bidPrice });
+              askPoints.push({ time: tsSecs as UTCTimestamp, value: askPrice });
+              cvdPoints.push({ time: tsSecs as UTCTimestamp, value: localCvdAcc });
+            }
+
+            // Store raw tick for bubbles
+            if (tick.size > 0) {
+              bubblePoints.push({
+                time: tick.ts / 1_000_000_000,
+                price: tick.price,
+                size: tick.size,
+                isBuy: tick.side?.toUpperCase() === "BUY",
+              });
+            }
+          }
+
+          // Sort arrays to be absolutely sure they are ascending
+          bidPoints.sort((a, b) => (a.time as number) - (b.time as number));
+          askPoints.sort((a, b) => (a.time as number) - (b.time as number));
+          cvdPoints.sort((a, b) => (a.time as number) - (b.time as number));
+
+          bidSeriesRef.current?.setData(bidPoints);
+          askSeriesRef.current?.setData(askPoints);
+          cvdPointsRef.current = cvdPoints;
+          cvdSeriesRef.current?.setData(cvdPoints);
+          tickBubblesPlugin.current.setData(bubblePoints);
+
+          if (bidPoints.length > 0 && chart) {
+            chart.timeScale().fitContent();
+          }
+
+          // Seed streaming state
+          if (ticks.length > 0) {
+            lastTickNanos = ticks[ticks.length - 1].ts;
+            const lastTs = Math.floor(ticks[ticks.length - 1].ts / 1_000_000_000);
+            curCvdDay = Math.floor(lastTs / 86400);
+            cvdAnchored = Math.floor((lastTs % 86400) / 60) >= RTH_OPEN_MIN;
+            cvdAccumulator = localCvdAcc;
+          }
+        } catch (err) {
+          console.warn("Failed to load historical ticks:", err);
+        }
+
+        setLoading(false);
+        setStreamStatus("idle");
+        if (isLatest) {
+          connectWs();
+        }
+        return;
+      }
+
       // 1. Load historical candles from nq_. Failure is non-fatal: start empty
       //    and (in latest mode) let the live stream fill it in.
       let candles: Bar[] = [];
@@ -613,13 +963,13 @@ export default function ChartPanel({
       setCandlesRevision((revision) => revision + 1);
 
       if (volumeSeriesRef.current) {
-        volumeSeriesRef.current.setData(candles.map((c) => ({
-          time: c.time,
-          value: c.volume ?? 0,
-          color: c.close >= c.open
-            ? "#089981"
-            : "#F23645",
-        })));
+        volumeSeriesRef.current.setData(
+          candles.map((c) => ({
+            time: c.time,
+            value: c.volume ?? 0,
+            color: c.close >= c.open ? "#089981" : "#F23645",
+          })),
+        );
       }
 
       try {
@@ -708,11 +1058,70 @@ export default function ChartPanel({
         formingVol = lastVol;
       }
 
-      try {
-        vwapSeries.setData(vwapPoints);
-      } catch (err) {
-        console.error("Failed to render historical VWAP:", err);
+      if (vwapSeries) {
+        try {
+          vwapSeries.setData(vwapPoints);
+        } catch (err) {
+          console.error("Failed to render historical VWAP:", err);
+        }
       }
+
+      // 3. Load historical volume delta and calculate CVD for candles
+      let deltas: VolumeDeltaPoint[] = [];
+      try {
+        deltas = isLatest
+          ? await fetchMarchVolumeDelta(symbol, tf, fromDate)
+          : await fetchMarchVolumeDelta(symbol, tf, fromDate, toDate);
+      } catch (err) {
+        console.warn("March historical volume delta load failed:", err);
+      }
+
+      let localCvdAcc = 0;
+      let localCvdDay = -1;
+      let localCvdAnchored = false;
+      const cvdPoints: { time: UTCTimestamp; value: number }[] = [];
+
+      deltas.sort((a, b) => a.time - b.time);
+
+      for (const d of deltas) {
+        const tsSecs = d.time;
+        const barDay = Math.floor(tsSecs / 86400);
+        const barMin = Math.floor((tsSecs % 86400) / 60);
+
+        let cvdReset = false;
+        if (barDay !== localCvdDay) {
+          localCvdDay = barDay;
+          localCvdAnchored = false;
+          if (barMin >= RTH_OPEN_MIN) {
+            localCvdAnchored = true;
+            cvdReset = true;
+          }
+        }
+        if (!localCvdAnchored && barMin >= RTH_OPEN_MIN) {
+          localCvdAnchored = true;
+          cvdReset = true;
+        }
+
+        if (cvdReset) {
+          localCvdAcc = 0;
+        }
+        localCvdAcc += d.delta;
+        cvdPoints.push({ time: tsSecs as UTCTimestamp, value: localCvdAcc });
+      }
+
+      cvdPointsRef.current = cvdPoints;
+      if (cvdSeriesRef.current) {
+        try {
+          cvdSeriesRef.current.setData(cvdPoints);
+        } catch (err) {
+          console.error("Failed to render historical CVD:", err);
+        }
+      }
+
+      // Seed CVD streaming state
+      cvdAccumulator = localCvdAcc;
+      curCvdDay = localCvdDay;
+      cvdAnchored = localCvdAnchored;
 
       // Static range mode: render history and stop — no catch-up, no WS.
       if (!isLatest) {
@@ -752,6 +1161,8 @@ export default function ChartPanel({
       }
       setStreamStatus("idle");
       chart.remove();
+      bookmapHeatmapPlugin.current.setData([]);
+      tickBubblesPlugin.current.clear();
       setChartSeries(null);
       chartRef.current = null;
       fxSeriesRef.current = null;
@@ -759,6 +1170,47 @@ export default function ChartPanel({
       candleHistoryRef.current = [];
     };
   }, [symbol, tf, mode, fromDate, toDate]);
+
+  useEffect(() => {
+    // In tick mode, always load the heatmap regardless of the indicator toggle.
+    const heatmapEnabled = isTickMode || bookmapHeatmap;
+    if (!heatmapEnabled || !chartSeries) {
+      bookmapHeatmapPlugin.current.setData([]);
+      return;
+    }
+    const controller = new AbortController();
+    let lastTime: number | undefined;
+    let timer: number | undefined;
+    // The server doesn't know about 'tick' — use 1m for the heatmap query.
+    const heatmapTf = isTickMode ? { label: '1m', seconds: 60, table: '1m' } as const : tf;
+    const load = async () => {
+      try {
+        const points = await fetchBookmapHeatmap(
+          symbol,
+          heatmapTf,
+          fromDate,
+          mode === "range" ? toDate : undefined,
+          lastTime,
+          controller.signal,
+        );
+        if (controller.signal.aborted) return;
+        if (lastTime === undefined) bookmapHeatmapPlugin.current.setData(points);
+        else bookmapHeatmapPlugin.current.appendData(points);
+        for (const point of points) lastTime = Math.max(lastTime ?? 0, point.time);
+        if (mode === "latest") timer = window.setTimeout(load, 5000);
+      } catch (err) {
+        if (!controller.signal.aborted) {
+          console.warn("Bookmap heatmap load failed:", err);
+          if (mode === "latest") timer = window.setTimeout(load, 10000);
+        }
+      }
+    };
+    void load();
+    return () => {
+      controller.abort();
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
+  }, [bookmapHeatmap, isTickMode, symbol, tf, mode, fromDate, toDate, chartSeries]);
 
   useEffect(() => {
     const series = chartSeries;
@@ -790,14 +1242,20 @@ export default function ChartPanel({
       if (pos.zig_entry_time) {
         // Convert real-UTC entry time to fake-UTC (ET wall clock) to align with chart candles.
         const date = new Date(pos.zig_entry_time * 1000);
-        const utcDate = new Date(date.toLocaleString("en-US", { timeZone: "UTC" }));
-        const nyDate  = new Date(date.toLocaleString("en-US", { timeZone: "America/New_York" }));
+        const utcDate = new Date(
+          date.toLocaleString("en-US", { timeZone: "UTC" }),
+        );
+        const nyDate = new Date(
+          date.toLocaleString("en-US", { timeZone: "America/New_York" }),
+        );
         const offsetSeconds = (utcDate.getTime() - nyDate.getTime()) / 1000;
         const adjustedTime = pos.zig_entry_time - offsetSeconds;
         markerTime = Math.floor(adjustedTime / tfSecs) * tfSecs;
       } else {
         // No time info at all — place at the chart's right edge so it's always visible.
-        markerTime = visRange ? (visRange.to as number) : Math.floor(Date.now() / 1000);
+        markerTime = visRange
+          ? (visRange.to as number)
+          : Math.floor(Date.now() / 1000);
       }
 
       // If the position is newer than the last visible bar (streaming lag), clamp to
@@ -823,7 +1281,11 @@ export default function ChartPanel({
     const series = chartSeries;
     if (!series) return;
 
-    if (!liveTrades || liveTrades.length === 0 || visibleTradeStrategies.size === 0) {
+    if (
+      !liveTrades ||
+      liveTrades.length === 0 ||
+      visibleTradeStrategies.size === 0
+    ) {
       historicalTradesPlugin.current.setTrades([]);
       return;
     }
@@ -841,10 +1303,15 @@ export default function ChartPanel({
         const hour = parseInt(parts[3], 10);
         const minute = parseInt(parts[4], 10);
         const second = parseInt(parts[5], 10);
-        const ms = parts[6] ? parseInt(parts[6].padEnd(3, "0").slice(0, 3), 10) : 0;
-        return Math.floor(Date.UTC(year, month, day, hour, minute, second, ms) / 1000);
+        const ms = parts[6]
+          ? parseInt(parts[6].padEnd(3, "0").slice(0, 3), 10)
+          : 0;
+        return Math.floor(
+          Date.UTC(year, month, day, hour, minute, second, ms) / 1000,
+        );
       } else {
-        const utcString = cleaned.replace(" ", "T") + (cleaned.endsWith("Z") ? "" : "Z");
+        const utcString =
+          cleaned.replace(" ", "T") + (cleaned.endsWith("Z") ? "" : "Z");
         return Math.floor(new Date(utcString).getTime() / 1000);
       }
     };
@@ -879,7 +1346,9 @@ export default function ChartPanel({
 
   useEffect(() => {
     if (!chartSeries) return;
-    const filteredTrades = allTrades.filter(t => (t as any).symbol?.toLowerCase() === symbol.toLowerCase());
+    const filteredTrades = allTrades.filter(
+      (t) => (t as any).symbol?.toLowerCase() === symbol.toLowerCase(),
+    );
     tradeLinesPrimitive.current.setTrades(filteredTrades, tf.seconds);
   }, [allTrades, symbol, tf, chartSeries]);
 
@@ -888,25 +1357,132 @@ export default function ChartPanel({
   useEffect(() => {
     if (!chartSeries) return;
     const show = showFxNq && symbol === "nq";
-    const filteredFxTrades = allFxTrades.filter(t => (t as any).symbol?.toLowerCase() === symbol.toLowerCase());
-    fxTradeLinesPrimitive.current.setTrades(show ? filteredFxTrades : [], tf.seconds);
+    const filteredFxTrades = allFxTrades.filter(
+      (t) => (t as any).symbol?.toLowerCase() === symbol.toLowerCase(),
+    );
+    fxTradeLinesPrimitive.current.setTrades(
+      show ? filteredFxTrades : [],
+      tf.seconds,
+    );
   }, [allFxTrades, showFxNq, symbol, tf, chartSeries]);
 
   useEffect(() => {
     vwapSeriesRef.current?.applyOptions({ visible: vwap });
   }, [vwap, chartSeries]);
 
+  // CVD (Cumulative Volume Delta) lives in its own compact pane at the bottom.
+  // It is created and removed on demand (only when cvd is enabled).
+  useEffect(() => {
+    console.log("[CVD Effect] Triggered. cvd:", cvd, "chartRef.current:", !!chartRef.current, "chartSeries:", !!chartSeries);
+    const chart = chartRef.current;
+    if (!chart || !chartSeries) return;
+    if (!cvd) return;
+
+    console.log("[CVD Effect] Creating CVD LineSeries. cvdPointsRef length:", cvdPointsRef.current.length);
+    const cvdSeries = chart.addSeries(
+      LineSeries,
+      {
+        color: "#00aaff", // Beautiful blue line for CVD
+        lineWidth: 2,
+        priceFormat: {
+          type: "custom",
+          formatter: () => "", // Return empty string to prevent drawing crosshair price label box
+        },
+        priceLineVisible: false,
+        lastValueVisible: false,
+        crosshairMarkerVisible: false,
+      },
+      chart.panes().length // Add to a new pane at the bottom!
+    );
+    cvdSeriesRef.current = cvdSeries;
+
+    // Load initial data from cvdPointsRef
+    cvdSeries.setData(cvdPointsRef.current);
+
+    // Make the scale labels transparent and hide borders to keep right axis clean
+    cvdSeries.priceScale().applyOptions({
+      textColor: "transparent",
+      borderVisible: false,
+    });
+
+    // Keep volume as the bottom study if it is enabled.
+    const volumePane = chart
+      .panes()
+      .find(
+        (pane: any) =>
+          volumeSeriesRef.current &&
+          pane.getSeries().includes(volumeSeriesRef.current),
+      );
+    if (volumePane) volumePane.moveTo(chart.panes().length - 1);
+
+    const panes = chart.panes();
+    if (panes.length > 1) {
+      panes[0].setStretchFactor(4);
+      const cvdPane = panes.find((pane: any) =>
+        pane.getSeries().includes(cvdSeries),
+      );
+      cvdPane?.setStretchFactor(1.5);
+      volumePane?.setStretchFactor(1);
+    }
+
+    return () => {
+      console.log("[CVD Effect] Cleaning up CVD LineSeries.");
+      try {
+        chart.removeSeries(cvdSeries);
+      } catch {
+        /* chart already disposed */
+      }
+      cvdSeriesRef.current = null;
+    };
+  }, [cvd, chartSeries]);
+
   useEffect(() => {
     if (!sessionVolumeProfile || !chartSeries) {
       sessionVolumeProfilePlugin.current.setData([]);
       return;
     }
+
+    let active = true;
+    const tickSize = symbol === "es" ? 2.0 : SESSION_PROFILE_ROW_SIZE;
+
     sessionVolumeProfilePlugin.current.setCandles(
       candleHistoryRef.current,
-      SESSION_PROFILE_ROW_SIZE,
+      tickSize,
       tf.seconds,
+      symbol,
     );
-  }, [sessionVolumeProfile, tf, chartSeries, candlesRevision]);
+
+    (async () => {
+      try {
+        const bins =
+          mode === "latest"
+            ? await fetchMarchVolumeProfileDelta(symbol, tickSize, fromDate)
+            : await fetchMarchVolumeProfileDelta(
+                symbol,
+                tickSize,
+                fromDate,
+                toDate,
+              );
+        if (!active) return;
+        sessionVolumeProfilePlugin.current.setHistoricalDeltas(bins);
+      } catch (err) {
+        console.warn("Volume profile delta history unavailable:", err);
+      }
+    })();
+
+    return () => {
+      active = false;
+    };
+  }, [
+    sessionVolumeProfile,
+    tf,
+    chartSeries,
+    candlesRevision,
+    symbol,
+    mode,
+    fromDate,
+    toDate,
+  ]);
 
   // Volume lives in its own compact pane. It is created and removed on demand
   // so disabling the indicator gives all of that height back to the price chart.
@@ -914,27 +1490,36 @@ export default function ChartPanel({
     const chart = chartRef.current;
     if (!chart || !chartSeries || !volume) return;
 
-    const volumeSeries = chart.addSeries(HistogramSeries, {
-      priceFormat: { type: "volume" },
-      priceLineVisible: false,
-      lastValueVisible: false,
-    }, chart.panes().length);
+    const volumeSeries = chart.addSeries(
+      HistogramSeries,
+      {
+        priceFormat: { type: "volume" },
+        priceLineVisible: false,
+        lastValueVisible: false,
+      },
+      chart.panes().length,
+    );
     volumeSeriesRef.current = volumeSeries;
-    volumeSeries.setData(candleHistoryRef.current.map((c) => ({
-      time: c.time,
-      value: c.volume ?? 0,
-      color: c.close >= c.open
-        ? "#089981"
-        : "#F23645",
-    })));
+    volumeSeries.setData(
+      candleHistoryRef.current.map((c) => ({
+        time: c.time,
+        value: c.volume ?? 0,
+        color: c.close >= c.open ? "#089981" : "#F23645",
+      })),
+    );
 
     const panes = chart.panes();
     panes[0]?.setStretchFactor(4);
     panes[panes.length - 1]?.setStretchFactor(1);
 
     return () => {
-      if (volumeSeriesRef.current === volumeSeries) volumeSeriesRef.current = null;
-      try { chart.removeSeries(volumeSeries); } catch { /* chart already disposed */ }
+      if (volumeSeriesRef.current === volumeSeries)
+        volumeSeriesRef.current = null;
+      try {
+        chart.removeSeries(volumeSeries);
+      } catch {
+        /* chart already disposed */
+      }
     };
   }, [volume, chartSeries]);
 
@@ -947,7 +1532,9 @@ export default function ChartPanel({
           if (fromDate) params.set("from", fromDate);
           if (toDate) params.set("to", toDate);
 
-          const res = await fetch(`${BACKEND_URL}/api/march/indicators/noise-area?${params.toString()}`);
+          const res = await fetch(
+            `${BACKEND_URL}/api/march/indicators/noise-area?${params.toString()}`,
+          );
           if (!res.ok) throw new Error("Backend error");
           const data = await res.json();
 
@@ -981,9 +1568,10 @@ export default function ChartPanel({
 
     (async () => {
       try {
-        const points = mode === "latest"
-          ? await fetchMarchVolumeDelta(symbol, tf, fromDate)
-          : await fetchMarchVolumeDelta(symbol, tf, fromDate, toDate);
+        const points =
+          mode === "latest"
+            ? await fetchMarchVolumeDelta(symbol, tf, fromDate)
+            : await fetchMarchVolumeDelta(symbol, tf, fromDate, toDate);
         if (!active) return;
 
         historicalDeltaRef.current = new Map(
@@ -992,7 +1580,8 @@ export default function ChartPanel({
         const bubbles: VolumeDeltaBubble[] = [];
         for (const candle of candleHistoryRef.current) {
           const time = candle.time as number;
-          const delta = (historicalDeltaRef.current.get(time) ?? 0) +
+          const delta =
+            (historicalDeltaRef.current.get(time) ?? 0) +
             (liveDeltaRef.current.get(time) ?? 0);
           const positiveDivergence = candle.close < candle.open && delta > 0;
           const negativeDivergence = candle.close > candle.open && delta < 0;
@@ -1010,8 +1599,19 @@ export default function ChartPanel({
       }
     })();
 
-    return () => { active = false; };
-  }, [volumeDeltaBubbles, symbol, tf, mode, fromDate, toDate, chartSeries, candlesRevision]);
+    return () => {
+      active = false;
+    };
+  }, [
+    volumeDeltaBubbles,
+    symbol,
+    tf,
+    mode,
+    fromDate,
+    toDate,
+    chartSeries,
+    candlesRevision,
+  ]);
 
   // fx_nq overlay: when toggled on (NQ only), create a SECOND pane below the NQ
   // pane holding the aggregated fx candles (own price axis), and fetch its data.
@@ -1031,6 +1631,7 @@ export default function ChartPanel({
         borderDownColor: "#FFFFFF",
         wickUpColor: "#FFFFFF",
         wickDownColor: "#FFFFFF",
+        priceLineColor: "#FFFFFF",
         lastValueVisible: true,
         priceLineVisible: false,
       },
@@ -1041,15 +1642,21 @@ export default function ChartPanel({
     fxTradeLinesPrimitive.current.setTrades(allFxTradesRef.current, tf.seconds);
 
     // Keep volume as the bottom study when both optional panes are visible.
-    const volumePane = chart.panes().find((pane: any) =>
-      volumeSeriesRef.current && pane.getSeries().includes(volumeSeriesRef.current),
-    );
+    const volumePane = chart
+      .panes()
+      .find(
+        (pane: any) =>
+          volumeSeriesRef.current &&
+          pane.getSeries().includes(volumeSeriesRef.current),
+      );
     if (volumePane) volumePane.moveTo(chart.panes().length - 1);
 
     const panes = chart.panes();
     if (panes.length > 1) {
       panes[0].setStretchFactor(4);
-      const fxPane = panes.find((pane: any) => pane.getSeries().includes(fxSeries));
+      const fxPane = panes.find((pane: any) =>
+        pane.getSeries().includes(fxSeries),
+      );
       fxPane?.setStretchFactor(2);
       volumePane?.setStretchFactor(1);
     }
@@ -1068,7 +1675,11 @@ export default function ChartPanel({
         const prevRange = chart.timeScale().getVisibleRange();
         fxSeries.setData(fillGaps(candles, tf.seconds) as any);
         if (prevRange) {
-          try { chart.timeScale().setVisibleRange(prevRange); } catch { /* range out of bounds */ }
+          try {
+            chart.timeScale().setVisibleRange(prevRange);
+          } catch {
+            /* range out of bounds */
+          }
         }
       } catch (err) {
         console.warn("fx_nq candles load failed:", err);
@@ -1079,7 +1690,9 @@ export default function ChartPanel({
       cancelled = true;
       try {
         chart.removeSeries(fxSeries);
-      } catch { /* chart already disposed */ }
+      } catch {
+        /* chart already disposed */
+      }
       fxSeriesRef.current = null;
     };
   }, [showFxNq, symbol, tf, mode, fromDate, toDate, volume, chartSeries]);
@@ -1143,10 +1756,7 @@ export default function ChartPanel({
             </button>
           </div>
         )}
-        <div
-          ref={containerRef}
-          className="flex-1 min-h-0"
-        />
+        <div ref={containerRef} className="flex-1 min-h-0" />
       </div>
     </div>
   );

@@ -12,8 +12,16 @@ pub fn configure(config: &mut web::ServiceConfig) {
         .route("/api/march/fx-candles/bin", web::get().to(fx_candles))
         .route("/api/march/ticks", web::get().to(ticks))
         .route(
+            "/api/march/indicators/bookmap-heatmap/bin",
+            web::get().to(bookmap_heatmap),
+        )
+        .route(
             "/api/march/indicators/volume-delta",
             web::get().to(volume_delta),
+        )
+        .route(
+            "/api/march/indicators/volume-profile-delta",
+            web::get().to(volume_profile_delta),
         )
         .route(
             "/api/march/indicators/noise-area",
@@ -27,6 +35,8 @@ struct CandleQuery {
     symbol: Option<String>,
     from: Option<String>,
     to: Option<String>,
+    since: Option<i64>,
+    tick_size: Option<f64>,
 }
 fn binary(data: Vec<u8>) -> HttpResponse {
     HttpResponse::Ok()
@@ -152,6 +162,39 @@ async fn volume_delta(
             query.timeframe.as_deref().unwrap_or("1m"),
             market::date(query.from.as_deref()),
             market::date(query.to.as_deref()),
+        )
+        .await?,
+    ))
+}
+async fn volume_profile_delta(
+    state: web::Data<AppState>,
+    query: web::Query<CandleQuery>,
+) -> Result<HttpResponse, ApiError> {
+    let tick_size = query.tick_size.unwrap_or(5.0);
+    Ok(HttpResponse::Ok().json(
+        market::volume_profile_delta(
+            &state.questdb,
+            query.symbol.as_deref().unwrap_or("nq"),
+            tick_size,
+            market::date(query.from.as_deref()),
+            market::date(query.to.as_deref()),
+        )
+        .await?,
+    ))
+}
+
+async fn bookmap_heatmap(
+    state: web::Data<AppState>,
+    query: web::Query<CandleQuery>,
+) -> Result<HttpResponse, ApiError> {
+    Ok(binary(
+        market::bookmap_heatmap(
+            &state.questdb,
+            query.symbol.as_deref().unwrap_or("nq"),
+            query.timeframe.as_deref().unwrap_or("1m"),
+            market::date(query.from.as_deref()),
+            market::date(query.to.as_deref()),
+            query.since,
         )
         .await?,
     ))

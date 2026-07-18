@@ -1,5 +1,6 @@
 pub mod idk;
 
+use idk::PreferredData;
 use serde::Serialize;
 
 #[derive(Clone, Copy, Default)]
@@ -21,16 +22,19 @@ impl StrategyEnvironment {
 pub struct StrategyDefinition {
     pub id: &'static str,
     pub name: &'static str,
+    pub preferred_data: PreferredData,
 }
 
 const IDK_STRATEGIES: &[StrategyDefinition] = &[
     StrategyDefinition {
         id: "night_drift",
         name: "Night Drift",
+        preferred_data: PreferredData::Ohlcv,
     },
     StrategyDefinition {
         id: "noise_momentum",
         name: "Noise Momentum",
+        preferred_data: PreferredData::Ohlcv,
     },
 ];
 
