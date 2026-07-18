@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { fetchBacktestFx, fetchMonteCarloData, fetchTrades } from '../../api'
 import { isFuturesInstrument, type Backtest, type MonteCarloData } from '../../types'
@@ -49,46 +49,66 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 }
 
 interface BacktestResultSidebarProps {
-  backtest: Backtest
-  onDelete?: () => void
+  backtest: Backtest | null
+  isOpen: boolean
+  onDelete?: (id: number) => void
 }
 
-export default function BacktestResultSidebar({ backtest, onDelete }: BacktestResultSidebarProps) {
+export default function BacktestResultSidebar({ backtest, isOpen, onDelete }: BacktestResultSidebarProps) {
   const [activeTab, setActiveTab] = useState<ResultTab>('analysis')
   const [execView, setExecView] = useState<'native' | 'fx'>('native')
-  const isFutures = isFuturesInstrument(backtest.instrument)
-  const shouldLoadTrades = activeTab === 'equity' || activeTab === 'splicing' || activeTab === 'volatility'
+
+  const [localBacktest, setLocalBacktest] = useState<Backtest | null>(backtest)
+
+  useEffect(() => {
+    if (backtest) {
+      setLocalBacktest(backtest)
+    }
+  }, [backtest])
+
+  const isFutures = localBacktest ? isFuturesInstrument(localBacktest.instrument) : false
+  const shouldLoadTrades = isOpen && localBacktest && (activeTab === 'equity' || activeTab === 'splicing' || activeTab === 'volatility')
+  
   const { data: trades, isLoading: isLoadingTrades, isError: isTradesError } = useQuery({
-    queryKey: ['trades', backtest.id],
-    queryFn: () => fetchTrades(backtest.id),
-    enabled: shouldLoadTrades,
+    queryKey: ['trades', localBacktest?.id],
+    queryFn: () => fetchTrades(localBacktest!.id),
+    enabled: !!shouldLoadTrades && !!localBacktest?.id,
     staleTime: Infinity,
   })
+  
   const { data: monteCarlo, isLoading: isLoadingMonteCarlo, isError: isMonteCarloError } = useQuery({
-    queryKey: ['montecarlo', backtest.id],
-    queryFn: () => fetchMonteCarloData(backtest.id),
-    enabled: activeTab === 'monte-carlo',
+    queryKey: ['montecarlo', localBacktest?.id],
+    queryFn: () => fetchMonteCarloData(localBacktest!.id),
+    enabled: isOpen && activeTab === 'monte-carlo' && !!localBacktest?.id,
     staleTime: Infinity,
     retry: false,
   })
+  
   const fxQuery = useQuery({
-    queryKey: ['backtest-fx', backtest.id],
-    queryFn: () => fetchBacktestFx(backtest.id),
-    enabled: !isFutures && execView === 'fx',
+    queryKey: ['backtest-fx', localBacktest?.id],
+    queryFn: () => fetchBacktestFx(localBacktest!.id),
+    enabled: isOpen && !isFutures && execView === 'fx' && !!localBacktest?.id,
     staleTime: Infinity,
     retry: false,
   })
+  
   const showFx = !isFutures && execView === 'fx'
   const fxData = fxQuery.data ?? null
-  const report = showFx ? fxData?.report ?? null : backtest
+  const report = showFx ? fxData?.report ?? null : localBacktest
   const viewTrades = showFx ? fxData?.trades : trades
   const isLoadingViewTrades = showFx ? fxQuery.isLoading : isLoadingTrades
   const isViewTradesError = showFx ? fxQuery.isError : isTradesError
 
+  if (!localBacktest) return null
+
   return (
     <aside
-      className="fixed inset-y-4 right-4 z-50 flex w-[860px] max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-xl bg-[#121214] shadow-[0_28px_90px_rgba(0,0,0,0.82)]"
-      aria-label={`Backtest ${backtest.id} results`}
+      className={`fixed inset-y-4 right-4 z-50 flex w-[860px] max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-3xl bg-[#121214] shadow-[0_28px_90px_rgba(0,0,0,0.82)] border border-white/5 transition-all duration-150 ease-out ${
+        isOpen
+          ? 'opacity-100 scale-100'
+          : 'opacity-0 scale-105 pointer-events-none'
+      }`}
+      aria-label={`Backtest ${localBacktest.id} results`}
     >
       <div className="absolute top-6 left-8 z-10 shrink-0">
         <LiquidGlassTabs
@@ -113,7 +133,7 @@ export default function BacktestResultSidebar({ backtest, onDelete }: BacktestRe
         )}
         {onDelete && (
           <button
-            onClick={onDelete}
+            onClick={() => onDelete(localBacktest.id)}
             className="w-7 h-7 flex items-center justify-center text-gray-400 hover:text-red-400 transition-colors cursor-pointer"
             title="Delete Backtest"
           >

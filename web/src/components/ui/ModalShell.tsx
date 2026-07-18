@@ -1,4 +1,4 @@
-import { useEffect, type ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 
 interface ModalShellProps {
   open: boolean
@@ -19,6 +19,21 @@ export default function ModalShell({
   closePosition = 'right',
   headerExtra,
 }: ModalShellProps) {
+  const [shouldRender, setShouldRender] = useState(open)
+  const [active, setActive] = useState(false)
+
+  useEffect(() => {
+    if (open) {
+      setShouldRender(true)
+      const timer = requestAnimationFrame(() => {
+        setActive(true)
+      })
+      return () => cancelAnimationFrame(timer)
+    } else {
+      setActive(false)
+    }
+  }, [open])
+
   useEffect(() => {
     if (!open) return
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -28,7 +43,13 @@ export default function ModalShell({
     return () => document.removeEventListener('keydown', handleKeyDown)
   }, [open, onClose])
 
-  if (!open) return null
+  const handleTransitionEnd = () => {
+    if (!open) {
+      setShouldRender(false)
+    }
+  }
+
+  if (!shouldRender) return null
 
   const closeButton = (
     <button
@@ -46,9 +67,18 @@ export default function ModalShell({
   )
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+    <div
+      className={`fixed inset-0 z-50 flex items-center justify-center p-4 transition-all duration-150 ease-out ${
+        active ? 'opacity-100' : 'opacity-0 pointer-events-none'
+      }`}
+    >
       <div className="absolute inset-0 bg-black/60" onClick={onClose} />
-      <div className={`relative z-10 w-[580px] h-[480px] bg-[#1A1A1E] backdrop-blur rounded-2xl overflow-hidden border border-white/5 shadow-2xl flex flex-col ${className}`}>
+      <div
+        onTransitionEnd={handleTransitionEnd}
+        className={`relative z-10 w-[580px] h-[480px] bg-[#1A1A1E] backdrop-blur rounded-2xl overflow-hidden border border-white/5 shadow-2xl flex flex-col transition-all duration-150 ease-out ${className} ${
+          active ? 'opacity-100 scale-100' : 'opacity-0 scale-105 pointer-events-none'
+        }`}
+      >
         <div className="px-4 py-3 flex items-center gap-2.5 shrink-0">
           {closePosition === 'left' ? (
             <>
