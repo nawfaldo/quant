@@ -8,6 +8,7 @@ pub fn configure(config: &mut web::ServiceConfig) {
         .route("/api/vwap/bin", web::get().to(vwap))
         .route("/api/vix", web::get().to(vix))
         .route("/api/database/summary", web::get().to(summary))
+        .route("/api/database/symbols", web::get().to(symbols))
         .route("/api/march/candles/bin", web::get().to(march_candles))
         .route("/api/march/fx-candles/bin", web::get().to(fx_candles))
         .route("/api/march/ticks", web::get().to(ticks))
@@ -84,14 +85,15 @@ async fn vix(
 async fn summary(state: web::Data<AppState>) -> Result<HttpResponse, ApiError> {
     Ok(HttpResponse::Ok().json(market::database_summary(&state.questdb).await?))
 }
+async fn symbols(state: web::Data<AppState>) -> Result<HttpResponse, ApiError> {
+    Ok(HttpResponse::Ok().json(market::database_symbols(&state.questdb).await?))
+}
 async fn march_candles(
     state: web::Data<AppState>,
     query: web::Query<CandleQuery>,
 ) -> Result<HttpResponse, ApiError> {
     let symbol = query.symbol.as_deref().unwrap_or("nq");
-    if !market::SYMBOLS.contains(&symbol) {
-        return Err(ApiError::BadRequest("unknown symbol for march".into()));
-    }
+    market::validate_symbol(symbol)?;
     Ok(binary(
         market::march_candles(
             &state.questdb,

@@ -31,7 +31,7 @@ import Header from "../navigation/Header";
 // Per-panel chart configuration. Each ChartPanel runs its own data fetch and
 // live stream against this config, independent of the other panels.
 export interface PanelConfig {
-  symbol: "nq" | "es";
+  symbol: string;
   tf: TF;
   mode: "latest" | "range";
   fromDate: string;
@@ -47,25 +47,26 @@ export interface PanelConfig {
 
 interface ChartPanelProps {
   config: PanelConfig;
-  setSymbol: (sym: "nq" | "es") => void;
   setTf: (tf: TF) => void;
   onApplyRange: (from: string, to: string) => void;
   onLatest: (from: string) => void;
   onOpenIndicators: () => void;
   onOpenBacktests: () => void;
+  onOpenSymbolModal: () => void;
 }
 
 function matchesMarchSymbol(
   posSymbol: string,
-  marchSymbol: "nq" | "es",
+  marchSymbol: string,
 ): boolean {
   const ps = posSymbol.toLowerCase();
-  if (marchSymbol === "nq") {
+  const ms = marchSymbol.toLowerCase();
+  if (ms === "nq") {
     return ps.includes("nq") || ps.includes("ustec") || ps.includes("nas");
-  } else if (marchSymbol === "es") {
+  } else if (ms === "es") {
     return ps.includes("es") || ps.includes("us500") || ps.includes("spx");
   }
-  return false;
+  return ps.includes(ms) || ms.includes(ps);
 }
 
 interface Tick {
@@ -305,12 +306,12 @@ function fillGaps(
 
 export default function ChartPanel({
   config,
-  setSymbol,
   setTf,
   onApplyRange,
   onLatest,
   onOpenIndicators,
   onOpenBacktests,
+  onOpenSymbolModal,
 }: ChartPanelProps) {
   const {
     symbol,
@@ -1701,7 +1702,6 @@ export default function ChartPanel({
     <div className="relative flex flex-col bg-[#0F0F0F] min-h-0 min-w-0 h-full w-full">
       <Header
         symbol={symbol}
-        setSymbol={setSymbol}
         tf={tf}
         setTf={setTf}
         streamStatus={streamStatus}
@@ -1712,6 +1712,7 @@ export default function ChartPanel({
         onLatest={onLatest}
         onOpenIndicators={onOpenIndicators}
         onOpenBacktests={onOpenBacktests}
+        onOpenSymbolModal={onOpenSymbolModal}
         showFxNq={showFxNq}
         onToggleFxNq={() => setShowFxNq((visible) => !visible)}
       />

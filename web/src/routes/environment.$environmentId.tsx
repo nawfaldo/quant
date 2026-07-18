@@ -5,6 +5,7 @@ import { createEnvironmentRule, fetchBacktests, fetchEnvironmentRules, fetchEnvi
 import { type Environment } from '../types'
 import BacktestResultSidebar from '../components/backtests/BacktestResultSidebar'
 import PageShell from '../components/layout/PageShell'
+import ModalShell from '../components/ui/ModalShell'
 
 export const Route = createFileRoute('/environment/$environmentId')({
   component: EnvironmentDetailRouteComponent,
@@ -401,79 +402,79 @@ export default function EnvironmentDetailPage({ selectedEnv, onBack }: Environme
         />
       )}
 
-      {isAddRulesModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center backdrop-blur-[6px] bg-black/50">
-          <div className="relative z-10 w-[450px] h-[300px] bg-[#121214] rounded-lg shadow-2xl flex flex-col overflow-hidden">
-            <div className="flex justify-between items-center px-4 py-3 border-b border-[#212124] select-none">
-              <h2 className="text-white font-bold text-sm">Add Rule</h2>
-              <div className="flex items-center gap-5">
-                <button onClick={closeModal} className="text-gray-400 hover:text-gray-200 font-bold text-xs select-none cursor-pointer transition-colors">Cancel</button>
-                <button
-                  type="button"
-                  onClick={createRule}
-                  disabled={!isFormValid || isSaving}
-                  className="liquid-glass-btn liquid-glass-btn-no-grow liquid-glass-btn-rounded-lg disabled:cursor-not-allowed px-2 py-1 text-xs font-bold"
-                >
-                  {isSaving ? 'Saving…' : 'Create'}
-                </button>
-              </div>
-            </div>
-            <div className="bg-[#121214] px-4 pt-3 pb-4 flex flex-col gap-3 select-none">
-              <div className="flex flex-col gap-2">
-                <label className="text-[10px] font-semibold tracking-widest uppercase text-gray-500">Rule</label>
-                <select
-                  value={ruleType}
-                  onChange={(event) => setRuleType(event.target.value as RuleType)}
-                  style={{ colorScheme: 'dark' }}
-                  className="w-full bg-black/20 border border-[#212124] text-sm text-gray-200 px-3 py-2 outline-none transition-colors cursor-pointer select-text"
-                >
-                  {missingRuleTypes.map((type) => (
-                    <option key={type} value={type}>{ruleLabels[type]}</option>
-                  ))}
-                </select>
-              </div>
-              <div className="flex flex-col gap-2">
-                <label className="text-[10px] font-semibold tracking-widest uppercase text-gray-500">Value</label>
-                <input type="text" inputMode="decimal" value={value} onChange={(event) => setValue(numericWithDot(event.target.value))} placeholder={rulePlaceholder(ruleType)} className="w-full bg-black/20 border border-[#212124] text-sm text-gray-200 px-3 py-2 outline-none transition-colors placeholder:text-gray-600 select-text" />
-              </div>
-              {saveError && <p className="text-xs text-red-400" role="alert">{saveError}</p>}
-            </div>
+      <ModalShell
+        open={isAddRulesModalOpen}
+        onClose={closeModal}
+        title="Add Rule"
+        closePosition="left"
+        className="!bg-[#121214]"
+        headerExtra={
+          <div className="flex items-center ml-auto">
+            <button
+              type="button"
+              onClick={createRule}
+              disabled={!isFormValid || isSaving}
+              className="liquid-glass-btn liquid-glass-btn-no-grow liquid-glass-btn-rounded-lg disabled:cursor-not-allowed px-2 py-1 text-xs font-bold mr-2"
+            >
+              {isSaving ? 'Saving…' : 'Create'}
+            </button>
           </div>
+        }
+      >
+        <div className="bg-[#121214] px-4 pt-3 pb-4 flex flex-col gap-3 select-none">
+          <div className="flex flex-col gap-2">
+            <label className="text-[10px] font-semibold tracking-widest uppercase text-gray-500">Rule</label>
+            <select
+              value={ruleType}
+              onChange={(event) => setRuleType(event.target.value as RuleType)}
+              style={{ colorScheme: 'dark' }}
+              className="w-full bg-black/20 border border-[#212124] text-sm text-gray-200 px-3 py-2 outline-none transition-colors cursor-pointer select-text"
+            >
+              {missingRuleTypes.map((type) => (
+                <option key={type} value={type}>{ruleLabels[type]}</option>
+              ))}
+            </select>
+          </div>
+          <div className="flex flex-col gap-2">
+            <label className="text-[10px] font-semibold tracking-widest uppercase text-gray-500">Value</label>
+            <input type="text" inputMode="decimal" value={value} onChange={(event) => setValue(numericWithDot(event.target.value))} placeholder={rulePlaceholder(ruleType)} className="w-full bg-black/20 border border-[#212124] text-sm text-gray-200 px-3 py-2 outline-none transition-colors placeholder:text-gray-600 select-text" />
+          </div>
+          {saveError && <p className="text-xs text-red-400" role="alert">{saveError}</p>}
         </div>
-      )}
+      </ModalShell>
 
       {/* Edit Rule Modal Dialog */}
-      {isEditModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center backdrop-blur-[6px] bg-black/50">
-          <div className="relative z-10 w-[450px] h-[240px] bg-[#121214] rounded-lg shadow-2xl flex flex-col overflow-hidden">
-            <div className="flex justify-between items-center px-4 py-3 border-b border-[#212124] select-none">
-              <h2 className="text-white font-bold text-sm">Edit Rule</h2>
-              <div className="flex items-center gap-5">
-                <button onClick={closeEditModal} className="text-gray-400 hover:text-gray-200 font-bold text-xs select-none cursor-pointer transition-colors">Cancel</button>
-                <button
-                  type="button"
-                  onClick={updateRule}
-                  disabled={!isEditFormValid || isEditing}
-                  className="liquid-glass-btn liquid-glass-btn-no-grow liquid-glass-btn-rounded-lg disabled:cursor-not-allowed px-2 py-1 text-xs font-bold"
-                >
-                  {isEditing ? 'Saving…' : 'Save'}
-                </button>
-              </div>
-            </div>
-            <div className="bg-[#121214] px-4 pt-4 pb-4 flex flex-col gap-3 select-none">
-              <div className="flex flex-col gap-2">
-                <label className="text-[10px] font-semibold tracking-widest uppercase text-gray-500">Rule</label>
-                <input type="text" value={ruleLabels[editRuleType]} disabled className="w-full bg-[#1A1A1E] border border-[#212124] text-sm text-gray-400 px-3 py-2 outline-none select-none cursor-not-allowed font-semibold" />
-              </div>
-              <div className="flex flex-col gap-2">
-                <label className="text-[10px] font-semibold tracking-widest uppercase text-gray-500">Value</label>
-                <input type="text" inputMode="decimal" value={editValue} onChange={(event) => setEditValue(numericWithDot(event.target.value))} placeholder={rulePlaceholder(editRuleType)} className="w-full bg-black/20 border border-[#212124] text-sm text-gray-200 px-3 py-2 outline-none transition-colors placeholder:text-gray-600 select-text" />
-              </div>
-              {editSaveError && <p className="text-xs text-red-400" role="alert">{editSaveError}</p>}
-            </div>
+      <ModalShell
+        open={isEditModalOpen}
+        onClose={closeEditModal}
+        title="Edit Rule"
+        closePosition="left"
+        className="!bg-[#121214]"
+        headerExtra={
+          <div className="flex items-center ml-auto">
+            <button
+              type="button"
+              onClick={updateRule}
+              disabled={!isEditFormValid || isEditing}
+              className="liquid-glass-btn liquid-glass-btn-no-grow liquid-glass-btn-rounded-lg disabled:cursor-not-allowed px-2 py-1 text-xs font-bold mr-2"
+            >
+              {isEditing ? 'Saving…' : 'Save'}
+            </button>
           </div>
+        }
+      >
+        <div className="bg-[#121214] px-4 pt-4 pb-4 flex flex-col gap-3 select-none">
+          <div className="flex flex-col gap-2">
+            <label className="text-[10px] font-semibold tracking-widest uppercase text-gray-500">Rule</label>
+            <input type="text" value={ruleLabels[editRuleType]} disabled className="w-full bg-[#1A1A1E] border border-[#212124] text-sm text-gray-400 px-3 py-2 outline-none select-none cursor-not-allowed font-semibold" />
+          </div>
+          <div className="flex flex-col gap-2">
+            <label className="text-[10px] font-semibold tracking-widest uppercase text-gray-500">Value</label>
+            <input type="text" inputMode="decimal" value={editValue} onChange={(event) => setEditValue(numericWithDot(event.target.value))} placeholder={rulePlaceholder(editRuleType)} className="w-full bg-black/20 border border-[#212124] text-sm text-gray-200 px-3 py-2 outline-none transition-colors placeholder:text-gray-600 select-text" />
+          </div>
+          {editSaveError && <p className="text-xs text-red-400" role="alert">{editSaveError}</p>}
         </div>
-      )}
+      </ModalShell>
     </>
   )
 }

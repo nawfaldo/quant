@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { createEnvironment, fetchEnvironments } from '../api'
 import PageShell from '../components/layout/PageShell'
+import ModalShell from '../components/ui/ModalShell'
 
 export const Route = createFileRoute('/environment/')({
   component: EnvironmentRouteComponent,
@@ -195,103 +196,94 @@ export default function EnvironmentPage() {
       )}
 
       {/* Modal Dialog */}
-      {isModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center backdrop-blur-[6px] bg-black/50">
-          <div className="relative z-10 w-[550px] h-[400px] bg-[#121214] rounded-lg shadow-2xl flex flex-col overflow-hidden">
-            {/* Header / Title Section */}
-            <div className="flex justify-between items-center px-4 py-3 border-b border-[#212124] select-none">
-              <h2 className="text-white font-bold text-sm">Create Environment</h2>
-              <div className="flex items-center gap-5">
-                <button
-                  onClick={handleCloseModal}
-                  className="text-gray-400 hover:text-gray-200 font-bold text-xs select-none cursor-pointer transition-colors"
-                >
-                  Cancel
-                </button> 
-                <button
-                  type="button"
-                  onClick={handleCreateEnvironment}
-                  disabled={!isFormValid || isSaving}
-                  className="liquid-glass-btn liquid-glass-btn-no-grow liquid-glass-btn-rounded-lg disabled:cursor-not-allowed px-2 py-1 text-xs font-bold"
-                >
-                  {isSaving ? 'Saving…' : 'Create'}
-                </button>
-              </div>
-            </div>
+      <ModalShell
+        open={isModalOpen}
+        onClose={handleCloseModal}
+        title="Create Environment"
+        closePosition="left"
+        className="!bg-[#121214]"
+        headerExtra={
+          <div className="flex items-center ml-auto">
+            <button
+              type="button"
+              onClick={handleCreateEnvironment}
+              disabled={!isFormValid || isSaving}
+              className="liquid-glass-btn liquid-glass-btn-no-grow liquid-glass-btn-rounded-lg disabled:cursor-not-allowed px-2 py-1 text-xs font-bold mr-2"
+            >
+              {isSaving ? 'Saving…' : 'Create'}
+            </button>
+          </div>
+        }
+      >
+        {/* Modal Content Area */}
+        <div className="flex-1 bg-[#121214] px-4 pt-3 pb-4 flex flex-col gap-3 overflow-y-auto select-none">
+          <div className="flex flex-col gap-2">
+            <label className="text-[10px] font-semibold tracking-widest uppercase text-gray-500">Name</label>
+            <input
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              maxLength={100}
+              placeholder="Environment name"
+              className="w-full bg-black/20 border border-[#212124] text-sm text-gray-200 px-3 py-2 outline-none transition-colors placeholder:text-gray-600 select-text"
+            />
+          </div>
 
-            {/* Modal Content Area */}
-            <div className="flex-1 bg-[#121214] px-4 pt-3 pb-4 flex flex-col gap-3 overflow-y-auto select-none">
+          {saveError && (
+            <p className="text-xs text-red-400" role="alert">{saveError}</p>
+          )}
+
+          {/* MT5 Account Checkbox */}
+          <div onClick={() => setIsMt5(!isMt5)} className="flex items-center gap-3 cursor-pointer select-none">
+            <span className="text-xs font-bold text-gray-400">Is this an MT5 Account?</span>
+            <div className={`w-[18px] h-[18px] rounded border border-[#212124] flex items-center justify-center transition-colors ${isMt5 ? 'bg-[#2563eb] border-[#1e3a8a]' : 'bg-black/20'}`}>
+              {isMt5 && (
+                <svg width="10" height="8" viewBox="0 0 9 7" fill="none">
+                  <path d="M1 3.5L3 5.5L8 1" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              )}
+            </div>
+          </div>
+
+          {/* Conditional MT5 Fields */}
+          {isMt5 && (
+            <>
               <div className="flex flex-col gap-2">
-                <label className="text-[10px] font-semibold tracking-widest uppercase text-gray-500">Name</label>
+                <label className="text-[10px] font-semibold tracking-widest uppercase text-gray-500">Server</label>
                 <input
                   type="text"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  maxLength={100}
-                  placeholder="Environment name"
+                  value={server}
+                  onChange={(e) => setServer(e.target.value)}
+                  placeholder="idk"
                   className="w-full bg-black/20 border border-[#212124] text-sm text-gray-200 px-3 py-2 outline-none transition-colors placeholder:text-gray-600 select-text"
                 />
               </div>
 
-              {saveError && (
-                <p className="text-xs text-red-400" role="alert">{saveError}</p>
-              )}
-
-
-
-              {/* MT5 Account Checkbox */}
-              <div onClick={() => setIsMt5(!isMt5)} className="flex items-center gap-3 cursor-pointer select-none">
-                <span className="text-xs font-bold text-gray-400">Is this an MT5 Account?</span>
-                                <div className={`w-[18px] h-[18px] rounded border border-[#212124] flex items-center justify-center transition-colors ${isMt5 ? 'bg-[#2563eb] border-[#1e3a8a]' : 'bg-black/20'}`}>
-                  {isMt5 && (
-                    <svg width="10" height="8" viewBox="0 0 9 7" fill="none">
-                      <path d="M1 3.5L3 5.5L8 1" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                    </svg>
-                  )}
-                </div>
+              <div className="flex flex-col gap-2">
+                <label className="text-[10px] font-semibold tracking-widest uppercase text-gray-500">Login</label>
+                <input
+                  type="text"
+                  value={login}
+                  onChange={(e) => handleIntegerChange(e.target.value, setLogin)}
+                  placeholder="000"
+                  className="w-full bg-black/20 border border-[#212124] text-sm text-gray-200 px-3 py-2 outline-none transition-colors placeholder:text-gray-600 select-text"
+                />
               </div>
 
-              {/* Conditional MT5 Fields */}
-              {isMt5 && (
-                <>
-                  <div className="flex flex-col gap-2">
-                    <label className="text-[10px] font-semibold tracking-widest uppercase text-gray-500">Server</label>
-                    <input
-                      type="text"
-                      value={server}
-                      onChange={(e) => setServer(e.target.value)}
-                      placeholder="idk"
-                      className="w-full bg-black/20 border border-[#212124] text-sm text-gray-200 px-3 py-2 outline-none transition-colors placeholder:text-gray-600 select-text"
-                    />
-                  </div>
-
-                  <div className="flex flex-col gap-2">
-                    <label className="text-[10px] font-semibold tracking-widest uppercase text-gray-500">Login</label>
-                    <input
-                      type="text"
-                      value={login}
-                      onChange={(e) => handleIntegerChange(e.target.value, setLogin)}
-                      placeholder="000"
-                      className="w-full bg-black/20 border border-[#212124] text-sm text-gray-200 px-3 py-2 outline-none transition-colors placeholder:text-gray-600 select-text"
-                    />
-                  </div>
-
-                  <div className="flex flex-col gap-2">
-                    <label className="text-[10px] font-semibold tracking-widest uppercase text-gray-500">Password</label>
-                    <input
-                      type="password"
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      placeholder="••••••"
-                      className="w-full bg-black/20 border border-[#212124] text-sm text-gray-200 px-3 py-2 outline-none transition-colors placeholder:text-gray-600 select-text"
-                    />
-                  </div>
-                </>
-              )}
-            </div>
-          </div>
+              <div className="flex flex-col gap-2">
+                <label className="text-[10px] font-semibold tracking-widest uppercase text-gray-500">Password</label>
+                <input
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="••••••"
+                  className="w-full bg-black/20 border border-[#212124] text-sm text-gray-200 px-3 py-2 outline-none transition-colors placeholder:text-gray-600 select-text"
+                />
+              </div>
+            </>
+          )}
         </div>
-      )}
+      </ModalShell>
 
     </div>
   )

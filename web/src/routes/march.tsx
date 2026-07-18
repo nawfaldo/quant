@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { useApp } from "../context/AppContext";
@@ -8,6 +8,7 @@ import ChartPanel from "../components/charts/ChartPanel";
 import LiquidGlassSwitch from "../components/buttons/LiquidGlassSwitch";
 import { SpinnerIcon } from "../components/ui/icons";
 import ModalShell from "../components/ui/ModalShell";
+import SymbolModal from "../components/modals/SymbolModal";
 
 export const Route = createFileRoute('/march')({
   // The root route owns this component's persistent mount.
@@ -207,6 +208,7 @@ export function MarchWorkspace() {
 
   const [isPanelPopupOpen, setIsPanelPopupOpen] = useState(false);
   const [isEnvironmentPopupOpen, setIsEnvironmentPopupOpen] = useState(false);
+  const [symbolModalOpen, setSymbolModalOpen] = useState(false);
   const { data: environments = [], isLoading: isEnvironmentsLoading } = useQuery({
     queryKey: ["environments"],
     queryFn: fetchEnvironments,
@@ -519,7 +521,6 @@ export function MarchWorkspace() {
         bookmapHeatmap: stored.indicators.bookmap_heatmap === true,
         cvd: stored.indicators.cvd === true,
       },
-      setSymbol: (s: "nq" | "es") => updateMarchPanel(marchLayout, i, { symbol: s }),
       setTf: (t: TF) => updateMarchPanel(marchLayout, i, { tf: t.table }),
       onApplyRange: (from: string, to: string) =>
         updateMarchPanel(marchLayout, i, { mode: "range", from, to }),
@@ -531,6 +532,10 @@ export function MarchWorkspace() {
       onOpenBacktests: () => {
         setActiveMarchPanel({ layout: marchLayout, index: i });
         setModalOpen(true);
+      },
+      onOpenSymbolModal: () => {
+        setActiveMarchPanel({ layout: marchLayout, index: i });
+        setSymbolModalOpen(true);
       },
     };
   };
@@ -824,6 +829,24 @@ export function MarchWorkspace() {
         activeSymbol={activeCfg.symbol}
         environmentId={selectedEnvironmentId}
       />
+      <SymbolModal
+        open={symbolModalOpen}
+        onClose={() => setSymbolModalOpen(false)}
+        selectedSymbol={activeCfg.symbol}
+        onSelectSymbol={(sym, defaultTf, availableTfs) => {
+          if (!activeMarchPanel) return;
+          const currentTf = activeCfg.tf;
+          const patch: Partial<LayoutPanelConfig> = { symbol: sym };
+          if (availableTfs && availableTfs.length > 0) {
+            if (!availableTfs.includes(currentTf)) {
+              patch.tf = availableTfs[0];
+            }
+          } else if (defaultTf) {
+            patch.tf = defaultTf;
+          }
+          updateMarchPanel(activeMarchPanel.layout, activeMarchPanel.index, patch);
+        }}
+      />
     </>
   );
 }
@@ -946,8 +969,17 @@ const INDICATOR_ROWS: { key: keyof Indicators; label: string }[] = [
   { key: "volume_delta_bubbles", label: "Volume Delta Bubbles" },
   { key: "vwap", label: "VWAP" },
   { key: "noise_area", label: "Noise Area" },
-  { key: "cvd", label: "Cumulative Volume Delta (CVD)" },
+  { key: "cvd", label: "Cumulative Volume Delta" },
 ];
+
+function SearchIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-gray-400">
+      <circle cx="11" cy="11" r="8" />
+      <line x1="21" y1="21" x2="16.65" y2="16.65" />
+    </svg>
+  );
+}
 
 function IndicatorsModal({ open, onClose, indicators, onToggle }: {
   open: boolean;
@@ -955,20 +987,65 @@ function IndicatorsModal({ open, onClose, indicators, onToggle }: {
   indicators: Indicators;
   onToggle: (key: keyof Indicators) => void;
 }) {
+  const [searchQuery, setSearchQuery] = useState("");
+
+  const filteredIndicators = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return INDICATOR_ROWS;
+    return INDICATOR_ROWS.filter(
+      ({ label, key }: { key: keyof Indicators; label: string }) =>
+        label.toLowerCase().includes(q) || key.toLowerCase().includes(q)
+    );
+  }, [searchQuery]);
+
+  const searchControl = (
+    <div className="flex items-center gap-2 flex-1 min-w-0 ml-2">
+      <div className="liquid-glass-btn liquid-glass-btn-no-grow !rounded-xl relative inline-flex items-center gap-1.5 px-2.5 py-2 text-xs text-gray-200 !shadow-none w-48 shrink-0">
+        <SearchIcon />
+        <input
+          type="text"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          placeholder="Search..."
+          className="bg-transparent text-xs font-medium text-gray-200 placeholder-gray-500 outline-none w-full"
+        />
+      </div>
+    </div>
+  );
+
   return (
-    <ModalShell open={open} onClose={onClose} title="Indicators" className="h-[350px]">
-      <div className="px-2 py-2">
-        {INDICATOR_ROWS.map(({ key, label }) => (
-          <button
-            key={key}
-            onClick={() => onToggle(key)}
-            aria-pressed={indicators[key] === true}
-            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-md hover:bg-white/5 transition-colors text-left"
-          >
-            <span className="flex-1 text-sm text-gray-300">{label}</span>
-            <LiquidGlassSwitch checked={indicators[key] === true} />
-          </button>
-        ))}
+    <ModalShell
+      open={open}
+      onClose={onClose}
+      title="Indicators"
+      closePosition="left"
+      headerExtra={searchControl}
+      className=""
+    >
+      <div className="flex-1 min-h-0 flex flex-col pt-2 px-0">
+        <div className="overflow-y-auto flex-1 min-h-0">
+          <div className="flex flex-col pb-12">
+            {filteredIndicators.length === 0 ? (
+              <div className="text-xs text-gray-500 font-mono text-center py-8 px-4">
+                No indicators found matching search query
+              </div>
+            ) : (
+              filteredIndicators.map(({ key, label }: { key: keyof Indicators; label: string }) => (
+                <button
+                  key={key}
+                  onClick={() => onToggle(key)}
+                  type="button"
+                  aria-pressed={indicators[key] === true}
+                  className="group relative flex items-center justify-between py-3 px-4 hover:bg-[#212126]/50 transition-colors text-left cursor-pointer w-full"
+                >
+                  <span className="font-semibold text-gray-200 text-xs flex-1">{label}</span>
+                  <LiquidGlassSwitch checked={indicators[key] === true} />
+                  <div className="absolute bottom-0 left-4 right-0 border-b border-white/15 pointer-events-none" />
+                </button>
+              ))
+            )}
+          </div>
+        </div>
       </div>
     </ModalShell>
   );
@@ -983,36 +1060,73 @@ function BacktestsModal({ open, onClose, visibleIds, loadingIds, onToggle, activ
   activeSymbol: string;
   environmentId: number | null;
 }) {
+  const [searchQuery, setSearchQuery] = useState("");
   const { data: backtests, isLoading, isError } = useQuery({
     queryKey: ["backtests"],
     queryFn: fetchBacktests,
     enabled: open,
     staleTime: Infinity,
   });
-  const filteredBacktests = backtests?.filter(
-    (backtest) => backtest.environment_id === environmentId && backtest.symbol.toLowerCase() === activeSymbol.toLowerCase(),
+
+  const filteredBacktests = useMemo<Backtest[]>(() => {
+    const list = backtests?.filter(
+      (b: Backtest) => b.environment_id === environmentId && b.symbol.toLowerCase() === activeSymbol.toLowerCase(),
+    ) || [];
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return list;
+    return list.filter(
+      (b: Backtest) => b.strategy.toLowerCase().includes(q) || b.id.toString().includes(q)
+    );
+  }, [backtests, environmentId, activeSymbol, searchQuery]);
+
+  const searchControl = (
+    <div className="flex items-center gap-2 flex-1 min-w-0 ml-2">
+      <div className="liquid-glass-btn liquid-glass-btn-no-grow !rounded-xl relative inline-flex items-center gap-1.5 px-2.5 py-2 text-xs text-gray-200 !shadow-none w-48 shrink-0">
+        <SearchIcon />
+        <input
+          type="text"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          placeholder="Search..."
+          className="bg-transparent text-xs font-medium text-gray-200 placeholder-gray-500 outline-none w-full"
+        />
+      </div>
+    </div>
   );
 
   return (
-    <ModalShell open={open} onClose={onClose} title="Backtests" className="h-[300px]">
-      <div className="overflow-y-auto px-3 pb-3 space-y-1 mt-3">
-        {isLoading && <div className="text-xs text-gray-600 text-center py-6">Loading…</div>}
-        {isError && <div className="text-xs text-red-400 text-center py-6">Failed to load backtests</div>}
-        {!isLoading && !isError && environmentId === null && (
-          <div className="text-xs text-gray-600 text-center py-6">Select an environment first</div>
-        )}
-        {!isLoading && !isError && environmentId !== null && filteredBacktests?.length === 0 && (
-          <div className="text-xs text-gray-600 text-center py-6">No backtests for this environment and symbol</div>
-        )}
-        {filteredBacktests?.map((backtest) => (
-          <BacktestRow
-            key={backtest.id}
-            backtest={backtest}
-            visible={visibleIds.has(backtest.id)}
-            loading={loadingIds.has(backtest.id)}
-            onToggle={() => onToggle(backtest.id)}
-          />
-        ))}
+    <ModalShell
+      open={open}
+      onClose={onClose}
+      title="Backtests"
+      closePosition="left"
+      headerExtra={searchControl}
+      className=""
+    >
+      <div className="flex-1 min-h-0 flex flex-col pt-2 px-0">
+        <div className="overflow-y-auto flex-1 min-h-0">
+          <div className="flex flex-col pb-12">
+            {isLoading && <div className="text-xs text-gray-500 font-mono text-center py-8 px-4">Loading…</div>}
+            {isError && <div className="text-xs text-red-400 text-center py-8 px-4">Failed to load backtests</div>}
+            {!isLoading && !isError && environmentId === null && (
+              <div className="text-xs text-gray-500 text-center py-8 px-4">Select an environment first</div>
+            )}
+            {!isLoading && !isError && environmentId !== null && filteredBacktests.length === 0 && (
+              <div className="text-xs text-gray-500 text-center py-8 px-4">
+                {searchQuery ? "No backtests found matching search query" : "No backtests for this environment and symbol"}
+              </div>
+            )}
+            {filteredBacktests.map((backtest: Backtest) => (
+              <BacktestRow
+                key={backtest.id}
+                backtest={backtest}
+                visible={visibleIds.has(backtest.id)}
+                loading={loadingIds.has(backtest.id)}
+                onToggle={() => onToggle(backtest.id)}
+              />
+            ))}
+          </div>
+        </div>
       </div>
     </ModalShell>
   );
@@ -1025,13 +1139,21 @@ function BacktestRow({ backtest, visible, loading, onToggle }: {
   onToggle: () => void;
 }) {
   return (
-    <div className="flex items-center justify-between gap-3 px-1 py-2 rounded-lg">
-      <span className="text-xs text-gray-300 truncate">
-        {backtest.strategy} <span className="text-gray-600">#{backtest.id}</span>
+    <div
+      onClick={onToggle}
+      className="group relative flex items-center justify-between py-3 px-4 hover:bg-[#212126]/50 transition-colors cursor-pointer w-full"
+    >
+      <span className="font-semibold text-gray-200 text-xs truncate flex-1 min-w-0 pr-3">
+        {backtest.strategy} <span className="text-gray-500 font-mono text-[11px] ml-1">#{backtest.id}</span>
       </span>
-      {loading ? <SpinnerIcon /> : (
+      {loading ? (
+        <SpinnerIcon />
+      ) : (
         <button
-          onClick={onToggle}
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggle();
+          }}
           type="button"
           role="switch"
           aria-checked={visible}
@@ -1041,6 +1163,7 @@ function BacktestRow({ backtest, visible, loading, onToggle }: {
           <LiquidGlassSwitch checked={visible} />
         </button>
       )}
+      <div className="absolute bottom-0 left-4 right-0 border-b border-white/15 pointer-events-none" />
     </div>
   );
 }
