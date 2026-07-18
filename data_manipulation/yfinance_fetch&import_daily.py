@@ -289,9 +289,14 @@ def clear_destination_range(host: str, port: int, table: str, start: date, end: 
     partitions = [str(row[0]) for row in dataset] if isinstance(dataset, list) else []
     if not partitions:
         raise RuntimeError(f"{table} has {before:,} range rows but no matching DAY partitions")
-    partition_sql = ",".join(f"'{partition}'" for partition in partitions)
+    partition_sql_list = []
+    chunk_size = 100
+    for i in range(0, len(partitions), chunk_size):
+        chunk = partitions[i:i + chunk_size]
+        partition_sql_list.append(",".join(f"'{p}'" for p in chunk))
     print(f"Replacing {before:,} existing rows in {table}...", flush=True)
-    questdb_exec(host, port, f"alter table {table} drop partition list {partition_sql}")
+    for partition_sql in partition_sql_list:
+        questdb_exec(host, port, f"alter table {table} drop partition list {partition_sql}")
     deadline = time.monotonic() + 120
     while count_range(host, port, table, start, end) != 0:
         if time.monotonic() >= deadline:
@@ -323,13 +328,30 @@ def find_duplicate(host: str, port: int, table: str, start: date, end: date) -> 
 
 
 def verify_import(host: str, http_port: int, table: str, start: date, end: date, source_rows: int) -> None:
+    deadline = time.monotonic() + 120
+    # Wait for table to exist
+    while time.monotonic() < deadline:
+        try:
+            if table_exists(host, http_port, table):
+                break
+        except Exception:
+            pass
+        time.sleep(0.5)
+
     if not table_exists(host, http_port, table):
         raise RuntimeError(f"Expected QuestDB table was not created: {table}")
-    rows = count_range(host, http_port, table, start, end)
-    deadline = time.monotonic() + 120
-    while rows != source_rows and time.monotonic() < deadline:
-        time.sleep(0.25)
-        rows = count_range(host, http_port, table, start, end)
+
+    # Wait for expected row count
+    rows = -1
+    while time.monotonic() < deadline:
+        try:
+            rows = count_range(host, http_port, table, start, end)
+            if rows == source_rows:
+                break
+        except Exception:
+            pass
+        time.sleep(0.5)
+
     if rows != source_rows:
         raise RuntimeError(f"{table} has {rows:,} rows in range; expected {source_rows:,}")
     duplicate = find_duplicate(host, http_port, table, start, end)

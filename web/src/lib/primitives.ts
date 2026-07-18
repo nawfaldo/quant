@@ -73,7 +73,7 @@ class BookmapHeatmapRenderer implements IPrimitivePaneRenderer {
       const height = ctx.canvas.height;
       const topPrice = series.coordinateToPrice(0);
       const bottomPrice = series.coordinateToPrice(height / vpr);
-      const profile = HEATMAP_PROFILES[this.primitive.symbol];
+      const profile = HEATMAP_PROFILES[this.primitive.symbol as "nq" | "es"] ?? HEATMAP_PROFILES.nq;
       const cacheKey = [
         this.primitive.dataRevision,
         from,
@@ -271,7 +271,7 @@ export class BookmapHeatmapPrimitive implements ISeriesPrimitive {
   levels: HeatmapLevel[] = [];
   dataEndTime = 0;
   timeStepSeconds = 60;
-  symbol: "nq" | "es" = "nq";
+  symbol: string = "nq";
   dataRevision = 0;
   renderCache: HTMLCanvasElement | null = null;
   renderCacheKey = "";
@@ -287,7 +287,7 @@ export class BookmapHeatmapPrimitive implements ISeriesPrimitive {
   getSeries() { return this._series; }
   getChart() { return this._chart; }
   setTimeStep(seconds: number) { this.timeStepSeconds = Math.max(1, seconds); }
-  setSymbol(symbol: "nq" | "es") {
+  setSymbol(symbol: string) {
     if (this.symbol === symbol) return;
     this.symbol = symbol;
     this.renderCacheKey = "";
@@ -1624,7 +1624,6 @@ class TickBubblesRenderer implements IPrimitivePaneRenderer {
       const timeBucketSize = Math.max(0.01, visibleSeconds / bucketsAcross);
 
       // Price bucket: use the symbol tick size (0.25 for NQ/ES).
-      const priceStep = p.priceStep;
 
       // Binary search for the start of visible ticks.
       let lo = 0, hi = ticks.length;

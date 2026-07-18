@@ -746,40 +746,47 @@ export default function TestPage() {
                 <span className="text-xs font-semibold tracking-wider text-gray-400 uppercase select-none">
                   {questionLabel("Command", isCommandFilled)}
                 </span>
-                <select
-                  value={selectedCommand}
-                  onChange={(e) => {
-                    updateActiveTab({
-                      selectedCommand: e.target.value,
-                      selectedEnvironmentId: "",
-                      selectedStrategy: "",
-                      selectedSymbol: "",
-                      selectedInstrument: "",
-                      initialBalance: "",
-                      baseLot: "",
-                      leverage: "",
-                      sizing: "",
-                      volTarget: "",
-                      volHalflife: "",
-                      volMaxMult: "",
-                      volMinDays: "",
-                      fromDate: "",
-                      toDate: "",
-                      hasResult: false,
-                      isSaved: false,
-                      title: "Backtest",
-                      combineBacktestIds: ["", ""],
-                    });
-                  }}
-                  className="bg-[#121214] border border-[#212124] text-xs font-medium text-gray-200 px-2.5 py-1.5 outline-none cursor-pointer hover:border-gray-700 transition-colors shrink-0 w-48 h-8"
-                >
-                  <option value="" disabled>Select command...</option>
-                  {commands.map((cmd) => (
-                    <option key={cmd} value={cmd}>
-                      {cmd}
-                    </option>
-                  ))}
-                </select>
+                <div className="relative w-48 shrink-0">
+                  <select
+                    value={selectedCommand}
+                    onChange={(e) => {
+                      updateActiveTab({
+                        selectedCommand: e.target.value,
+                        selectedEnvironmentId: "",
+                        selectedStrategy: "",
+                        selectedSymbol: "",
+                        selectedInstrument: "",
+                        initialBalance: "",
+                        baseLot: "",
+                        leverage: "",
+                        sizing: "",
+                        volTarget: "",
+                        volHalflife: "",
+                        volMaxMult: "",
+                        volMinDays: "",
+                        fromDate: "",
+                        toDate: "",
+                        hasResult: false,
+                        isSaved: false,
+                        title: "Backtest",
+                        combineBacktestIds: ["", ""],
+                      });
+                    }}
+                    className="bg-[#121214] border border-[#212124] text-xs font-medium text-gray-200 px-2.5 py-1.5 outline-none cursor-pointer hover:border-gray-700 transition-colors w-full h-8 appearance-none pr-8"
+                  >
+                    <option value="" disabled>Select command...</option>
+                    {commands.map((cmd) => (
+                      <option key={cmd} value={cmd}>
+                        {cmd}
+                      </option>
+                    ))}
+                  </select>
+                  <div className="absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none flex items-center">
+                    <svg className="w-3 h-3 text-gray-500 fill-none stroke-current" strokeWidth="2.5" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
+                    </svg>
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -798,38 +805,45 @@ export default function TestPage() {
                   <span className="text-xs font-semibold tracking-wider text-gray-400 uppercase select-none">
                     {questionLabel("Environment", isEnvironmentFilled)}
                   </span>
-                  <select
-                    value={selectedEnvironmentId}
-                    onChange={(e) => {
-                      updateActiveTab({
-                        selectedEnvironmentId: e.target.value,
-                        selectedStrategy: "",
-                        selectedSymbol: "",
-                        selectedInstrument: "",
-                        initialBalance: "",
-                        baseLot: "",
-                        leverage: "",
-                        sizing: "",
-                        volTarget: "",
-                        volHalflife: "",
-                        volMaxMult: "",
-                        volMinDays: "",
-                        fromDate: "",
-                        toDate: "",
-                        hasResult: false,
-                        isSaved: false,
-                        title: "Backtest",
-                      });
-                    }}
-                    className="bg-[#121214] border border-[#212124] text-xs font-medium text-gray-200 px-2.5 py-1.5 outline-none cursor-pointer hover:border-gray-700 transition-colors shrink-0 w-48 h-8"
-                  >
-                    <option value="" disabled>{isEnvironmentsLoading ? "Loading environments..." : "Select environment..."}</option>
-                    {environments.map((environment) => (
-                      <option key={environment.id} value={environment.id}>
-                        {environment.name}
-                      </option>
-                    ))}
-                  </select>
+                  <div className="relative w-48 shrink-0">
+                    <select
+                      value={selectedEnvironmentId}
+                      onChange={(e) => {
+                        updateActiveTab({
+                          selectedEnvironmentId: e.target.value,
+                          selectedStrategy: "",
+                          selectedSymbol: "",
+                          selectedInstrument: "",
+                          initialBalance: "",
+                          baseLot: "",
+                          leverage: "",
+                          sizing: "",
+                          volTarget: "",
+                          volHalflife: "",
+                          volMaxMult: "",
+                          volMinDays: "",
+                          fromDate: "",
+                          toDate: "",
+                          hasResult: false,
+                          isSaved: false,
+                          title: "Backtest",
+                        });
+                      }}
+                      className="bg-[#121214] border border-[#212124] text-xs font-medium text-gray-200 px-2.5 py-1.5 outline-none cursor-pointer hover:border-gray-700 transition-colors w-full h-8 appearance-none pr-8"
+                    >
+                      <option value="" disabled>{isEnvironmentsLoading ? "Loading environments..." : "Select environment..."}</option>
+                      {environments.map((environment) => (
+                        <option key={environment.id} value={environment.id}>
+                          {environment.name}
+                        </option>
+                      ))}
+                    </select>
+                    <div className="absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none flex items-center">
+                      <svg className="w-3 h-3 text-gray-500 fill-none stroke-current" strokeWidth="2.5" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
+                      </svg>
+                    </div>
+                  </div>
                 </div>
               </div>
             )}
@@ -883,7 +897,7 @@ export default function TestPage() {
                   <span className="text-xs font-semibold tracking-wider text-gray-400 uppercase select-none">
                     {questionLabel("Date", isDateFilled)}
                   </span>
-                  <div className="flex items-center gap-4 relative">
+                  <div className="flex items-center" style={{ gap: 0 }}>
                     <input
                       type="text"
                       value={fromDate}
@@ -897,9 +911,15 @@ export default function TestPage() {
                       placeholder="From (YYYY-MM-DD)"
                       className="bg-[#121214] border border-[#212124] text-xs font-medium text-gray-200 px-2.5 py-1.5 outline-none hover:border-gray-700 transition-colors w-48 h-8 font-mono"
                     />
-                    <span className="absolute left-[192px] w-4 text-center text-gray-600 select-none font-light">
-                      -
-                    </span>
+                    <svg
+                      width="10"
+                      height="10"
+                      viewBox="0 0 24 24"
+                      className="text-gray-500 fill-current shrink-0 select-none"
+                      style={{ display: "block", margin: 0, padding: 0 }}
+                    >
+                      <path d="M6 4v16l14-8z" />
+                    </svg>
                     <input
                       type="text"
                       value={toDate}
@@ -949,24 +969,31 @@ export default function TestPage() {
                           {questionLabel(index === 0 ? "First Strategy" : index === 1 ? "Second Strategy" : `Strategy ${index + 1}`, isFilled)}
                         </span>
                         <div className="flex items-center gap-2">
-                          <select
-                            value={btId}
-                            onChange={(e) => {
-                              const newIds = [...combineBacktestIds];
-                              newIds[index] = e.target.value;
-                              updateActiveTab({
-                                combineBacktestIds: newIds,
-                              });
-                            }}
-                            className="bg-[#121214] border border-[#212124] text-xs font-medium text-gray-200 px-2.5 py-1.5 outline-none cursor-pointer hover:border-gray-700 transition-colors shrink-0 w-48 h-8 font-mono"
-                          >
-                            <option value="" disabled>Select backtest...</option>
-                            {backtests?.map((bt) => (
-                              <option key={bt.id} value={bt.id}>
-                                {bt.strategy} (#{bt.id})
-                              </option>
-                            ))}
-                          </select>
+                          <div className="relative w-48 shrink-0">
+                            <select
+                              value={btId}
+                              onChange={(e) => {
+                                const newIds = [...combineBacktestIds];
+                                newIds[index] = e.target.value;
+                                updateActiveTab({
+                                  combineBacktestIds: newIds,
+                                });
+                              }}
+                              className="bg-[#121214] border border-[#212124] text-xs font-medium text-gray-200 px-2.5 py-1.5 outline-none cursor-pointer hover:border-gray-700 transition-colors w-full h-8 appearance-none pr-8 font-mono"
+                            >
+                              <option value="" disabled>Select backtest...</option>
+                              {backtests?.map((bt) => (
+                                <option key={bt.id} value={bt.id}>
+                                  {bt.strategy} (#{bt.id})
+                                </option>
+                              ))}
+                            </select>
+                            <div className="absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none flex items-center">
+                              <svg className="w-3 h-3 text-gray-500 fill-none stroke-current" strokeWidth="2.5" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
+                              </svg>
+                            </div>
+                          </div>
                           {index >= 2 && (
                             <button
                               onClick={() => handleRemoveCombineStrategy(index)}
@@ -1012,12 +1039,12 @@ export default function TestPage() {
                         {/* Terminal circle or empty space */}
                       </div>
                       {/* Right Content */}
-                      <div className="flex items-center gap-4 pl-0">
+                      <div className="flex items-center gap-2">
                         <button
                           type="button"
                           disabled={isLoading}
                           onClick={handleSeeResult}
-                          className="liquid-glass-btn liquid-glass-btn-no-grow disabled:cursor-wait text-xs font-semibold tracking-wide px-4 py-2 w-48 h-8 gap-1.5 select-none shrink-0"
+                          className="liquid-glass-btn liquid-glass-btn-no-grow disabled:cursor-wait text-xs font-semibold tracking-wide px-4 py-2.5 h-9 gap-1.5 select-none shrink-0 w-auto"
                         >
                           {isLoading ? (
                             <>
@@ -1092,40 +1119,47 @@ export default function TestPage() {
                   <span className="text-xs font-semibold tracking-wider text-gray-400 uppercase select-none">
                     {questionLabel("Strategy", isStrategyFilled)}
                   </span>
-                  <select
-                    value={selectedStrategy}
-                    onChange={(e) => {
-                      const stratVal = e.target.value;
-                      updateActiveTab({
-                        selectedStrategy: stratVal,
-                        selectedSymbol: "",
-                        selectedInstrument: "",
-                        initialBalance: "",
-                        baseLot: "",
-                        leverage: "",
-                        sizing: "",
-                        volTarget: "",
-                        volHalflife: "",
-                        volMaxMult: "",
-                        volMinDays: "",
-                        fromDate: "",
-                        toDate: "",
-                        hasResult: false,
-                        isSaved: false,
-                        title: getTabTitle(stratVal, "", "Backtest")
-                      });
-                    }}
-                    className="bg-[#121214] border border-[#212124] text-xs font-medium text-gray-200 px-2.5 py-1.5 outline-none cursor-pointer hover:border-gray-700 transition-colors shrink-0 w-48 h-8"
-                  >
-                    <option value="" disabled>
-                      {isStrategiesLoading ? "Loading strategies..." : strategies.length === 0 ? "No strategies in this environment" : "Select strategy..."}
-                    </option>
-                    {strategies.map((strategy) => (
-                      <option key={strategy.id} value={strategy.name}>
-                        {strategy.name}
+                  <div className="relative w-48 shrink-0">
+                    <select
+                      value={selectedStrategy}
+                      onChange={(e) => {
+                        const stratVal = e.target.value;
+                        updateActiveTab({
+                          selectedStrategy: stratVal,
+                          selectedSymbol: "",
+                          selectedInstrument: "",
+                          initialBalance: "",
+                          baseLot: "",
+                          leverage: "",
+                          sizing: "",
+                          volTarget: "",
+                          volHalflife: "",
+                          volMaxMult: "",
+                          volMinDays: "",
+                          fromDate: "",
+                          toDate: "",
+                          hasResult: false,
+                          isSaved: false,
+                          title: getTabTitle(stratVal, "", "Backtest")
+                        });
+                      }}
+                      className="bg-[#121214] border border-[#212124] text-xs font-medium text-gray-200 px-2.5 py-1.5 outline-none cursor-pointer hover:border-gray-700 transition-colors w-full h-8 appearance-none pr-8"
+                    >
+                      <option value="" disabled>
+                        {isStrategiesLoading ? "Loading strategies..." : strategies.length === 0 ? "No strategies in this environment" : "Select strategy..."}
                       </option>
-                    ))}
-                  </select>
+                      {strategies.map((strategy) => (
+                        <option key={strategy.id} value={strategy.name}>
+                          {strategy.name}
+                        </option>
+                      ))}
+                    </select>
+                    <div className="absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none flex items-center">
+                      <svg className="w-3 h-3 text-gray-500 fill-none stroke-current" strokeWidth="2.5" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
+                      </svg>
+                    </div>
+                  </div>
                 </div>
               </div>
             )}
@@ -1148,39 +1182,46 @@ export default function TestPage() {
                     <span className="text-xs font-semibold tracking-wider text-gray-400 uppercase select-none">
                       {questionLabel("Symbol", isSymbolFilled)}
                     </span>
-                    <select
-                      value={selectedSymbol}
-                      onChange={(e) => {
-                        const symVal = e.target.value;
-                        updateActiveTab({
-                          selectedSymbol: symVal,
-                          selectedInstrument: "",
-                          initialBalance: "",
-                          baseLot: "",
-                          leverage: "",
-                          sizing: "",
-                          volTarget: "",
-                          volHalflife: "",
-                          volMaxMult: "",
-                          volMinDays: "",
-                          fromDate: "",
-                          toDate: "",
-                          hasResult: false,
-                          isSaved: false,
-                          title: getTabTitle(selectedStrategy, symVal, "Backtest")
-                        });
-                      }}
-                      className="bg-[#121214] border border-[#212124] text-xs font-medium text-gray-200 px-2.5 py-1.5 outline-none cursor-pointer hover:border-gray-700 transition-colors shrink-0 w-48 h-8"
-                    >
-                      <option value="" disabled>
-                        Select symbol...
-                      </option>
-                      {symbols.map((symbol) => (
-                        <option key={symbol} value={symbol}>
-                          {symbol}
+                    <div className="relative w-48 shrink-0">
+                      <select
+                        value={selectedSymbol}
+                        onChange={(e) => {
+                          const symVal = e.target.value;
+                          updateActiveTab({
+                            selectedSymbol: symVal,
+                            selectedInstrument: "",
+                            initialBalance: "",
+                            baseLot: "",
+                            leverage: "",
+                            sizing: "",
+                            volTarget: "",
+                            volHalflife: "",
+                            volMaxMult: "",
+                            volMinDays: "",
+                            fromDate: "",
+                            toDate: "",
+                            hasResult: false,
+                            isSaved: false,
+                            title: getTabTitle(selectedStrategy, symVal, "Backtest")
+                          });
+                        }}
+                        className="bg-[#121214] border border-[#212124] text-xs font-medium text-gray-200 px-2.5 py-1.5 outline-none cursor-pointer hover:border-gray-700 transition-colors w-full h-8 appearance-none pr-8"
+                      >
+                        <option value="" disabled>
+                          Select symbol...
                         </option>
-                      ))}
-                    </select>
+                        {symbols.map((symbol) => (
+                          <option key={symbol} value={symbol}>
+                            {symbol}
+                          </option>
+                        ))}
+                      </select>
+                      <div className="absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none flex items-center">
+                        <svg className="w-3 h-3 text-gray-500 fill-none stroke-current" strokeWidth="2.5" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
+                        </svg>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -1201,34 +1242,41 @@ export default function TestPage() {
                   <span className="text-xs font-semibold tracking-wider text-gray-400 uppercase select-none">
                     {questionLabel("Instrument", isInstrumentFilled)}
                   </span>
-                  <select
-                    value={selectedInstrument}
-                    onChange={(e) => {
-                      updateActiveTab({
-                        selectedInstrument: e.target.value,
-                        initialBalance: "",
-                        baseLot: "",
-                        leverage: "",
-                        sizing: "",
-                        volTarget: "",
-                        volHalflife: "",
-                        volMaxMult: "",
-                        volMinDays: "",
-                        fromDate: "",
-                        toDate: "",
-                        hasResult: false,
-                        isSaved: false,
-                      });
-                    }}
-                    className="bg-[#121214] border border-[#212124] text-xs font-medium text-gray-200 px-2.5 py-1.5 outline-none cursor-pointer hover:border-gray-700 transition-colors shrink-0 w-48 h-8"
-                  >
-                    <option value="" disabled>Select instrument...</option>
-                    {instruments.map((instrument) => (
-                      <option key={instrument} value={instrument}>
-                        {instrument}
-                      </option>
-                    ))}
-                  </select>
+                  <div className="relative w-48 shrink-0">
+                    <select
+                      value={selectedInstrument}
+                      onChange={(e) => {
+                        updateActiveTab({
+                          selectedInstrument: e.target.value,
+                          initialBalance: "",
+                          baseLot: "",
+                          leverage: "",
+                          sizing: "",
+                          volTarget: "",
+                          volHalflife: "",
+                          volMaxMult: "",
+                          volMinDays: "",
+                          fromDate: "",
+                          toDate: "",
+                          hasResult: false,
+                          isSaved: false,
+                        });
+                      }}
+                      className="bg-[#121214] border border-[#212124] text-xs font-medium text-gray-200 px-2.5 py-1.5 outline-none cursor-pointer hover:border-gray-700 transition-colors w-full h-8 appearance-none pr-8"
+                    >
+                      <option value="" disabled>Select instrument...</option>
+                      {instruments.map((instrument) => (
+                        <option key={instrument} value={instrument}>
+                          {instrument}
+                        </option>
+                      ))}
+                    </select>
+                    <div className="absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none flex items-center">
+                      <svg className="w-3 h-3 text-gray-500 fill-none stroke-current" strokeWidth="2.5" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
+                      </svg>
+                    </div>
+                  </div>
                 </div>
               </div>
             )}
@@ -1320,18 +1368,16 @@ export default function TestPage() {
               <div className="flex gap-4 items-start relative">
                 {/* Left Timeline */}
                 <div className="relative flex flex-col items-center w-4 shrink-0 self-stretch">
-                  <div className={`w-3.5 h-3.5 rounded-full border z-10 absolute top-[31px] transition-all duration-200 flex items-center justify-center text-[9px] font-black leading-none ${
-                    isDateFilled ? "bg-gray-600 border-[#3A3A3E] text-white" : "bg-[#28282D] border-[#3A3A3E] text-transparent"
-                  }`}>
-                    ✓
-                  </div>
+                  <div className={`w-3.5 h-3.5 rounded-full border z-10 absolute top-[31px] transition-all duration-200 ${
+                    isDateFilled ? "bg-gray-200 border-[#3A3A3E]" : "bg-[#28282D] border-[#3A3A3E]"
+                  }`} />
                 </div>
                 {/* Right Content */}
                 <div className="flex flex-col gap-1.5 h-[54px] justify-end">
                   <span className="text-xs font-semibold tracking-wider text-gray-400 uppercase select-none">
                     {questionLabel("Date", isDateFilled)}
                   </span>
-                  <div className="flex items-center gap-4 relative">
+                  <div className="flex items-center gap-0">
                     <input
                       type="text"
                       value={fromDate}
@@ -1345,9 +1391,9 @@ export default function TestPage() {
                       placeholder="From (YYYY-MM-DD)"
                       className="bg-[#121214] border border-[#212124] text-xs font-medium text-gray-200 px-2.5 py-1.5 outline-none hover:border-gray-700 transition-colors w-48 h-8 font-mono"
                     />
-                    <span className="absolute left-[192px] w-4 text-center text-gray-600 select-none font-light">
-                      -
-                    </span>
+                    <svg width="10" height="10" viewBox="0 0 24 24" className="text-gray-500 fill-current shrink-0 select-none">
+                      <path d="M6 4v16l14-8z" />
+                    </svg>
                     <input
                       type="text"
                       value={toDate}
@@ -1372,41 +1418,39 @@ export default function TestPage() {
                 {/* Left Timeline */}
                 <div className="relative flex flex-col items-center w-4 shrink-0 self-stretch" />
                 {/* Right Content */}
-                <div className="flex items-center gap-4">
+                <div className="flex items-center gap-2">
                       <button
                         type="button"
                         disabled={isLoading || hasResult}
                         onClick={handleSeeResult}
-                        className="liquid-glass-btn liquid-glass-btn-no-grow disabled:cursor-not-allowed text-xs font-semibold tracking-wide px-4 py-2 min-w-32 h-8 gap-1.5 select-none shrink-0"
+                        className="liquid-glass-btn liquid-glass-btn-no-grow disabled:cursor-not-allowed text-xs font-semibold tracking-wide px-4 py-2.5 h-9 gap-1.5 select-none shrink-0 w-auto"
                       >
-                        <div className="flex items-center justify-center gap-1.5 select-none w-full">
-                          {isLoading ? (
-                            <>
-                              <svg className="animate-spin h-3.5 w-3.5 text-white" fill="none" viewBox="0 0 24 24">
-                                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                              </svg>
-                              Running...
-                            </>
-                          ) : (
-                            <>
-                              See Result
-                              <svg
-                                className="w-3.5 h-3.5"
-                                fill="none"
-                                stroke="currentColor"
-                                strokeWidth="2.2"
-                                viewBox="0 0 24 24"
-                              >
-                                <path
-                                  strokeLinecap="round"
-                                  strokeLinejoin="round"
-                                  d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3"
-                                />
-                              </svg>
-                            </>
-                          )}
-                        </div>
+                        {isLoading ? (
+                          <>
+                            <svg className="animate-spin h-3.5 w-3.5 text-white" fill="none" viewBox="0 0 24 24">
+                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                            </svg>
+                            Running...
+                          </>
+                        ) : (
+                          <>
+                            See Result
+                            <svg
+                              className="w-3.5 h-3.5"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="2.2"
+                              viewBox="0 0 24 24"
+                            >
+                              <path
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3"
+                              />
+                            </svg>
+                          </>
+                        )}
                       </button>
 
                       {!isLoading && hasResult && selectedCommand !== "Tune" && (

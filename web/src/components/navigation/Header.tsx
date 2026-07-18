@@ -1,9 +1,10 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { TIMEFRAMES, type TF } from "../../types";
+import { fetchDatabaseSymbols } from "../../api";
 
 interface Props {
-  symbol: "nq" | "es";
-  setSymbol: (sym: "nq" | "es") => void;
+  symbol: string;
   tf: TF;
   setTf: (tf: TF) => void;
   streamStatus: "loading" | "live" | "idle" | "error";
@@ -14,6 +15,7 @@ interface Props {
   onLatest: (from: string) => void;
   onOpenIndicators: () => void;
   onOpenBacktests: () => void;
+  onOpenSymbolModal: () => void;
   showFxNq: boolean;
   onToggleFxNq: () => void;
 }
@@ -36,7 +38,6 @@ function displayToIso(display: string): string {
 
 export default function Header({
   symbol,
-  setSymbol,
   tf,
   setTf,
   streamStatus,
@@ -47,6 +48,7 @@ export default function Header({
   onLatest,
   onOpenIndicators,
   onOpenBacktests,
+  onOpenSymbolModal,
   showFxNq,
   onToggleFxNq,
 }: Props) {
@@ -54,6 +56,22 @@ export default function Header({
   const [marchDraftTo, setMarchDraftTo] = useState(mode === "latest" ? "Now" : dateToDisplay(toDate));
   const [isActionsOpen, setIsActionsOpen] = useState(false);
   const marchDraftLatest = marchDraftTo.trim().toLowerCase() === "now";
+
+  const { data: dbSymbols = [] } = useQuery({
+    queryKey: ["database-symbols"],
+    queryFn: fetchDatabaseSymbols,
+    staleTime: 60000,
+  });
+
+  const availableForSymbol = useMemo(() => {
+    const item = dbSymbols.find(
+      (s) => s.symbol.toLowerCase() === symbol.toLowerCase()
+    );
+    if (!item || !item.availableTimeframes || item.availableTimeframes.length === 0) {
+      return TIMEFRAMES;
+    }
+    return TIMEFRAMES.filter((t) => item.availableTimeframes.includes(t.table));
+  }, [dbSymbols, symbol]);
 
   useEffect(() => {
     setMarchDraftFrom(dateToDisplay(fromDate));
@@ -81,17 +99,17 @@ export default function Header({
 
   return (
     <div className="absolute top-3 left-3 z-50 flex items-center gap-3">
-      {/* Symbol selector */}
+      {/* Symbol selector button */}
       <div className="march-liquid-select shrink-0">
-        <select
-          value={symbol}
-          onChange={(e) => setSymbol(e.target.value as "nq" | "es")}
-          className="march-liquid-select-input"
-          aria-label="Symbol"
+        <button
+          type="button"
+          onClick={onOpenSymbolModal}
+          className="march-liquid-select-input flex items-center justify-center cursor-pointer hover:text-white transition-colors"
+          title="Select Symbol"
+          aria-label="Select Symbol"
         >
-          <option value="nq">NQ</option>
-          <option value="es">ES</option>
-        </select>
+          <span className="font-semibold uppercase tracking-wider">{symbol}</span>
+        </button>
       </div>
 
       {/* Timeframe selector */}
@@ -105,7 +123,7 @@ export default function Header({
           className="march-liquid-select-input"
           aria-label="Timeframe"
         >
-          {TIMEFRAMES.map((t) => (
+          {availableForSymbol.map((t) => (
             <option key={t.table} value={t.table}>
               {t.label}
             </option>

@@ -25,10 +25,17 @@ pub fn date(value: Option<&str>) -> &str {
 }
 
 pub fn validate_symbol(value: &str) -> Result<&str, ApiError> {
-    SYMBOLS
-        .contains(&value)
-        .then_some(value)
-        .ok_or_else(|| ApiError::BadRequest("unknown symbol".into()))
+    let lower = value.to_lowercase();
+    if !lower.is_empty()
+        && lower.len() <= 64
+        && lower
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-' || b == b'^' || b == b'.')
+    {
+        Ok(value)
+    } else {
+        Err(ApiError::BadRequest("unknown symbol".into()))
+    }
 }
 
 pub fn validate_timeframe(value: &str) -> Result<&str, ApiError> {
@@ -175,65 +182,307 @@ pub async fn vix(questdb: &QuestDb, from: &str, to: &str) -> Result<Vec<(i64, f6
         .collect()
 }
 
-#[derive(Default)]
-struct Summary {
-    bytes: u64,
-    first: String,
-    last: String,
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct DatabaseSummaryItem {
+    pub symbol: String,
+    pub dataset_name: String,
+    pub country: String,
+    pub r#type: String,
+    pub timeframe: String,
+    pub available_timeframes: Vec<String>,
+    pub bytes: u64,
+    pub first_date: String,
+    pub last_date: String,
 }
+
+fn indonesian_company_name(symbol: &str) -> String {
+    match symbol.to_uppercase().as_str() {
+        "AADI" => "Adaro Andalan Indonesia Tbk.".into(),
+        "ADMR" => "Adaro Minerals Indonesia Tbk.".into(),
+        "ADRO" => "Adaro Energy Indonesia Tbk.".into(),
+        "AKRA" => "AKR Corporindo Tbk.".into(),
+        "ANTM" => "Aneka Tambang Tbk.".into(),
+        "ASII" => "Astra International Tbk.".into(),
+        "BBCA" => "Bank Central Asia Tbk.".into(),
+        "BBNI" => "Bank Negara Indonesia Tbk.".into(),
+        "BBRI" => "Bank Rakyat Indonesia Tbk.".into(),
+        "BMRI" => "Bank Mandiri Tbk.".into(),
+        "BUMI" => "Bumi Resources Tbk.".into(),
+        "CPIN" => "Charoen Pokphand Indonesia Tbk.".into(),
+        "DEWA" => "Darma Henwa Tbk.".into(),
+        "ESSA" => "ESSA Industries Indonesia Tbk.".into(),
+        "EXCL" => "XL Axiata Tbk.".into(),
+        "HRTA" => "Hartadinata Abadi Tbk.".into(),
+        "ICBP" => "Indofood CBP Sukses Makmur Tbk.".into(),
+        "INDF" => "Indofood Sukses Makmur Tbk.".into(),
+        "INKP" => "Indah Kiat Pulp & Paper Tbk.".into(),
+        "ISAT" => "Indosat Ooredoo Hutchison Tbk.".into(),
+        "ITMG" => "Indo Tambangraya Megah Tbk.".into(),
+        "JPFA" => "Japfa Comfeed Indonesia Tbk.".into(),
+        "KLBF" => "Kalbe Farma Tbk.".into(),
+        "MAPI" => "Mitra Adiperkasa Tbk.".into(),
+        "MBMA" => "Merdeka Battery Materials Tbk.".into(),
+        "MDKA" => "Merdeka Copper Gold Tbk.".into(),
+        "MEDC" => "Medco Energi Internasional Tbk.".into(),
+        "PGAS" => "Perusahaan Gas Negara Tbk.".into(),
+        "PTBA" => "Bukit Asam Tbk.".into(),
+        "SMGR" => "Semen Indonesia (Persero) Tbk.".into(),
+        "TLKM" => "Telkom Indonesia (Persero) Tbk.".into(),
+        "UNTR" => "United Tractors Tbk.".into(),
+        "UNVR" => "Unilever Indonesia Tbk.".into(),
+        "WIFI" => "Solusi Sinergi Digital Tbk.".into(),
+        other => format!("{other} Tbk."),
+    }
+}
+
 pub async fn database_summary(questdb: &QuestDb) -> Result<Value, ApiError> {
+    // 1. Get all table names in QuestDB
+    let tables_sql = "SELECT table_name FROM tables()";
+    let rows = match questdb.csv(tables_sql).await {
+        Ok(rows) => rows,
+        Err(_) => return Ok(json!([])),
+    };
+
+    // 2. Group tables by base symbol and collect timeframes
+    struct Group {
+        tables: Vec<(String, String)>, // (timeframe, full_table_name)
+    }
+
+    let mut groups: BTreeMap<String, Group> = BTreeMap::new();
+    for row in rows {
+        if let Some(table_name) = row.get(0) {
+            if table_name.starts_with("bm_") || table_name.starts_with("fx_") || table_name.contains("tmp") {
+                continue;
+            }
+            if let Some(pos) = table_name.rfind('_') {
+                let prefix = &table_name[..pos];
+                let tf = &table_name[pos + 1..];
+                if TIMEFRAMES.contains(&tf) {
+                    let entry = groups.entry(prefix.to_lowercase()).or_insert_with(|| Group {
+                        tables: Vec::new(),
+                    });
+                    entry.tables.push((tf.to_string(), table_name.to_string()));
+                }
+            }
+        }
+    }
+
+    if groups.is_empty() {
+        return Ok(json!([]));
+    }
+
+    // 3. For each group, construct UNION ALL query to fetch bytes, first_date, last_date
     let mut segments = Vec::new();
-    for prefix in ["es", "nq", "qqq_options"] {
-        for tf in TIMEFRAMES {
+    for (sym_key, group) in &groups {
+        for (tf, full_table) in &group.tables {
             segments.push(format!(
                 concat!(
-                    "SELECT '{prefix}' name,sum(diskSize) bytes,",
-                    "min(minTimestamp) first_date,max(maxTimestamp) last_date ",
-                    "FROM table_partitions('{prefix}_{tf}')",
+                    "SELECT '{symbol_key}' name, '{tf}' tf, sum(diskSize) bytes, ",
+                    "min(minTimestamp) first_date, max(maxTimestamp) last_date ",
+                    "FROM table_partitions('{full_table}')",
                 ),
-                prefix = prefix,
-                tf = tf
+                symbol_key = sym_key,
+                tf = tf,
+                full_table = full_table,
             ));
         }
     }
-    segments.push(
-        concat!(
-            "SELECT 'vix' name,sum(diskSize) bytes,",
-            "min(minTimestamp) first_date,max(maxTimestamp) last_date ",
-            "FROM table_partitions('vix_1d')",
-        )
-        .into(),
-    );
-    let mut values: BTreeMap<String, Summary> = BTreeMap::new();
-    for row in query(questdb, &segments.join(" UNION ALL ")).await? {
-        let name = field(&row, 0)?.to_owned();
-        let bytes = field(&row, 1)?.parse().unwrap_or(0);
-        let first = field(&row, 2)?.get(0..10).unwrap_or("");
-        let last = field(&row, 3)?.get(0..10).unwrap_or("");
-        let value = values.entry(name).or_default();
-        value.bytes += bytes;
-        if value.first.is_empty() || (!first.is_empty() && first < value.first.as_str()) {
-            value.first = first.into();
+
+    let union_sql = segments.join(" UNION ALL ");
+    let partition_rows = match questdb.csv(&union_sql).await {
+        Ok(rows) => rows,
+        Err(_) => Vec::new(),
+    };
+
+    // 4. Aggregate stats per symbol
+    #[derive(Default)]
+    struct AggStats {
+        bytes: u64,
+        first_date: String,
+        last_date: String,
+    }
+
+    let mut stats: BTreeMap<String, AggStats> = BTreeMap::new();
+    for row in partition_rows {
+        let sym = field(&row, 0)?.to_lowercase();
+        let bytes: u64 = field(&row, 2)?.parse().unwrap_or(0);
+        let first = field(&row, 3)?.get(0..10).unwrap_or("");
+        let last = field(&row, 4)?.get(0..10).unwrap_or("");
+
+        let entry = stats.entry(sym).or_default();
+        entry.bytes += bytes;
+        if entry.first_date.is_empty() || (!first.is_empty() && first < entry.first_date.as_str()) {
+            entry.first_date = first.to_string();
         }
-        if last > value.last.as_str() {
-            value.last = last.into();
+        if last > entry.last_date.as_str() {
+            entry.last_date = last.to_string();
         }
     }
-    let item = |key: &str, name: &str| {
-        let summary = values.get(key);
-        json!({
-            "name": name,
-            "bytes": summary.map(|value| value.bytes).unwrap_or(0),
-            "firstDate": summary.map(|value| value.first.as_str()).unwrap_or(""),
-            "lastDate": summary.map(|value| value.last.as_str()).unwrap_or(""),
-        })
+
+    let mut items = Vec::new();
+    for (sym_key, group) in groups {
+        let agg = stats.get(&sym_key);
+        let bytes = agg.map(|a| a.bytes).unwrap_or(0);
+        let first_date = agg.map(|a| a.first_date.clone()).unwrap_or_default();
+        let last_date = agg.map(|a| a.last_date.clone()).unwrap_or_default();
+
+        let mut available_timeframes: Vec<String> = group.tables.into_iter().map(|(tf, _)| tf).collect();
+        available_timeframes.sort_by_key(|tf| TIMEFRAMES.iter().position(|t| t == tf).unwrap_or(99));
+
+        let timeframe_str = if available_timeframes.len() == TIMEFRAMES.len() {
+            "1m...1d".to_string()
+        } else if available_timeframes.len() == 1 {
+            available_timeframes[0].clone()
+        } else if !available_timeframes.is_empty() {
+            format!("{}...{}", available_timeframes.first().unwrap(), available_timeframes.last().unwrap())
+        } else {
+            "—".to_string()
+        };
+
+        let (symbol, dataset_name, country, r#type) = match sym_key.as_str() {
+            "es" => (
+                "ES".to_string(),
+                "S&P 500 Futures".to_string(),
+                "United States".to_string(),
+                "Futures".to_string(),
+            ),
+            "nq" => (
+                "NQ".to_string(),
+                "Nasdaq-100 Futures".to_string(),
+                "United States".to_string(),
+                "Futures".to_string(),
+            ),
+            "vix" => (
+                "VIX".to_string(),
+                "CBOE Volatility Index".to_string(),
+                "United States".to_string(),
+                "Index".to_string(),
+            ),
+            "jkse" => (
+                "JKSE".to_string(),
+                "Jakarta Composite Index".to_string(),
+                "Indonesia".to_string(),
+                "Index".to_string(),
+            ),
+            _ => (
+                sym_key.to_uppercase(),
+                indonesian_company_name(&sym_key),
+                "Indonesia".to_string(),
+                "Stock".to_string(),
+            ),
+        };
+
+        items.push(DatabaseSummaryItem {
+            symbol,
+            dataset_name,
+            country,
+            r#type,
+            timeframe: timeframe_str,
+            available_timeframes,
+            bytes,
+            first_date,
+            last_date,
+        });
+    }
+
+    items.sort_by(|a, b| {
+        let priority = |sym: &str| match sym {
+            "ES" => 0,
+            "NQ" => 1,
+            "VIX" => 2,
+            "JKSE" => 3,
+            _ => 4,
+        };
+        let p_a = priority(&a.symbol);
+        let p_b = priority(&b.symbol);
+        if p_a != p_b {
+            p_a.cmp(&p_b)
+        } else {
+            a.symbol.cmp(&b.symbol)
+        }
+    });
+
+    Ok(json!(items))
+}
+
+pub async fn database_symbols(questdb: &QuestDb) -> Result<Value, ApiError> {
+    let tables_sql = "SELECT table_name FROM tables()";
+    let rows = match questdb.csv(tables_sql).await {
+        Ok(rows) => rows,
+        Err(_) => return Ok(json!([])),
     };
-    Ok(json!([
-        item("es", "ES"),
-        item("nq", "NQ"),
-        item("qqq_options", "QQQ Options"),
-        item("vix", "VIX")
-    ]))
+
+    struct Group {
+        tables: Vec<(String, String)>,
+    }
+
+    let mut groups: BTreeMap<String, Group> = BTreeMap::new();
+    for row in rows {
+        if let Some(table_name) = row.get(0) {
+            if table_name.starts_with("bm_") || table_name.starts_with("fx_") || table_name.contains("tmp") {
+                continue;
+            }
+            if let Some(pos) = table_name.rfind('_') {
+                let prefix = &table_name[..pos];
+                let tf = &table_name[pos + 1..];
+                if TIMEFRAMES.contains(&tf) {
+                    let entry = groups.entry(prefix.to_lowercase()).or_insert_with(|| Group {
+                        tables: Vec::new(),
+                    });
+                    entry.tables.push((tf.to_string(), table_name.to_string()));
+                }
+            }
+        }
+    }
+
+    let mut items = Vec::new();
+    for (sym_key, group) in groups {
+        let mut available_timeframes: Vec<String> = group.tables.into_iter().map(|(tf, _)| tf).collect();
+        available_timeframes.sort_by_key(|tf| TIMEFRAMES.iter().position(|t| t == tf).unwrap_or(99));
+
+        let (symbol, dataset_name, country, r#type) = match sym_key.as_str() {
+            "es" => ("ES".to_string(), "S&P 500 Futures".to_string(), "United States".to_string(), "Futures".to_string()),
+            "nq" => ("NQ".to_string(), "Nasdaq-100 Futures".to_string(), "United States".to_string(), "Futures".to_string()),
+            "vix" => ("VIX".to_string(), "CBOE Volatility Index".to_string(), "United States".to_string(), "Index".to_string()),
+            "jkse" => ("JKSE".to_string(), "Jakarta Composite Index".to_string(), "Indonesia".to_string(), "Index".to_string()),
+            _ => (
+                sym_key.to_uppercase(),
+                indonesian_company_name(&sym_key),
+                "Indonesia".to_string(),
+                "Stock".to_string(),
+            ),
+        };
+
+        items.push(json!({
+            "symbol": symbol,
+            "datasetName": dataset_name,
+            "country": country,
+            "type": r#type,
+            "availableTimeframes": available_timeframes,
+        }));
+    }
+
+    items.sort_by(|a, b| {
+        let priority = |sym: &str| match sym {
+            "ES" => 0,
+            "NQ" => 1,
+            "VIX" => 2,
+            "JKSE" => 3,
+            _ => 4,
+        };
+        let sym_a = a["symbol"].as_str().unwrap_or("");
+        let sym_b = b["symbol"].as_str().unwrap_or("");
+        let p_a = priority(sym_a);
+        let p_b = priority(sym_b);
+        if p_a != p_b {
+            p_a.cmp(&p_b)
+        } else {
+            sym_a.cmp(sym_b)
+        }
+    });
+
+    Ok(json!(items))
 }
 
 pub async fn march_candles(
@@ -262,21 +511,37 @@ async fn merged_march_candles(
 ) -> Result<Vec<Candle>, ApiError> {
     validate_symbol(symbol)?;
     validate_timeframe(tf)?;
+    let symbol_lower = symbol.to_lowercase();
     let lookback_days = march_lookback_days(tf);
     let base_filter = march_filter(from, to, lookback_days, false);
     let tick_filter = march_filter(from, to, lookback_days, true);
 
-    // The canonical historical series is one minute.  Bookmap tick bars
-    // replace regular OHLCV for any minute where Bookmap has a real trade, then
-    // the resulting minute series is aggregated to the selected chart frame.
-    // This preserves Bookmap's higher-fidelity data without leaving a partial
-    // Bookmap hour/day as a partial candle.
+    // 1. Try direct timeframe table first (e.g. jkse_1d, nq_1m, etc.)
+    let direct_sql = format!(
+        concat!(
+            "SELECT cast(timestamp as long) ts,open,high,low,close,volume ",
+            "FROM {symbol}_{tf} {base_filter} ORDER BY timestamp ASC",
+        ),
+        symbol = symbol_lower,
+        tf = tf,
+        base_filter = base_filter,
+    );
+
+    let direct_rows = optional_table_query(questdb, &direct_sql).await?;
+    if !direct_rows.is_empty() {
+        let parsed = parse_candles(direct_rows, 1_000)?;
+        if !parsed.is_empty() {
+            return Ok(parsed.into_values().collect());
+        }
+    }
+
+    // 2. Fall back to 1m table + Bookmap tick aggregation
     let ohlcv_sql = format!(
         concat!(
             "SELECT cast(timestamp as long) ts,open,high,low,close,volume ",
             "FROM {symbol}_1m {base_filter} ORDER BY timestamp ASC",
         ),
-        symbol = symbol,
+        symbol = symbol_lower,
         base_filter = base_filter,
     );
     let bookmap_sql = format!(
@@ -286,16 +551,11 @@ async fn merged_march_candles(
             "FROM bm_{symbol}_ticks {tick_filter} ",
             "SAMPLE BY 1m FILL(NONE) ALIGN TO CALENDAR",
         ),
-        symbol = symbol,
+        symbol = symbol_lower,
         tick_filter = tick_filter,
     );
 
-    // Standard imported OHLCV tables use QuestDB's microsecond timestamp type.
-    // Normalize it to nanoseconds before it is merged with Bookmap.
     let mut minutes = parse_candles(optional_table_query(questdb, &ohlcv_sql).await?, 1_000)?;
-    // Bookmap is deliberately inserted second: its minute replaces the normal
-    // OHLCV minute in the BTreeMap whenever both sources cover that minute.
-    // The Bookmap collector writes TIMESTAMP_NS, which is already nanoseconds.
     for (timestamp, candle) in parse_candles(optional_table_query(questdb, &bookmap_sql).await?, 1)?
     {
         minutes.insert(timestamp, candle);
@@ -374,8 +634,14 @@ fn parse_candles(
 ) -> Result<BTreeMap<i64, Candle>, ApiError> {
     rows.into_iter()
         .map(|row| {
+            let raw_ts: i64 = parse(&row, 0)?;
+            let ts = if raw_ts > 10_000_000_000_000_000 {
+                raw_ts
+            } else {
+                raw_ts * timestamp_to_nanos
+            };
             let candle = Candle {
-                timestamp: parse::<i64>(&row, 0)? * timestamp_to_nanos,
+                timestamp: ts,
                 open: parse(&row, 1)?,
                 high: parse(&row, 2)?,
                 low: parse(&row, 3)?,

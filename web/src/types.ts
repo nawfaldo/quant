@@ -103,7 +103,7 @@ export interface Indicators {
 }
 
 export interface MarchSettings {
-  symbol: 'nq' | 'es'
+  symbol: string
   tf: string
   from: string
   to: string
@@ -143,7 +143,7 @@ export interface CreateEnvironmentInput {
 // One chart panel's persisted config. Stored per layout (see MarchLayouts) so
 // each layout remembers its own panels' symbol / timeframe / date / indicator.
 export interface LayoutPanelConfig {
-  symbol: 'nq' | 'es'
+  symbol: string
   tf: string            // matches a TIMEFRAMES[].table
   mode: 'latest' | 'range'
   from: string

@@ -50,7 +50,12 @@ export async function fetchVix(from?: string, to?: string): Promise<VixPoint[]> 
 }
 
 export interface DatabaseSummaryItem {
-  name: 'ES' | 'NQ' | 'QQQ Options' | 'VIX'
+  symbol: string
+  datasetName: string
+  country: string
+  type: string
+  timeframe: string
+  availableTimeframes: string[]
   bytes: number
   firstDate: string
   lastDate: string
@@ -58,6 +63,12 @@ export interface DatabaseSummaryItem {
 
 export async function fetchDatabaseSummary(): Promise<DatabaseSummaryItem[]> {
   const res = await fetch(`${BACKEND_URL}/api/database/summary`)
+  if (!res.ok) throw new Error(`Backend error: ${res.status}`)
+  return res.json()
+}
+
+export async function fetchDatabaseSymbols(): Promise<DatabaseSummaryItem[]> {
+  const res = await fetch(`${BACKEND_URL}/api/database/symbols`)
   if (!res.ok) throw new Error(`Backend error: ${res.status}`)
   return res.json()
 }
