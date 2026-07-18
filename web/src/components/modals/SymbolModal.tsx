@@ -103,7 +103,6 @@ export default function SymbolModal({
     })
   }, [allSymbols, searchQuery])
 
-  if (!open) return null
 
   const headerControls = (
     <div className="flex items-center gap-2 flex-1 min-w-0 ml-2">

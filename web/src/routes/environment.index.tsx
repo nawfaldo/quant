@@ -2,7 +2,6 @@ import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { createEnvironment, fetchEnvironments } from '../api'
-import PageShell from '../components/layout/PageShell'
 import ModalShell from '../components/ui/ModalShell'
 
 export const Route = createFileRoute('/environment/')({
@@ -10,11 +9,7 @@ export const Route = createFileRoute('/environment/')({
 })
 
 function EnvironmentRouteComponent() {
-  return (
-    <PageShell>
-      <EnvironmentPage />
-    </PageShell>
-  )
+  return null
 }
 
 export default function EnvironmentPage() {

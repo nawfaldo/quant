@@ -177,7 +177,12 @@ export default function DatabasePage() {
         </div>
       </div>
 
-      <div className="w-full max-w-[940px] border border-[#212124] bg-[#1A1A1E] shadow-2xl shadow-black/40 select-text">
+      {isLoading ? (
+        <div className="text-xs text-gray-500 font-mono">
+          Loading datasets from QuestDB…
+        </div>
+      ) : (
+        <div className="w-full max-w-[940px] border border-[#212124] bg-[#1A1A1E] shadow-2xl shadow-black/40 select-text">
           <table className="min-w-full table-fixed border-collapse text-left text-xs">
             <thead>
               <tr>
@@ -190,14 +195,7 @@ export default function DatabasePage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-900/40 bg-gray-950/10">
-              {isLoading && (
-                <tr>
-                  <td colSpan={6} className="py-8 text-center text-xs text-gray-500 font-mono">
-                    Loading datasets from QuestDB…
-                  </td>
-                </tr>
-              )}
-              {!isLoading && filteredData.length === 0 && (
+              {filteredData.length === 0 && (
                 <tr>
                   <td colSpan={6} className="py-8 text-center text-xs text-gray-500 font-mono">
                     No datasets found matching selected filters.
@@ -264,7 +262,8 @@ export default function DatabasePage() {
               })}
             </tbody>
           </table>
-      </div>
+        </div>
+      )}
     </main>
   )
 }

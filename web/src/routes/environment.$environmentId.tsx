@@ -1,56 +1,18 @@
 import { useEffect, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { createEnvironmentRule, fetchBacktests, fetchEnvironmentRules, fetchEnvironments, updateEnvironmentRule, deleteEnvironmentRule, deleteBacktest } from '../api'
+import { createFileRoute } from '@tanstack/react-router'
+import { createEnvironmentRule, fetchBacktests, fetchEnvironmentRules, updateEnvironmentRule, deleteEnvironmentRule, deleteBacktest } from '../api'
 import { type Environment } from '../types'
 import BacktestResultSidebar from '../components/backtests/BacktestResultSidebar'
-import PageShell from '../components/layout/PageShell'
 import ModalShell from '../components/ui/ModalShell'
+import { EyeIcon, EyeSlashIcon } from '../components/ui/icons'
 
 export const Route = createFileRoute('/environment/$environmentId')({
   component: EnvironmentDetailRouteComponent,
 })
 
 function EnvironmentDetailRouteComponent() {
-  const { environmentId } = Route.useParams()
-  const navigate = useNavigate()
-  const { data: environments = [], isLoading, isError, error } = useQuery({
-    queryKey: ['environments'],
-    queryFn: fetchEnvironments,
-  })
-  const selectedEnv = environments.find((environment) => environment.id === Number(environmentId))
-
-  if (isLoading) {
-    return <div className="flex flex-1 pt-3 pl-5 text-sm text-gray-500">Loading environment…</div>
-  }
-
-  if (isError || !selectedEnv) {
-    return (
-      <div className="flex flex-1 flex-col items-start gap-3 pt-5 pl-5">
-        <p className="text-sm text-red-400">
-          {isError
-            ? `Could not load environment: ${error instanceof Error ? error.message : 'unknown error'}`
-            : 'Environment not found.'}
-        </p>
-        <button
-          type="button"
-          className="liquid-glass-btn liquid-glass-btn-no-grow liquid-glass-btn-rounded-lg px-3 py-1.5 text-xs font-bold"
-          onClick={() => void navigate({ to: '/environment' })}
-        >
-          Back to environments
-        </button>
-      </div>
-    )
-  }
-
-  return (
-    <PageShell>
-      <EnvironmentDetailPage
-        selectedEnv={selectedEnv}
-        onBack={() => void navigate({ to: '/environment' })}
-      />
-    </PageShell>
-  )
+  return null
 }
 
 interface EnvironmentDetailPageProps {
@@ -364,24 +326,9 @@ export default function EnvironmentDetailPage({ selectedEnv, onBack }: Environme
                           }}
                         >
                           {selectedBacktestId === backtest.id ? (
-                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-                              <line x1="18" y1="6" x2="6" y2="18" />
-                              <line x1="6" y1="6" x2="18" y2="18" />
-                            </svg>
+                            <EyeSlashIcon size={12} strokeWidth={2.5} />
                           ) : (
-                            <svg
-                              width="12"
-                              height="12"
-                              viewBox="0 0 24 24"
-                              fill="none"
-                              stroke="currentColor"
-                              strokeWidth="2.5"
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                            >
-                              <line x1="5" y1="12" x2="19" y2="12" />
-                              <polyline points="12 5 19 12 12 19" />
-                            </svg>
+                            <EyeIcon size={12} strokeWidth={2.5} />
                           )}
                         </button>
                       </td>
@@ -394,13 +341,11 @@ export default function EnvironmentDetailPage({ selectedEnv, onBack }: Environme
         </div>
       </div>
 
-      {selectedBacktest && (
-        <BacktestResultSidebar
-          key={selectedBacktest.id}
-          backtest={selectedBacktest}
-          onDelete={() => handleDeleteBacktest(selectedBacktest.id)}
-        />
-      )}
+      <BacktestResultSidebar
+        backtest={selectedBacktest}
+        isOpen={selectedBacktest !== null}
+        onDelete={handleDeleteBacktest}
+      />
 
       <ModalShell
         open={isAddRulesModalOpen}
@@ -424,16 +369,23 @@ export default function EnvironmentDetailPage({ selectedEnv, onBack }: Environme
         <div className="bg-[#121214] px-4 pt-3 pb-4 flex flex-col gap-3 select-none">
           <div className="flex flex-col gap-2">
             <label className="text-[10px] font-semibold tracking-widest uppercase text-gray-500">Rule</label>
-            <select
-              value={ruleType}
-              onChange={(event) => setRuleType(event.target.value as RuleType)}
-              style={{ colorScheme: 'dark' }}
-              className="w-full bg-black/20 border border-[#212124] text-sm text-gray-200 px-3 py-2 outline-none transition-colors cursor-pointer select-text"
-            >
-              {missingRuleTypes.map((type) => (
-                <option key={type} value={type}>{ruleLabels[type]}</option>
-              ))}
-            </select>
+            <div className="relative w-full">
+              <select
+                value={ruleType}
+                onChange={(event) => setRuleType(event.target.value as RuleType)}
+                style={{ colorScheme: 'dark' }}
+                className="w-full bg-black/20 border border-[#212124] text-sm text-gray-200 px-3 py-2 outline-none transition-colors cursor-pointer select-text appearance-none pr-8"
+              >
+                {missingRuleTypes.map((type) => (
+                  <option key={type} value={type}>{ruleLabels[type]}</option>
+                ))}
+              </select>
+              <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none flex items-center">
+                <svg className="w-3.5 h-3.5 text-gray-500 fill-none stroke-current" strokeWidth="2.5" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
+                </svg>
+              </div>
+            </div>
           </div>
           <div className="flex flex-col gap-2">
             <label className="text-[10px] font-semibold tracking-widest uppercase text-gray-500">Value</label>
