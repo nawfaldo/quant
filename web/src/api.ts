@@ -50,7 +50,7 @@ export async function fetchVix(from?: string, to?: string): Promise<VixPoint[]> 
 }
 
 export interface DatabaseSummaryItem {
-  name: 'ES' | 'NQ' | 'QQQ Options' | 'VIX'
+  name: 'ES' | 'NQ' | 'VIX'
   bytes: number
   firstDate: string
   lastDate: string

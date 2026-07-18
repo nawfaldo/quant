@@ -182,7 +182,7 @@ struct Summary {
 }
 pub async fn database_summary(questdb: &QuestDb) -> Result<Value, ApiError> {
     let mut segments = Vec::new();
-    for prefix in ["es", "nq", "qqq_options"] {
+    for prefix in ["es", "nq"] {
         for tf in TIMEFRAMES {
             segments.push(format!(
                 concat!(
@@ -230,7 +230,6 @@ pub async fn database_summary(questdb: &QuestDb) -> Result<Value, ApiError> {
     Ok(json!([
         item("es", "ES"),
         item("nq", "NQ"),
-        item("qqq_options", "QQQ Options"),
         item("vix", "VIX")
     ]))
 }
