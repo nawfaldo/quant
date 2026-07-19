@@ -11,7 +11,7 @@ pub mod tuning;
 pub(crate) mod types;
 
 pub use combine::{combine, combine_realized};
-pub use data::{NoiseAreaPoint, format_ts, iso_day, noise_area};
+pub use data::{format_ts, iso_day};
 pub use engine::{RunResult, execute, execute_tuned};
 pub use live::{LiveBar, LiveNightDrift, LiveSignal, warm_live_night_drift};
 pub use prepare::{PreparedRun, prepare, run};

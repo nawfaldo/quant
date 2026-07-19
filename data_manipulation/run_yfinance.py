@@ -83,7 +83,7 @@ def main():
 
     # Step 3: VIX (Daily)
     print("--- 3/3 Fetching & Importing VIX (Daily) ---")
-    cmd_vix = [python_exe, 'yfinance_fetch&import_daily.py', '--symbol', '^VIX', '--table-prefix', 'vix', '--timezone', 'America/New_York']
+    cmd_vix = [python_exe, 'yfinance_fetch&import_timeframe.py', '--symbol', '^VIX', '--table-prefix', 'vix', '--timeframe', '1d', '--timezone', 'America/New_York']
     res = subprocess.run(cmd_vix)
     if res.returncode != 0:
         print("Error: Fetching VIX failed.")

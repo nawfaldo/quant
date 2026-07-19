@@ -1,4 +1,4 @@
-use crate::{backtest, error::ApiError, market, state::AppState};
+use crate::{error::ApiError, market, state::AppState};
 use actix_web::{HttpResponse, web};
 use serde::Deserialize;
 
@@ -23,10 +23,6 @@ pub fn configure(config: &mut web::ServiceConfig) {
         .route(
             "/api/march/indicators/volume-profile-delta",
             web::get().to(volume_profile_delta),
-        )
-        .route(
-            "/api/march/indicators/noise-area",
-            web::get().to(noise_area),
         );
 }
 #[derive(Deserialize)]
@@ -200,18 +196,4 @@ async fn bookmap_heatmap(
         )
         .await?,
     ))
-}
-async fn noise_area(
-    state: web::Data<AppState>,
-    query: web::Query<CandleQuery>,
-) -> Result<HttpResponse, ApiError> {
-    let points = backtest::noise_area(
-        &state.questdb,
-        query.symbol.as_deref().unwrap_or("nq"),
-        market::date(query.from.as_deref()),
-        market::date(query.to.as_deref()),
-    )
-    .await?;
-
-    Ok(HttpResponse::Ok().json(points))
 }

@@ -187,6 +187,7 @@ async fn start(
         initial_balance: text(&body, "initialBalance"),
         base_lot: Some(text(&body, "baseLot")),
         leverage: Some(text(&body, "leverage")),
+        exit_strategy: None,
         sizing: Some(text(&body, "sizing")),
         vol_target: Some(text(&body, "volTarget")),
         vol_halflife: Some(text(&body, "volHalflife")),

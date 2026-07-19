@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Download, replace, and verify Yahoo Finance daily candles in QuestDB.
+"""Download, replace, and verify Yahoo Finance candles in QuestDB.
 
-The requested inclusive local date range is fetched at Yahoo Finance's daily
-resolution.  Reruns and overlapping ranges are idempotent: the affected DAY
-partitions in the single ``<table-prefix>_1d`` destination are dropped before
-the replacement rows are imported.
+The requested inclusive local date range is fetched at the selected Yahoo
+Finance timeframe. Reruns and overlapping ranges are idempotent: the affected
+DAY partitions in the single ``<table-prefix>_<timeframe>`` destination are
+dropped before the replacement rows are imported.
 """
 
 from __future__ import annotations
@@ -33,6 +33,17 @@ import yfinance as yf
 
 
 REQUIRED_COLUMNS = {"ts", "underlying", "osi", "open", "high", "low", "close", "volume"}
+TIMEFRAMES = ("1m", "2m", "5m", "15m", "30m", "60m", "90m", "1h", "1d", "5d", "1wk", "1mo", "3mo")
+INTRADAY_LOOKBACK_DAYS = {
+    "1m": 7,
+    "2m": 59,
+    "5m": 59,
+    "15m": 59,
+    "30m": 59,
+    "60m": 729,
+    "90m": 59,
+    "1h": 729,
+}
 
 
 def parse_date_range(value: str) -> tuple[date, date]:
@@ -62,11 +73,17 @@ def parse_timezone(value: str) -> ZoneInfo:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Download Yahoo Finance daily candles, replace the requested QuestDB "
+            "Download Yahoo Finance candles, replace the requested QuestDB "
             "range, and verify the result."
         )
     )
     parser.add_argument("--symbol", required=True, help="Yahoo Finance ticker to fetch")
+    parser.add_argument(
+        "--timeframe",
+        choices=TIMEFRAMES,
+        default="1d",
+        help="Yahoo Finance candle interval and destination table suffix (default: 1d)",
+    )
     parser.add_argument(
         "--date",
         dest="date_range",
@@ -79,7 +96,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--table-prefix",
         required=True,
-        help="QuestDB table prefix; daily candles are written to <prefix>_1d",
+        help="QuestDB table prefix; candles are written to <prefix>_<timeframe>",
     )
     parser.add_argument(
         "--timezone",
@@ -104,29 +121,36 @@ def safe_identifier(value: str) -> str:
     return value
 
 
-def default_output(symbol: str, start: date, end: date) -> Path:
-    return Path(f"yfinance_{symbol.upper()}_1d_{start.isoformat()}_{end.isoformat()}.parquet")
+def default_output(symbol: str, timeframe: str, start: date, end: date) -> Path:
+    return Path(f"yfinance_{symbol.upper()}_{timeframe}_{start.isoformat()}_{end.isoformat()}.parquet")
 
 
-def download(start: date, end: date, output: Path, symbol: str, timezone: ZoneInfo) -> None:
-    """Fetch daily OHLCV bars and persist an importer-compatible Parquet file."""
+def download(
+    start: date,
+    end: date,
+    output: Path,
+    symbol: str,
+    timeframe: str,
+    timezone: ZoneInfo,
+) -> None:
+    """Fetch OHLCV bars and persist an importer-compatible Parquet file."""
     start_dt = datetime.combine(start, datetime.min.time(), tzinfo=timezone)
     end_dt = datetime.combine(end + timedelta(days=1), datetime.min.time(), tzinfo=timezone)
     print(
-        f"Downloading Yahoo 1d candles {start.isoformat()} through {end.isoformat()}...",
+        f"Downloading Yahoo {timeframe} candles {start.isoformat()} through {end.isoformat()}...",
         flush=True,
     )
     history = yf.Ticker(symbol).history(
         start=start_dt,
         end=end_dt,
-        interval="1d",
+        interval=timeframe,
         auto_adjust=False,
         actions=False,
         prepost=False,
         raise_errors=True,
     )
     if history.empty:
-        raise RuntimeError("Yahoo Finance returned no daily candles for this range")
+        raise RuntimeError(f"Yahoo Finance returned no {timeframe} candles for this range")
 
     # A Ticker history index is timezone-aware in normal yfinance responses.
     # Interpret a naive index in the selected exchange timezone defensively.
@@ -140,7 +164,9 @@ def download(start: date, end: date, output: Path, symbol: str, timezone: ZoneIn
     history.index = index
     history = history[~history.index.duplicated(keep="first")].sort_index()
     if history.empty:
-        raise RuntimeError("Yahoo Finance returned no daily candles inside the requested local range")
+        raise RuntimeError(
+            f"Yahoo Finance returned no {timeframe} candles inside the requested local range"
+        )
 
     required = ("Open", "High", "Low", "Close", "Volume")
     missing = [column for column in required if column not in history.columns]
@@ -365,30 +391,35 @@ def main() -> int:
     symbol = args.symbol.upper()
     try:
         base_table = safe_identifier(args.table_prefix)
-        table = safe_identifier(f"{base_table}_1d")
+        table = safe_identifier(f"{base_table}_{args.timeframe}")
         if args.date_range is not None:
             start, end = args.date_range
         else:
             end = datetime.now(args.timezone).date() - timedelta(days=1)
             start = get_latest_date(args.questdb_host, args.questdb_http_port, table, args.timezone)
             if start is None:
-                start = date(1990, 1, 2)
+                lookback_days = INTRADAY_LOOKBACK_DAYS.get(args.timeframe)
+                start = (
+                    end - timedelta(days=lookback_days - 1)
+                    if lookback_days is not None
+                    else date(1990, 1, 2)
+                )
             elif start > end:
                 start = end
         with tempfile.TemporaryDirectory(prefix="yfinance-import-") as temporary_dir:
-            output = Path(temporary_dir) / default_output(symbol, start, end)
+            output = Path(temporary_dir) / default_output(symbol, args.timeframe, start, end)
             print(
-                f"Downloading {symbol} 1d candles for the inclusive {args.timezone.key} "
+                f"Downloading {symbol} {args.timeframe} candles for the inclusive {args.timezone.key} "
                 f"range {start.isoformat()} through {end.isoformat()}...", flush=True,
             )
-            download(start, end, output, symbol, args.timezone)
+            download(start, end, output, symbol, args.timeframe, args.timezone)
             print(f"Saved {output} ({output.stat().st_size:,} bytes).", flush=True)
             source_rows = validate_parquet(output, start, end, args.timezone)
             clear_destination_range(args.questdb_host, args.questdb_http_port, table, start, end)
             run_importer(output, table, args.questdb_host, args.questdb_ilp_port, args.timezone)
             verify_import(args.questdb_host, args.questdb_http_port, table, start, end, source_rows)
     except (OSError, RuntimeError, ValueError, subprocess.CalledProcessError) as exc:
-        print(f"Yahoo Finance daily pipeline failed: {exc}", file=sys.stderr)
+        print(f"Yahoo Finance {args.timeframe} pipeline failed: {exc}", file=sys.stderr)
         return 1
     print(f"Complete: {table} replaced for {start.isoformat()} through {end.isoformat()}.", flush=True)
     return 0

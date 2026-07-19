@@ -250,6 +250,7 @@ export interface RunParams {
   initialBalance: string
   baseLot: string
   leverage: string
+  exitStrategy: string
   sizing: string
   volTarget?: string
   volHalflife?: string
@@ -702,10 +703,10 @@ export async function setAccountStrategyActive(
 
 // Known strategy names that can be attached to an account. Mirrors the Zig
 // registry in the Rust March API.
-export const KNOWN_MARCH_STRATEGIES = ['night_drift', 'min_loop'] as const
+export const KNOWN_MARCH_STRATEGIES = ['min_loop'] as const
 
 export function displayStrategyName(strategy: string): string {
-  return strategy === 'night_drift' ? 'Night Drift' : strategy
+  return strategy
 }
 
 export interface LiveTrade {

@@ -74,7 +74,7 @@ def main() -> int:
         return 1
 
     script_dir = Path(__file__).parent
-    daily_script = script_dir / "yfinance_fetch&import_daily.py"
+    daily_script = script_dir / "yfinance_fetch&import_timeframe.py"
     if not daily_script.is_file():
         print(f"Error: Daily fetch script not found: {daily_script}", file=sys.stderr)
         return 1
@@ -116,6 +116,7 @@ def main() -> int:
                 "--symbol", symbol,
                 "--table-prefix", table_prefix,
                 "--timezone", "Asia/Jakarta",
+                "--timeframe", "1d",
                 "--date", date_range,
             ]
 
@@ -161,4 +162,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

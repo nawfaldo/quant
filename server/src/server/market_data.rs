@@ -252,16 +252,19 @@ pub async fn database_summary(questdb: &QuestDb) -> Result<Value, ApiError> {
     let mut groups: BTreeMap<String, Group> = BTreeMap::new();
     for row in rows {
         if let Some(table_name) = row.get(0) {
-            if table_name.starts_with("bm_") || table_name.starts_with("fx_") || table_name.contains("tmp") {
+            if table_name.starts_with("bm_")
+                || table_name.starts_with("fx_")
+                || table_name.contains("tmp")
+            {
                 continue;
             }
             if let Some(pos) = table_name.rfind('_') {
                 let prefix = &table_name[..pos];
                 let tf = &table_name[pos + 1..];
                 if TIMEFRAMES.contains(&tf) {
-                    let entry = groups.entry(prefix.to_lowercase()).or_insert_with(|| Group {
-                        tables: Vec::new(),
-                    });
+                    let entry = groups
+                        .entry(prefix.to_lowercase())
+                        .or_insert_with(|| Group { tables: Vec::new() });
                     entry.tables.push((tf.to_string(), table_name.to_string()));
                 }
             }
@@ -327,15 +330,21 @@ pub async fn database_summary(questdb: &QuestDb) -> Result<Value, ApiError> {
         let first_date = agg.map(|a| a.first_date.clone()).unwrap_or_default();
         let last_date = agg.map(|a| a.last_date.clone()).unwrap_or_default();
 
-        let mut available_timeframes: Vec<String> = group.tables.into_iter().map(|(tf, _)| tf).collect();
-        available_timeframes.sort_by_key(|tf| TIMEFRAMES.iter().position(|t| t == tf).unwrap_or(99));
+        let mut available_timeframes: Vec<String> =
+            group.tables.into_iter().map(|(tf, _)| tf).collect();
+        available_timeframes
+            .sort_by_key(|tf| TIMEFRAMES.iter().position(|t| t == tf).unwrap_or(99));
 
         let timeframe_str = if available_timeframes.len() == TIMEFRAMES.len() {
             "1m...1d".to_string()
         } else if available_timeframes.len() == 1 {
             available_timeframes[0].clone()
         } else if !available_timeframes.is_empty() {
-            format!("{}...{}", available_timeframes.first().unwrap(), available_timeframes.last().unwrap())
+            format!(
+                "{}...{}",
+                available_timeframes.first().unwrap(),
+                available_timeframes.last().unwrap()
+            )
         } else {
             "—".to_string()
         };
@@ -420,16 +429,19 @@ pub async fn database_symbols(questdb: &QuestDb) -> Result<Value, ApiError> {
     let mut groups: BTreeMap<String, Group> = BTreeMap::new();
     for row in rows {
         if let Some(table_name) = row.get(0) {
-            if table_name.starts_with("bm_") || table_name.starts_with("fx_") || table_name.contains("tmp") {
+            if table_name.starts_with("bm_")
+                || table_name.starts_with("fx_")
+                || table_name.contains("tmp")
+            {
                 continue;
             }
             if let Some(pos) = table_name.rfind('_') {
                 let prefix = &table_name[..pos];
                 let tf = &table_name[pos + 1..];
                 if TIMEFRAMES.contains(&tf) {
-                    let entry = groups.entry(prefix.to_lowercase()).or_insert_with(|| Group {
-                        tables: Vec::new(),
-                    });
+                    let entry = groups
+                        .entry(prefix.to_lowercase())
+                        .or_insert_with(|| Group { tables: Vec::new() });
                     entry.tables.push((tf.to_string(), table_name.to_string()));
                 }
             }
@@ -438,14 +450,36 @@ pub async fn database_symbols(questdb: &QuestDb) -> Result<Value, ApiError> {
 
     let mut items = Vec::new();
     for (sym_key, group) in groups {
-        let mut available_timeframes: Vec<String> = group.tables.into_iter().map(|(tf, _)| tf).collect();
-        available_timeframes.sort_by_key(|tf| TIMEFRAMES.iter().position(|t| t == tf).unwrap_or(99));
+        let mut available_timeframes: Vec<String> =
+            group.tables.into_iter().map(|(tf, _)| tf).collect();
+        available_timeframes
+            .sort_by_key(|tf| TIMEFRAMES.iter().position(|t| t == tf).unwrap_or(99));
 
         let (symbol, dataset_name, country, r#type) = match sym_key.as_str() {
-            "es" => ("ES".to_string(), "S&P 500 Futures".to_string(), "United States".to_string(), "Futures".to_string()),
-            "nq" => ("NQ".to_string(), "Nasdaq-100 Futures".to_string(), "United States".to_string(), "Futures".to_string()),
-            "vix" => ("VIX".to_string(), "CBOE Volatility Index".to_string(), "United States".to_string(), "Index".to_string()),
-            "jkse" => ("JKSE".to_string(), "Jakarta Composite Index".to_string(), "Indonesia".to_string(), "Index".to_string()),
+            "es" => (
+                "ES".to_string(),
+                "S&P 500 Futures".to_string(),
+                "United States".to_string(),
+                "Futures".to_string(),
+            ),
+            "nq" => (
+                "NQ".to_string(),
+                "Nasdaq-100 Futures".to_string(),
+                "United States".to_string(),
+                "Futures".to_string(),
+            ),
+            "vix" => (
+                "VIX".to_string(),
+                "CBOE Volatility Index".to_string(),
+                "United States".to_string(),
+                "Index".to_string(),
+            ),
+            "jkse" => (
+                "JKSE".to_string(),
+                "Jakarta Composite Index".to_string(),
+                "Indonesia".to_string(),
+                "Index".to_string(),
+            ),
             _ => (
                 sym_key.to_uppercase(),
                 indonesian_company_name(&sym_key),
@@ -910,7 +944,9 @@ pub async fn volume_profile_delta(
 
     let rows = match questdb.csv(&sql).await {
         Ok(rows) => rows,
-        Err(ApiError::QuestDb(detail)) if detail.contains("table does not exist") => return Ok(Vec::new()),
+        Err(ApiError::QuestDb(detail)) if detail.contains("table does not exist") => {
+            return Ok(Vec::new());
+        }
         Err(error) => return Err(error),
     };
 

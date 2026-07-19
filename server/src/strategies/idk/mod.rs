@@ -1,5 +1,7 @@
 pub mod night_drift;
+pub mod night_drift_2;
 pub mod noise_momentum;
+pub mod noise_momentum_2;
 
 use serde::Serialize;
 
@@ -18,7 +20,10 @@ pub enum PreferredData {
 /// bars. Existing strategies deliberately stay on the established OHLCV data.
 pub fn preferred_data(strategy: &str) -> Option<PreferredData> {
     match strategy {
-        "Night Drift" | "Noise Momentum" => Some(PreferredData::Ohlcv),
+        "Night Drift" => Some(PreferredData::Ohlcv),
+        "Night Drift 2" => Some(PreferredData::Ohlcv),
+        "Noise Momentum" => Some(PreferredData::Ohlcv),
+        "Noise Momentum 2" => Some(PreferredData::Ohlcv),
         _ => None,
     }
 }
@@ -28,7 +33,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn existing_strategies_explicitly_prefer_ohlcv() {
+    fn noise_momentum_explicitly_prefers_ohlcv() {
         assert_eq!(preferred_data("Night Drift"), Some(PreferredData::Ohlcv));
         assert_eq!(preferred_data("Noise Momentum"), Some(PreferredData::Ohlcv));
     }

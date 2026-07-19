@@ -32,10 +32,13 @@ pub async fn prepare(
     costs: EnvironmentCosts,
 ) -> Result<PreparedRun, ApiError> {
     let symbol = request.symbol.to_ascii_lowercase();
-    if !["nq", "es"].contains(&symbol.as_str()) {
+    if symbol != "nq" {
         return Err(ApiError::BadRequest("unknown symbol".into()));
     }
-    if !["Night Drift", "Noise Momentum"].contains(&request.strategy.as_str()) {
+    if !matches!(
+        request.strategy.as_str(),
+        "Night Drift" | "Night Drift 2" | "Noise Momentum" | "Noise Momentum 2"
+    ) {
         return Err(ApiError::BadRequest("unknown strategy".into()));
     }
     if !valid_date(&request.from_date) || !valid_date(&request.to_date) {
@@ -43,9 +46,16 @@ pub async fn prepare(
     }
     let instrument = Instrument::parse(&request.instrument)
         .ok_or_else(|| ApiError::BadRequest("unknown instrument".into()))?;
+    let valid_instrument = matches!(instrument, Instrument::Forex);
+    if !valid_instrument {
+        return Err(ApiError::BadRequest(format!(
+            "{} only supports {}",
+            request.strategy, "the Forex instrument",
+        )));
+    }
     let source = preferred_data(&request.strategy)
         .ok_or_else(|| ApiError::BadRequest("strategy has no market-data preference".into()))?;
-    let with_vix = request.strategy == "Night Drift";
+    let with_vix = matches!(request.strategy.as_str(), "Night Drift" | "Night Drift 2");
     let bars = load_bars(
         questdb,
         &symbol,

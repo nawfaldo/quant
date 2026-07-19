@@ -514,7 +514,6 @@ export function MarchWorkspace() {
         fromDate: stored.from,
         toDate: stored.to,
         vwap: stored.indicators.vwap,
-        noiseArea: stored.indicators.noise_area,
         volume: stored.indicators.volume === true,
         volumeDeltaBubbles: stored.indicators.volume_delta_bubbles === true,
         sessionVolumeProfile: stored.indicators.session_volume_profile === true,
@@ -968,7 +967,6 @@ const INDICATOR_ROWS: { key: keyof Indicators; label: string }[] = [
   { key: "volume", label: "Volume Bars" },
   { key: "volume_delta_bubbles", label: "Volume Delta Bubbles" },
   { key: "vwap", label: "VWAP" },
-  { key: "noise_area", label: "Noise Area" },
   { key: "cvd", label: "Cumulative Volume Delta" },
 ];
 

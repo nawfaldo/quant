@@ -95,7 +95,6 @@ export interface MonteCarloData {
 export interface Indicators {
   bookmap_heatmap: boolean
   vwap: boolean
-  noise_area: boolean
   volume: boolean
   volume_delta_bubbles: boolean
   session_volume_profile: boolean
@@ -184,7 +183,6 @@ export function makeDefaultPanelConfig(): LayoutPanelConfig {
     indicators: {
       bookmap_heatmap: false,
       vwap: false,
-      noise_area: false,
       volume: false,
       volume_delta_bubbles: false,
       session_volume_profile: false,

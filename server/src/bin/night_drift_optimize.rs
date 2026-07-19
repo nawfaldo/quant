@@ -3,7 +3,7 @@ use serde::Serialize;
 use std::{collections::BTreeMap, sync::Arc, thread};
 
 const DAY: i64 = 86_400;
-const INITIAL: f64 = 6_000.0;
+const INITIAL: f64 = 1_000.0;
 const SPREAD: f64 = 0.2;
 
 #[derive(Clone, Copy)]
@@ -45,6 +45,7 @@ struct Params {
 struct RawTrade {
     exit_day: i64,
     points: f64,
+    risk_points: f64,
     boost: f64,
 }
 
@@ -69,9 +70,6 @@ struct ResultRow {
     params: Params,
     #[serde(rename = "inSample")]
     is_metrics: Metrics,
-    #[serde(rename = "outOfSample")]
-    oos_metrics: Metrics,
-    full: Metrics,
 }
 
 fn year(day: i64) -> i32 {
@@ -211,6 +209,7 @@ fn raw_trades(days: &[MarketDay], params: Params) -> Vec<RawTrade> {
             output.push(RawTrade {
                 exit_day: next.day,
                 points: exit - entry - SPREAD,
+                risk_points: params.stop_sigma * sigma + SPREAD,
                 boost: if selloff >= 0.6 { 1.3 } else { 1.0 },
             });
         }
@@ -232,7 +231,7 @@ fn metrics(trades: &[RawTrade], scale: f64, from_year: i32, to_year: i32) -> Met
             continue;
         }
         let start = yearly.entry(y).or_insert((equity, equity)).0;
-        let quantity = 1.1 * scale * (equity / INITIAL).max(0.0) * trade.boost;
+        let quantity = equity.max(0.0) * scale / trade.risk_points * trade.boost;
         let pnl = trade.points * quantity;
         equity += pnl;
         yearly.insert(y, (start, equity));
@@ -278,23 +277,22 @@ fn metrics(trades: &[RawTrade], scale: f64, from_year: i32, to_year: i32) -> Met
 
 fn optimize_scale(trades: &[RawTrade]) -> (f64, Metrics) {
     let mut best = None::<(f64, Metrics, f64)>;
-    for step in 4..=60 {
-        let scale = step as f64 * 0.05;
-        let m = metrics(trades, scale, 2018, 2024);
-        if m.trades < 380 || m.trades > 520 || m.max_drawdown > 20.0 {
+    for step in 1..=200 {
+        let scale = step as f64 * 0.0005;
+        let m = metrics(trades, scale, 2020, 2024);
+        if m.trades < 360 || m.trades > 460 || m.max_drawdown >= 15.0 {
             continue;
         }
-        let target_penalty = (m.growth - 450.0).abs();
+        let target_penalty = (m.growth - 500.0).abs();
         let consistency_penalty = (-m.worst_year_growth).max(0.0) * 8.0
             + (m.years.saturating_sub(m.positive_years) as f64) * 80.0;
-        let dd_penalty = (m.max_drawdown - 17.5).max(0.0) * 20.0;
-        let value = target_penalty + consistency_penalty + dd_penalty;
+        let value = target_penalty + consistency_penalty;
         if best.as_ref().is_none_or(|(_, _, current)| value < *current) {
             best = Some((scale, m, value));
         }
     }
     best.map(|(scale, metrics, _)| (scale, metrics))
-        .unwrap_or_else(|| (0.5, metrics(trades, 0.5, 2018, 2024)))
+        .unwrap_or_else(|| (0.01, metrics(trades, 0.01, 2020, 2024)))
 }
 
 fn rng(state: &mut u64) -> u64 {
@@ -320,23 +318,31 @@ fn random_params(state: &mut u64) -> Params {
         ],
     );
     Params {
-        lookback: choose(state, &[10, 14, 20, 30, 40, 60]),
-        preclose_minute: choose(state, &[960, 990, 1020, 1050]),
+        lookback: choose(state, &[10, 12, 14, 16, 20, 25, 30, 40, 60]),
+        preclose_minute: choose(state, &[945, 960, 975, 990, 1020, 1050]),
         delta_start,
         delta_end,
-        entry_minute: choose(state, &[1110, 1140, 1170, 1200, 1230, 1260, 1290]),
+        entry_minute: choose(
+            state,
+            &[1110, 1140, 1155, 1170, 1185, 1200, 1230, 1260, 1290],
+        ),
         exit_minute: choose(state, &[240, 270, 300, 330, 360, 390, 420, 450, 480]),
-        min_selloff: choose(state, &[-0.75, -0.5, -0.25, 0.0, 0.25, 0.5]),
-        max_selloff: choose(state, &[1.0, 1.5, 2.0, 3.0, 99.0]),
-        max_delta: choose(state, &[-0.3, 0.0, 0.3, 0.65]),
-        min_vix: choose(state, &[0.0, 12.0, 15.0, 18.0]),
-        max_vix: choose(state, &[18.0, 22.0, 26.0, 32.0, 99.0]),
+        min_selloff: choose(state, &[-1.0, -0.75, -0.5, -0.25, 0.0, 0.25, 0.5]),
+        max_selloff: choose(state, &[1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0, 99.0]),
+        max_delta: choose(state, &[-0.3, 0.0, 0.15, 0.3, 0.45, 0.65]),
+        min_vix: choose(state, &[0.0, 12.0, 14.0, 15.0, 16.0, 18.0]),
+        max_vix: choose(state, &[18.0, 22.0, 26.0, 32.0, 40.0, 99.0]),
         weekday_mask: choose(
             state,
-            &[0b11111, 0b11110, 0b01111, 0b01110, 0b10111, 0b11101],
+            &[
+                0b11111, 0b11110, 0b01111, 0b01110, 0b10111, 0b11101, 0b10110, 0b01101,
+            ],
         ),
-        target_sigma: choose(state, &[0.8, 1.0, 1.2, 1.4, 1.6, 1.8, 2.1, 2.4]),
-        stop_sigma: choose(state, &[0.35, 0.45, 0.55, 0.7, 0.85, 1.0, 1.2]),
+        target_sigma: choose(
+            state,
+            &[0.6, 0.7, 0.8, 0.9, 1.0, 1.2, 1.4, 1.6, 1.8, 2.1, 2.4],
+        ),
+        stop_sigma: choose(state, &[0.35, 0.45, 0.55, 0.65, 0.7, 0.85, 1.0, 1.2]),
     }
 }
 
@@ -346,12 +352,10 @@ fn evaluate(days: &[MarketDay], params: Params) -> Option<ResultRow> {
     }
     let trades = raw_trades(days, params);
     let (scale, is_metrics) = optimize_scale(&trades);
-    if is_metrics.trades < 380 || is_metrics.trades > 520 || is_metrics.max_drawdown > 20.0 {
+    if is_metrics.trades < 360 || is_metrics.trades > 460 || is_metrics.max_drawdown >= 15.0 {
         return None;
     }
-    let oos_metrics = metrics(&trades, scale, 2025, 2026);
-    let full = metrics(&trades, scale, 2018, 2026);
-    let score = -(is_metrics.growth - 450.0).abs() - is_metrics.max_drawdown.max(15.0) * 4.0
+    let score = -(is_metrics.growth - 500.0).abs() - is_metrics.max_drawdown * 4.0
         + is_metrics.worst_year_growth.min(20.0) * 5.0
         + is_metrics.profit_factor * 50.0
         - (is_metrics.years.saturating_sub(is_metrics.positive_years) as f64) * 100.0;
@@ -360,17 +364,15 @@ fn evaluate(days: &[MarketDay], params: Params) -> Option<ResultRow> {
         size_scale: scale,
         params,
         is_metrics,
-        oos_metrics,
-        full,
     })
 }
 
 async fn load_days() -> anyhow::Result<Vec<MarketDay>> {
     let db = QuestDb::from_env()?;
     let mut days = Vec::new();
-    for y in 2017..=2026 {
+    for y in 2019..=2024 {
         let to = y + 1;
-        let month_day = if y == 2017 { "09-01" } else { "01-01" };
+        let month_day = "01-01";
         let sql = format!(
             concat!(
                 "SELECT cast(n.timestamp as long) ts,n.timestamp,n.open,n.high,n.low,n.close,n.volume,v.close ",
@@ -411,7 +413,7 @@ async fn main() -> anyhow::Result<()> {
         .map(usize::from)
         .unwrap_or(4)
         .min(8);
-    let per_worker = 1_500;
+    let per_worker = 10_000;
     let mut handles = Vec::new();
     for worker in 0..workers {
         let days = Arc::clone(&days);
