@@ -14,7 +14,6 @@ import {
   HistoricalTradesPrimitive,
   type HistoricalTradeInfo,
   TradeLinesPrimitive,
-  NoiseAreaPrimitive,
   SessionVolumeProfilePrimitive,
   VolumeDeltaBubblesPrimitive,
   BookmapHeatmapPrimitive,
@@ -37,7 +36,6 @@ export interface PanelConfig {
   fromDate: string;
   toDate: string;
   vwap: boolean;
-  noiseArea: boolean;
   volume: boolean;
   volumeDeltaBubbles: boolean;
   sessionVolumeProfile: boolean;
@@ -320,7 +318,6 @@ export default function ChartPanel({
     fromDate,
     toDate,
     vwap,
-    noiseArea,
     volume,
     volumeDeltaBubbles,
     sessionVolumeProfile,
@@ -364,7 +361,6 @@ export default function ChartPanel({
   const historicalTradesPlugin = useRef(new HistoricalTradesPrimitive());
   const tradeLinesPrimitive = useRef(new TradeLinesPrimitive());
   const fxTradeLinesPrimitive = useRef(new TradeLinesPrimitive());
-  const noiseAreaPlugin = useRef(new NoiseAreaPrimitive());
   const sessionVolumeProfilePlugin = useRef(
     new SessionVolumeProfilePrimitive(),
   );
@@ -484,7 +480,6 @@ export default function ChartPanel({
       series.attachPrimitive(activePositionsPlugin.current);
       series.attachPrimitive(historicalTradesPlugin.current);
       series.attachPrimitive(tradeLinesPrimitive.current);
-      series.attachPrimitive(noiseAreaPlugin.current);
       series.attachPrimitive(sessionVolumeProfilePlugin.current);
       series.attachPrimitive(volumeDeltaBubblesPlugin.current);
       sessionVolumeProfilePlugin.current.setData([]);
@@ -1523,36 +1518,6 @@ export default function ChartPanel({
       }
     };
   }, [volume, chartSeries]);
-
-  useEffect(() => {
-    let active = true;
-    async function updateNoiseArea() {
-      if (noiseArea) {
-        try {
-          const params = new URLSearchParams({ symbol });
-          if (fromDate) params.set("from", fromDate);
-          if (toDate) params.set("to", toDate);
-
-          const res = await fetch(
-            `${BACKEND_URL}/api/march/indicators/noise-area?${params.toString()}`,
-          );
-          if (!res.ok) throw new Error("Backend error");
-          const data = await res.json();
-
-          if (!active) return;
-          noiseAreaPlugin.current.setData(data);
-        } catch (err) {
-          console.error("Failed to load noise area:", err);
-        }
-      } else {
-        noiseAreaPlugin.current.setData([]);
-      }
-    }
-    updateNoiseArea();
-    return () => {
-      active = false;
-    };
-  }, [noiseArea, symbol, fromDate, toDate, chartSeries]);
 
   useEffect(() => {
     if (!volumeDeltaBubbles || !chartSeries) {

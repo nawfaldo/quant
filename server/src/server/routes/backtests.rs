@@ -103,7 +103,9 @@ async fn save_run(
     let result = backtest::run(&state.questdb, &request, costs).await?;
     let strategy = match request.strategy.as_str() {
         "Night Drift" => "NIGHT_DRIFT",
+        "Night Drift 2" => "NIGHT_DRIFT_2",
         "Noise Momentum" => "NOISE_MOMENTUM",
+        "Noise Momentum 2" => "NOISE_MOMENTUM_2",
         _ => return Err(ApiError::BadRequest("unknown strategy".into())),
     };
     let id = state

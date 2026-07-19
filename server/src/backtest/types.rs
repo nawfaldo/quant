@@ -88,6 +88,12 @@ impl Instrument {
             }
         }
     }
+    pub(crate) fn quantity_step(self) -> f64 {
+        match self {
+            Self::Forex => 0.01,
+            Self::Mini | Self::Micro => 1.0,
+        }
+    }
     pub(crate) fn size(self, raw: f64) -> f64 {
         match self {
             Self::Forex => (raw / 0.01).round().max(1.0) * 0.01,

@@ -32,8 +32,18 @@ const IDK_STRATEGIES: &[StrategyDefinition] = &[
         preferred_data: PreferredData::Ohlcv,
     },
     StrategyDefinition {
+        id: "night_drift_2",
+        name: "Night Drift 2",
+        preferred_data: PreferredData::Ohlcv,
+    },
+    StrategyDefinition {
         id: "noise_momentum",
         name: "Noise Momentum",
+        preferred_data: PreferredData::Ohlcv,
+    },
+    StrategyDefinition {
+        id: "noise_momentum_2",
+        name: "Noise Momentum 2",
         preferred_data: PreferredData::Ohlcv,
     },
 ];
@@ -59,5 +69,16 @@ mod tests {
             StrategyEnvironment::from_name(" IDK "),
             Some(StrategyEnvironment::Idk)
         ));
+    }
+
+    #[test]
+    fn idk_exposes_registered_strategies() {
+        let strategies = for_environment("idk");
+        assert_eq!(strategies.len(), 4);
+        assert_eq!(strategies[0].id, "night_drift");
+        assert_eq!(strategies[0].name, "Night Drift");
+        assert_eq!(strategies[1].id, "night_drift_2");
+        assert_eq!(strategies[2].id, "noise_momentum");
+        assert_eq!(strategies[3].id, "noise_momentum_2");
     }
 }

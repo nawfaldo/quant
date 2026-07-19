@@ -6,7 +6,7 @@ import Splicing from "../components/backtests/Splicing";
 import LiquidGlassTabs from "../components/navigation/LiquidGlassTabs";
 import Volatility from "../components/backtests/Volatility";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { runBacktest, saveRun, combineBacktests, saveCombine, fetchBacktests, fetchEnvironments, fetchEnvironmentStrategies, runTune, fetchTuneStatus, type RunParams, type TuneResult } from "../api";
+import { runBacktest, saveRun, combineBacktests, saveCombine, fetchBacktests, fetchEnvironments, fetchEnvironmentStrategies, type RunParams } from "../api";
 import { useApp } from "../context/AppContext";
 import { isFuturesInstrument } from "../types";
 import PageShell from "../components/layout/PageShell";
@@ -34,6 +34,7 @@ interface TestTab {
   initialBalance: string;
   baseLot: string;
   leverage: string;
+  exitStrategy: string;
   sizing: string;
   fromDate: string;
   toDate: string;
@@ -112,12 +113,8 @@ export default function TestPage() {
     setTestResults: setResults,
     testErrors: errors,
     setTestErrors: setErrors,
-    tuneResults,
-    setTuneResults,
     testLoading,
     setTestLoading,
-    testTuneProgress,
-    setTestTuneProgress,
   } = useApp()
 
   const [tabs, setTabs] = useState<TestTab[]>(() => {
@@ -138,6 +135,9 @@ export default function TestPage() {
             }
             if (migrated.leverage === undefined) {
               migrated.leverage = "";
+            }
+            if (migrated.exitStrategy === undefined) {
+              migrated.exitStrategy = "";
             }
             if (migrated.selectedEnvironmentId === undefined) {
               migrated.selectedEnvironmentId = "";
@@ -176,6 +176,7 @@ export default function TestPage() {
         initialBalance: "",
         baseLot: "",
         leverage: "",
+        exitStrategy: "",
         sizing: "",
         fromDate: "",
         toDate: "",
@@ -238,6 +239,7 @@ export default function TestPage() {
     initialBalance,
     baseLot,
     leverage,
+    exitStrategy,
     sizing,
     fromDate,
     toDate,
@@ -251,20 +253,18 @@ export default function TestPage() {
     combineBacktestIds,
   } = activeTabObj;
 
-  const commands = ["Run", "Tune", "Combine"];
+  const commands = ["Run", "Combine"];
   // Internally sized strategies can't use the generic position-sizing tuner.
   const symbols = ["NQ", "ES"];
-  const instruments = ["Forex", "Futures Mini", "Futures Micro"];
+  const instruments = ["Forex"];
   const selectedEnvironment = environments.find(
     (environment) => String(environment.id) === selectedEnvironmentId,
   );
-  // Internally sized strategies don't expose Base Lot / Leverage steps.
-  // generic Sizing step (None / Vol Target) has been removed from the
-  // wizard entirely — sizing always defaults to "" (backend treats that as
-  // .none, see server/src/bt/run.rs).
+  // Internally sized strategies expose their paper-specific sizing choice
+  // and do not accept generic Base Lot / Leverage overrides.
 
   const isCommandFilled = selectedCommand !== "";
-  const isRunOrTune = selectedCommand === "Run" || selectedCommand === "Tune";
+  const isRun = selectedCommand === "Run";
   const isEnvironmentFilled = selectedEnvironment !== undefined;
   const { data: environmentStrategies = [], isLoading: isStrategiesLoading } = useQuery({
     queryKey: ["environment-strategies", selectedEnvironmentId],
@@ -272,20 +272,122 @@ export default function TestPage() {
     enabled: isEnvironmentFilled,
     staleTime: Infinity,
   });
-  const strategies = selectedCommand === "Tune"
-    ? environmentStrategies.filter((strategy) => strategy.id === "night_drift")
-    : environmentStrategies;
-  // Internally sized strategies own their lot/leverage calculation.
-  const isNightDrift = selectedStrategy === "Night Drift";
+  const strategies = environmentStrategies;
+  const supportsNoiseMomentum = environmentStrategies.some(
+    (strategy) => strategy.name === "Noise Momentum" || strategy.name === "Noise Momentum 2",
+  );
+
+  useEffect(() => {
+    if (
+      selectedCommand !== "Run" ||
+      !isEnvironmentFilled ||
+      !supportsNoiseMomentum ||
+      !["Noise Momentum", "Noise Momentum 2"].includes(selectedStrategy)
+    ) {
+      return;
+    }
+    if (
+      ["Noise Momentum", "Noise Momentum 2"].includes(selectedStrategy) &&
+      exitStrategy === "Ladder #2" &&
+      sizing === "Equity" &&
+      selectedSymbol === "NQ" &&
+      selectedInstrument === "Forex"
+    ) {
+      return;
+    }
+    setTabs((previous) =>
+      previous.map((tab) =>
+        tab.id === activeTabId
+          ? {
+              ...tab,
+              selectedStrategy,
+              exitStrategy: "Ladder #2",
+              sizing: "Equity",
+              selectedSymbol: "NQ",
+              selectedInstrument: "Forex",
+              baseLot: "",
+              leverage: "",
+              hasResult: false,
+              isSaved: false,
+              title: `${selectedStrategy} (NQ)`,
+            }
+          : tab,
+      ),
+    );
+  }, [
+    activeTabId,
+    exitStrategy,
+    isEnvironmentFilled,
+    selectedCommand,
+    selectedInstrument,
+    selectedStrategy,
+    selectedSymbol,
+    sizing,
+    supportsNoiseMomentum,
+  ]);
+
+  // Repair persisted tabs created before a strategy's fixed market defaults
+  // were wired into the selector.
+  useEffect(() => {
+    const usesFixedMarket = [
+      "Night Drift",
+      "Night Drift 2",
+      "Noise Momentum",
+      "Noise Momentum 2",
+    ].includes(selectedStrategy);
+    const expectedSymbol = "NQ";
+    const expectedInstrument = "Forex";
+    if (
+      !isRun ||
+      !usesFixedMarket ||
+      (selectedSymbol === expectedSymbol && selectedInstrument === expectedInstrument)
+    ) {
+      return;
+    }
+    setTabs((previous) =>
+      previous.map((tab) =>
+        tab.id === activeTabId
+          ? {
+              ...tab,
+              selectedSymbol: expectedSymbol,
+              selectedInstrument: expectedInstrument,
+              hasResult: false,
+              isSaved: false,
+              title: `${selectedStrategy} (${expectedSymbol})`,
+            }
+          : tab,
+      ),
+    );
+  }, [
+    activeTabId,
+    isRun,
+    selectedInstrument,
+    selectedStrategy,
+    selectedSymbol,
+  ]);
+
+  const isNoiseMomentum = ["Noise Momentum", "Noise Momentum 2"].includes(selectedStrategy);
+  const fixedSymbol = "NQ";
+  const fixedInstrument = "Forex";
+  const isNoiseConfigurationFilled =
+    !isNoiseMomentum || (exitStrategy === "Ladder #2" && sizing === "Equity");
   const isInternallySized =
-    isNightDrift ||
-    selectedStrategy.startsWith("Noise Momentum");
+    isNoiseMomentum || ["Night Drift", "Night Drift 2"].includes(selectedStrategy);
   const quantityFilled = isInternallySized || baseLot.trim() !== "";
   const showEnvironment = isCommandFilled;
-  const showStrategy = isRunOrTune && isEnvironmentFilled;
-  const showSymbol = showStrategy && selectedStrategy !== "";
-  const showInstrument = showSymbol && selectedSymbol !== "";
-  const showBalanceAndLot = showInstrument && selectedInstrument !== "";
+  // Ask for the strategy, then keep Noise Momentum's exit, sizing, symbol,
+  // and instrument defaults out of the run wizard.
+  const showStrategy = isRun && isEnvironmentFilled;
+  const showNoiseConfiguration = false;
+  const showSymbol = false;
+  const showInstrument = false;
+  const showBalanceAndLot =
+    isRun &&
+    isEnvironmentFilled &&
+    strategies.some((strategy) => strategy.name === selectedStrategy) &&
+    isNoiseConfigurationFilled &&
+    selectedSymbol === fixedSymbol &&
+    selectedInstrument === fixedInstrument;
 
   const showDate =
     showBalanceAndLot &&
@@ -295,7 +397,10 @@ export default function TestPage() {
   const showActions = showDate && fromDate.trim() !== "" && toDate.trim() !== "";
 
   // Circles dynamic fill state
-  const isStrategyFilled = strategies.some((strategy) => strategy.name === selectedStrategy);
+  const isStrategySelected = strategies.some(
+    (strategy) => strategy.name === selectedStrategy,
+  );
+  const isStrategyFilled = isStrategySelected && isNoiseConfigurationFilled;
   const isSymbolFilled = selectedSymbol !== "";
   const isInstrumentFilled = selectedInstrument !== "";
   const isBalanceAndLotFilled =
@@ -327,6 +432,7 @@ export default function TestPage() {
       initialBalance: "",
       baseLot: "",
       leverage: "",
+      exitStrategy: "",
       sizing: "",
       fromDate: "",
       toDate: "",
@@ -405,30 +511,16 @@ export default function TestPage() {
   // The live run result for the active tab (null until "See Result" succeeds).
   const activeResult = results[activeTabId] ?? null;
   const activeError = errors[activeTabId] ?? null;
-  const activeTuneResult: TuneResult | null = tuneResults[activeTabId] ?? null;
   // A result may finish after the Test route was unmounted. Its tab metadata is
   // persisted locally, but the result itself lives in AppContext, so derive the
   // visible state from both sources.
-  const hasStoredResult = activeResult !== null || activeTuneResult !== null;
+  const hasStoredResult = activeResult !== null;
   const hasResult = savedHasResult || hasStoredResult;
   const isLoading = testLoading[activeTabId] ?? false;
-  const tuneProgress = testTuneProgress[activeTabId] ?? null;
 
   const setTabLoading = (tabId: string, loading: boolean) => {
     setTestLoading((prev) => {
       if (loading) return { ...prev, [tabId]: true };
-      const next = { ...prev };
-      delete next[tabId];
-      return next;
-    });
-  };
-
-  const setTabTuneProgress = (
-    tabId: string,
-    progress: { progress: number; total: number } | null,
-  ) => {
-    setTestTuneProgress((prev) => {
-      if (progress) return { ...prev, [tabId]: progress };
       const next = { ...prev };
       delete next[tabId];
       return next;
@@ -444,6 +536,7 @@ export default function TestPage() {
     initialBalance,
     baseLot,
     leverage,
+    exitStrategy,
     sizing,
     volTarget,
     volHalflife,
@@ -463,11 +556,6 @@ export default function TestPage() {
       return next;
     });
     setErrors((prev) => {
-      const next = { ...prev };
-      delete next[tabId];
-      return next;
-    });
-    setTuneResults((prev) => {
       const next = { ...prev };
       delete next[tabId];
       return next;
@@ -498,82 +586,7 @@ export default function TestPage() {
       return;
     }
 
-    if (selectedCommand === "Tune") {
-      const parseListLen = (s: string, def = 1) => {
-        const trimmed = s.trim();
-        if (!trimmed) return def;
-        return trimmed.split(/[\s,]+/).filter(Boolean).length;
-      };
-      const baseLotsN = parseListLen(baseLot);
-      const leveragesN = parseListLen(leverage);
-      const hasVol = sizing === "Vol Target";
-      const volTargetsN = hasVol ? parseListLen(volTarget, 1) : 1;
-      const volHalflifesN = hasVol ? parseListLen(volHalflife, 1) : 1;
-      const volMaxMultsN = hasVol ? parseListLen(volMaxMult, 1) : 1;
-      const volMinDaysN = hasVol ? parseListLen(volMinDays, 1) : 1;
-      const estimatedTotal = baseLotsN * leveragesN * volTargetsN * volHalflifesN * volMaxMultsN * volMinDaysN;
 
-      setTabTuneProgress(tabId, { progress: 0, total: estimatedTotal });
-
-      let progressInterval: any;
-
-      try {
-        await runTune({
-          environmentId: selectedEnvironmentId,
-          strategy: selectedStrategy,
-          symbol: selectedSymbol,
-          instrument: selectedInstrument,
-          initialBalance,
-          baseLot,
-          leverage,
-          sizing,
-          volTarget,
-          volHalflife,
-          volMaxMult,
-          volMinDays,
-          fromDate,
-          toDate,
-        });
-
-        progressInterval = setInterval(async () => {
-          try {
-            const status = await fetchTuneStatus();
-            if (status.status === "completed" && status.result) {
-              clearInterval(progressInterval);
-              setTuneResults((prev) => ({ ...prev, [tabId]: status.result! }));
-              setTabs((prev) =>
-                prev.map((t) => (t.id === tabId ? { ...t, hasResult: true } : t))
-              );
-              setTabLoading(tabId, false);
-              setTabTuneProgress(tabId, null);
-            } else if (status.status === "failed") {
-              clearInterval(progressInterval);
-              setErrors((prev) => ({
-                ...prev,
-                [tabId]: status.error || "Tune failed",
-              }));
-              setTabLoading(tabId, false);
-              setTabTuneProgress(tabId, null);
-            } else {
-              setTabTuneProgress(tabId, {
-                progress: status.progress ?? 0,
-                total: status.total ?? estimatedTotal,
-              });
-            }
-          } catch (e) {
-            console.error("Failed to fetch tune status:", e);
-          }
-        }, 300);
-      } catch (e) {
-        setErrors((prev) => ({
-          ...prev,
-          [tabId]: e instanceof Error ? e.message : "Tune failed",
-        }));
-        setTabLoading(tabId, false);
-        setTabTuneProgress(tabId, null);
-      }
-      return;
-    }
 
     const params = buildRunParams();
     try {
@@ -817,6 +830,7 @@ export default function TestPage() {
                           initialBalance: "",
                           baseLot: "",
                           leverage: "",
+                          exitStrategy: "",
                           sizing: "",
                           volTarget: "",
                           volHalflife: "",
@@ -953,11 +967,13 @@ export default function TestPage() {
                     <div key={index} className="flex gap-4 items-start relative">
                       {/* Left Timeline */}
                       <div className="relative flex flex-col items-center w-4 shrink-0 self-stretch">
-                        <div className={`w-3.5 h-3.5 rounded-full border z-10 absolute top-[31px] transition-colors duration-200 flex items-center justify-center text-[9px] font-bold ${
-                          isFilled ? "bg-gray-600 border-[#3A3A3E] text-white" : "bg-[#28282D] border-[#3A3A3E] text-gray-500"
-                        }`}>
-                          {!isFirst && isLast && isFilled && "✓"}
-                        </div>
+                        <div className={`w-3.5 h-3.5 rounded-full border z-10 absolute top-[31px] transition-all duration-200 ${
+                          isFilled
+                            ? isLast
+                              ? "bg-gray-200 border-[#3A3A3E]"
+                              : "bg-gray-600 border-[#3A3A3E]"
+                            : "bg-[#28282D] border-[#3A3A3E]"
+                        }`} />
                         {/* Draw connector line down if the item is filled and NOT the last strategy */}
                         {isFilled && !isLast && (
                           <div className="absolute top-[45px] bottom-[-55px] w-[2px] bg-[#3A3A3E] z-0" />
@@ -1115,51 +1131,103 @@ export default function TestPage() {
                   )}
                 </div>
                 {/* Right Content */}
-                <div className="flex flex-col gap-1.5 h-[54px] justify-end">
-                  <span className="text-xs font-semibold tracking-wider text-gray-400 uppercase select-none">
-                    {questionLabel("Strategy", isStrategyFilled)}
-                  </span>
-                  <div className="relative w-48 shrink-0">
-                    <select
-                      value={selectedStrategy}
-                      onChange={(e) => {
-                        const stratVal = e.target.value;
-                        updateActiveTab({
-                          selectedStrategy: stratVal,
-                          selectedSymbol: "",
-                          selectedInstrument: "",
-                          initialBalance: "",
-                          baseLot: "",
-                          leverage: "",
-                          sizing: "",
-                          volTarget: "",
-                          volHalflife: "",
-                          volMaxMult: "",
-                          volMinDays: "",
-                          fromDate: "",
-                          toDate: "",
-                          hasResult: false,
-                          isSaved: false,
-                          title: getTabTitle(stratVal, "", "Backtest")
-                        });
-                      }}
-                      className="bg-[#121214] border border-[#212124] text-xs font-medium text-gray-200 px-2.5 py-1.5 outline-none cursor-pointer hover:border-gray-700 transition-colors w-full h-8 appearance-none pr-8"
-                    >
-                      <option value="" disabled>
-                        {isStrategiesLoading ? "Loading strategies..." : strategies.length === 0 ? "No strategies in this environment" : "Select strategy..."}
-                      </option>
-                      {strategies.map((strategy) => (
-                        <option key={strategy.id} value={strategy.name}>
-                          {strategy.name}
+                <div className="flex flex-row items-end gap-4 min-h-[54px]">
+                  <div className="flex flex-col gap-1.5">
+                    <span className="text-xs font-semibold tracking-wider text-gray-400 uppercase select-none">
+                      {questionLabel("Strategy", isStrategySelected)}
+                    </span>
+                    <div className="relative w-48 shrink-0">
+                      <select
+                        value={selectedStrategy}
+                        onChange={(e) => {
+                          const stratVal = e.target.value;
+                          const usesFixedMarket =
+                            stratVal === "Night Drift" ||
+                            stratVal === "Night Drift 2" ||
+                            stratVal === "Noise Momentum" ||
+                            stratVal === "Noise Momentum 2";
+                          const symbol = "NQ";
+                          const instrument = "Forex";
+                          updateActiveTab({
+                            selectedStrategy: stratVal,
+                            selectedSymbol: usesFixedMarket ? symbol : "",
+                            selectedInstrument: usesFixedMarket ? instrument : "",
+                            initialBalance: "",
+                            baseLot: "",
+                            leverage: "",
+                            exitStrategy: "",
+                            sizing: "",
+                            volTarget: "",
+                            volHalflife: "",
+                            volMaxMult: "",
+                            volMinDays: "",
+                            fromDate: "",
+                            toDate: "",
+                            hasResult: false,
+                            isSaved: false,
+                            title: getTabTitle(stratVal, usesFixedMarket ? symbol : "", "Backtest")
+                          });
+                        }}
+                        className="bg-[#121214] border border-[#212124] text-xs font-medium text-gray-200 px-2.5 py-1.5 outline-none cursor-pointer hover:border-gray-700 transition-colors w-full h-8 appearance-none pr-8"
+                      >
+                        <option value="" disabled>
+                          {isStrategiesLoading ? "Loading strategies..." : strategies.length === 0 ? "No strategies in this environment" : "Select strategy..."}
                         </option>
-                      ))}
-                    </select>
-                    <div className="absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none flex items-center">
-                      <svg className="w-3 h-3 text-gray-500 fill-none stroke-current" strokeWidth="2.5" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
-                      </svg>
+                        {strategies.map((strategy) => (
+                          <option key={strategy.id} value={strategy.name}>
+                            {strategy.name}
+                          </option>
+                        ))}
+                      </select>
+                      <div className="absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none flex items-center">
+                        <svg className="w-3 h-3 text-gray-500 fill-none stroke-current" strokeWidth="2.5" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
+                        </svg>
+                      </div>
                     </div>
                   </div>
+                  {showNoiseConfiguration && isNoiseMomentum && (
+                    <>
+                      <div className="flex flex-col gap-1.5">
+                        <span className="text-xs font-semibold tracking-wider text-gray-400 uppercase select-none">
+                          {questionLabel("Exit", exitStrategy !== "")}
+                        </span>
+                        <select
+                          value={exitStrategy}
+                          onChange={(e) =>
+                            updateActiveTab({
+                              exitStrategy: e.target.value,
+                              hasResult: false,
+                              isSaved: false,
+                            })
+                          }
+                          className="bg-[#121214] border border-[#212124] text-xs font-medium text-gray-200 px-2.5 py-1.5 outline-none cursor-pointer hover:border-gray-700 transition-colors w-48 h-8"
+                        >
+                          <option value="" disabled>Select exit...</option>
+                          <option value="Ladder #2">Ladder #2</option>
+                        </select>
+                      </div>
+                      <div className="flex flex-col gap-1.5">
+                        <span className="text-xs font-semibold tracking-wider text-gray-400 uppercase select-none">
+                          {questionLabel("Position Sizing", sizing !== "")}
+                        </span>
+                        <select
+                          value={sizing}
+                          onChange={(e) =>
+                            updateActiveTab({
+                              sizing: e.target.value,
+                              hasResult: false,
+                              isSaved: false,
+                            })
+                          }
+                          className="bg-[#121214] border border-[#212124] text-xs font-medium text-gray-200 px-2.5 py-1.5 outline-none cursor-pointer hover:border-gray-700 transition-colors w-48 h-8"
+                        >
+                          <option value="" disabled>Select sizing...</option>
+                          <option value="Equity">Equity</option>
+                        </select>
+                      </div>
+                    </>
+                  )}
                 </div>
               </div>
             )}
@@ -1453,7 +1521,7 @@ export default function TestPage() {
                         )}
                       </button>
 
-                      {!isLoading && hasResult && selectedCommand !== "Tune" && (
+                      {!isLoading && hasResult && (
                         <button
                           disabled={isSaved || !!savingTabs[activeTabId]}
                           onClick={handleSave}
@@ -1501,11 +1569,7 @@ export default function TestPage() {
                   <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                   <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
                 </svg>
-                {selectedCommand === "Tune" && tuneProgress ? (
-                  <>running {tuneProgress.progress}/{tuneProgress.total} combinations</>
-                ) : (
-                  <>Running backtest...</>
-                )}
+                <>Running backtest...</>
               </span>
             </div>
           )}
@@ -1516,68 +1580,7 @@ export default function TestPage() {
             </div>
           )}
 
-          {!isLoading && hasResult && selectedCommand === "Tune" && activeTuneResult && (() => {
-            const hasVol = sizing === "Vol Target";
-            const renderTable = (title: string, list: any[]) => (
-              <div className="flex flex-col gap-3">
-                <h3 className="text-sm font-semibold tracking-wider text-gray-400 uppercase select-none">
-                  {title}
-                </h3>
-                <div className="bg-gray-900/40 rounded-lg border border-gray-800/50 p-4 overflow-x-auto">
-                  <table className="w-full border-collapse font-mono text-xs text-right">
-                    <thead>
-                      <tr className="text-gray-500 border-b border-gray-800/40 pb-2">
-                        <th className="text-left pb-2 font-semibold w-12">Rank</th>
-                        <th className="pb-2 font-semibold pr-4">Growth</th>
-                        <th className="pb-2 font-semibold pr-4">Max DD</th>
-                        <th className="pb-2 font-semibold pr-4">Score</th>
-                        <th className="pb-2 font-semibold pr-4">Base Lot</th>
-                        <th className="pb-2 font-semibold pr-4">Leverage</th>
-                        {hasVol && (
-                          <>
-                            <th className="pb-2 font-semibold pr-4">Vol Target</th>
-                            <th className="pb-2 font-semibold pr-4">Halflife</th>
-                            <th className="pb-2 font-semibold pr-4">Max Mult</th>
-                            <th className="pb-2 font-semibold pr-4">Min Days</th>
-                          </>
-                        )}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {list.map((c, idx) => (
-                        <tr key={idx} className="hover:bg-gray-800/20 border-b border-gray-800/20 last:border-b-0">
-                          <td className="text-left py-2 text-gray-500 font-bold">{idx + 1}</td>
-                          <td className={`py-2 pr-4 ${c.growth >= 0 ? "text-emerald-400" : "text-red-400"}`}>{fmtPct(c.growth)}</td>
-                          <td className="py-2 pr-4 text-red-400">{fmtPct(c.drawdown)}</td>
-                          <td className="py-2 pr-4 text-blue-400 font-medium">{c.score.toFixed(3)}</td>
-                          <td className="py-2 pr-4 text-gray-350">{c.baseLot.toFixed(2)}</td>
-                          <td className="py-2 pr-4 text-gray-350">{(c.leverage ?? 1).toFixed(2)}</td>
-                          {hasVol && (
-                            <>
-                              <td className="py-2 pr-4 text-gray-350">{(c.volTarget ?? 0).toFixed(2)}</td>
-                              <td className="py-2 pr-4 text-gray-350">{(c.volHalflife ?? 0).toFixed(1)}</td>
-                              <td className="py-2 pr-4 text-gray-350">{(c.volMaxMult ?? 0).toFixed(2)}</td>
-                              <td className="py-2 pr-4 text-gray-350">{c.volMinDays ?? 0}</td>
-                            </>
-                          )}
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            );
-
-            return (
-              <div className="flex-1 overflow-y-auto no-scrollbar px-8 py-8 flex flex-col gap-8 max-w-5xl mx-auto w-full">
-                {renderTable("Top 10 — Best Growth", activeTuneResult.bestGrowth)}
-                {renderTable("Top 10 — Smallest Drawdown", activeTuneResult.minDrawdown)}
-                {renderTable("Top 10 — Best of Two (Balanced)", activeTuneResult.bestOfTwo)}
-              </div>
-            );
-          })()}
-
-          {!isLoading && hasResult && selectedCommand !== "Tune" && activeResult && (() => {
+          {!isLoading && hasResult && activeResult && (() => {
             // Native vs Forex-execution view. `fxData` is the same trade book re-priced
             // from fx_nq_ticks; when selected, every sub-tab below reads from it.
             const fxData = activeResult.fx;

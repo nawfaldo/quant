@@ -11,8 +11,8 @@ use crate::{
     strategies::{
         StrategyEnvironment,
         idk::{
-            night_drift::NightDrift as IdkNightDrift,
-            noise_momentum::NoiseMomentum as IdkNoiseMomentum,
+            night_drift::NightDrift, night_drift_2::NightDrift2, noise_momentum::NoiseMomentum,
+            noise_momentum_2::NoiseMomentum2,
         },
     },
 };
@@ -22,16 +22,13 @@ use serde_json::Value;
 use super::data::{format_day, parse_iso_days};
 
 pub fn execute(prepared: &PreparedRun, request: &RunRequest) -> Result<RunResult, ApiError> {
-    execute_with_sizing(prepared, request, None)
+    let sizing = request.position_sizing()?;
+    execute_with_sizing(prepared, request, sizing)
 }
 
 pub fn execute_tuned(prepared: &PreparedRun, request: &RunRequest) -> Result<RunResult, ApiError> {
-    // Zig's current Night Drift implementation owns its calibrated,
-    // equity-compounded sizing internally. Although the tuning API still
-    // accepts the legacy sizing grid, those values do not override the
-    // strategy's emitted quantity. Preserve that benchmark behavior here.
-    let _ = request.position_sizing()?;
-    execute_with_sizing(prepared, request, None)
+    let sizing = request.position_sizing()?;
+    execute_with_sizing(prepared, request, sizing)
 }
 
 fn execute_with_sizing(
@@ -43,10 +40,28 @@ fn execute_with_sizing(
     engine.sizing = sizing;
     let result = match (request.strategy_environment, request.strategy.as_str()) {
         (StrategyEnvironment::Idk, "Night Drift") => {
-            run_engine(&prepared.bars, IdkNightDrift::default(), engine)
+            run_engine(&prepared.bars, NightDrift::default(), engine)
+        }
+        (StrategyEnvironment::Idk, "Night Drift 2") => {
+            run_engine(&prepared.bars, NightDrift2::default(), engine)
         }
         (StrategyEnvironment::Idk, "Noise Momentum") => {
-            run_engine(&prepared.bars, IdkNoiseMomentum::default(), engine)
+            request.validate_noise_momentum()?;
+            let point_value = engine.instrument.point_value(&engine.symbol);
+            let quantity_step = engine.instrument.quantity_step();
+            run_engine(
+                &prepared.bars,
+                NoiseMomentum::new(point_value, quantity_step),
+                engine,
+            )
+        }
+        (StrategyEnvironment::Idk, "Noise Momentum 2") => {
+            request.validate_noise_momentum()?;
+            run_engine(
+                &prepared.bars,
+                NoiseMomentum2::new(engine.instrument.quantity_step()),
+                engine,
+            )
         }
         _ => return Err(ApiError::BadRequest("unknown strategy".into())),
     };
@@ -116,7 +131,7 @@ fn run_engine<S: Strategy>(bars: &[Bar], mut strategy: S, cfg: EngineConfig) -> 
             minute < session_end
                 && bars.get(bar_index + 1).is_none_or(|next| {
                     next.ts.div_euclid(86_400) != day
-                        || next.ts.rem_euclid(86_400) as usize / 60 > session_end
+                        || next.ts.rem_euclid(86_400) as usize / 60 >= session_end
                 })
         });
         let mut mtm = marked_equity(equity, position.as_ref(), action, *bar, &cfg);
@@ -517,11 +532,11 @@ mod tests {
     }
 
     #[test]
-    fn intraday_strategy_closes_at_last_bar_before_session_gap() {
+    fn intraday_strategy_closes_before_exact_session_boundary() {
         let bars = [
             bar(600 * 60, 100.0),
             bar(601 * 60, 110.0),
-            bar(1_080 * 60, 50.0),
+            bar(930 * 60, 50.0),
         ];
         let cfg = EngineConfig {
             initial: 100.0,

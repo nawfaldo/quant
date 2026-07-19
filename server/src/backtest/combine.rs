@@ -304,7 +304,7 @@ fn source_table(source: &crate::database::CombineSource) -> Option<String> {
         _ => return None,
     };
     let timeframe = match source.strategy.as_str() {
-        "NIGHT_DRIFT" | "EU_OPEN" | "NOISE_MOMENTUM" => "1m",
+        "NIGHT_DRIFT" | "NIGHT_DRIFT_2" | "EU_OPEN" | "NOISE_MOMENTUM" | "NOISE_MOMENTUM_2" => "1m",
         "INTRADAY_MOM" | "ZARA_MOMENTUM" => "30m",
         "BUY_HOLD" => "1d",
         _ => return None,
@@ -327,7 +327,9 @@ fn unique_label<'a>(items: impl Iterator<Item = &'a str>, fallback: &str) -> Str
 fn strategy_display(value: &str) -> &str {
     match value {
         "NIGHT_DRIFT" | "EU_OPEN" => "Night Drift",
+        "NIGHT_DRIFT_2" => "Night Drift 2",
         "NOISE_MOMENTUM" => "Noise Momentum",
+        "NOISE_MOMENTUM_2" => "Noise Momentum 2",
         other => other,
     }
 }
