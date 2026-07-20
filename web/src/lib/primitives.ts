@@ -65,8 +65,24 @@ class BookmapHeatmapRenderer implements IPrimitivePaneRenderer {
     const range = chart.timeScale().getVisibleRange();
     if (!range) return;
     const from = range.from as number;
-    const to = range.to as number;
     const dataEndTime = this.primitive.dataEndTime;
+    // range.to is clamped to the last candle, but the depth feed runs ahead of
+    // the candle stream. When the last candle is on screen (live edge), extend
+    // the clip to the newest depth sample so the heatmap updates in real time
+    // instead of waiting for the next bar.
+    const seriesData = series.data();
+    const lastBarTime = seriesData.length
+      ? (seriesData[seriesData.length - 1].time as number)
+      : 0;
+    let to = range.to as number;
+    if (to >= lastBarTime) {
+      // Cap at the end of the currently forming bar so the heatmap fills the
+      // live column in real time without racing ahead of the price line.
+      to = Math.min(
+        Math.max(to, dataEndTime + 10),
+        lastBarTime + this.primitive.timeStepSeconds,
+      );
+    }
     target.useBitmapCoordinateSpace(({ context: ctx, horizontalPixelRatio: hpr, verticalPixelRatio: vpr }) => {
       ctx.save();
       const width = ctx.canvas.width;
@@ -198,6 +214,22 @@ class BookmapHeatmapRenderer implements IPrimitivePaneRenderer {
             Math.max(hpr, (x2 - x1) * hpr + 0.5),
             height,
           );
+          // Label the still-active (live edge) levels with their size, but
+          // only once they are hot enough to render orange/red. The last point
+          // of a level is its current state; when scrolled into history the
+          // loop breaks before reaching it, so no historical labels appear.
+          if (i === points.length - 1 && intensity >= 0.85) {
+            drawCtx.globalAlpha = 1;
+            drawCtx.fillStyle = "#ffffff";
+            drawCtx.font = `${Math.round(9 * vpr)}px ui-monospace, monospace`;
+            drawCtx.textAlign = "left";
+            drawCtx.textBaseline = "middle";
+            drawCtx.fillText(
+              String(Math.round(point.size)),
+              x2 * hpr + 4 * hpr,
+              y * vpr,
+            );
+          }
         }
       }
       drawCtx.globalAlpha = 1;
@@ -246,10 +278,16 @@ function heatmapTimeCoordinate(
   const x1 = scale.timeToCoordinate((bucket + stepSeconds) as UTCTimestamp);
   if (x0 !== null && x1 !== null) return x0 + (x1 - x0) * fraction;
 
-  // At the live right edge the next candle may not exist yet. Extrapolate one
-  // bar from the previous candle rather than dropping the current depth cell.
-  const previous = scale.timeToCoordinate((bucket - stepSeconds) as UTCTimestamp);
-  if (x0 !== null && previous !== null) return x0 + (x0 - previous) * fraction;
+  // At the live right edge the candles may lag the depth feed by several bars
+  // (the live tick stream stalls independently of the heatmap poll). Walk back
+  // to the newest bucket that still maps to a bar and extrapolate forward at
+  // the chart's bar spacing rather than dropping the newer depth cells.
+  for (let back = 0; back <= 60; back++) {
+    const t0 = (bucket - back * stepSeconds) as UTCTimestamp;
+    const a = scale.timeToCoordinate(t0);
+    const b = scale.timeToCoordinate((bucket - (back + 1) * stepSeconds) as UTCTimestamp);
+    if (a !== null && b !== null) return a + (a - b) * (back + fraction);
+  }
   return null;
 }
 

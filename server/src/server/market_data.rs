@@ -6,7 +6,7 @@ use std::{collections::BTreeMap, time::Duration};
 pub const CANDLE_MAGIC: u32 = 0x4544_4C43;
 pub const VWAP_MAGIC: u32 = 0x5041_5756;
 pub const HEATMAP_MAGIC: u32 = 0x5441_4548;
-pub const TIMEFRAMES: &[&str] = &["1m", "5m", "15m", "30m", "1h", "4h", "1d"];
+pub const TIMEFRAMES: &[&str] = &["tick", "1m", "5m", "15m", "30m", "1h", "4h", "1d"];
 pub const SYMBOLS: &[&str] = &["nq", "es"];
 
 fn valid_date(value: &str) -> bool {
@@ -336,7 +336,7 @@ pub async fn database_summary(questdb: &QuestDb) -> Result<Value, ApiError> {
             .sort_by_key(|tf| TIMEFRAMES.iter().position(|t| t == tf).unwrap_or(99));
 
         let timeframe_str = if available_timeframes.len() == TIMEFRAMES.len() {
-            "1m...1d".to_string()
+            "tick...1d".to_string()
         } else if available_timeframes.len() == 1 {
             available_timeframes[0].clone()
         } else if !available_timeframes.is_empty() {
@@ -429,10 +429,26 @@ pub async fn database_symbols(questdb: &QuestDb) -> Result<Value, ApiError> {
     let mut groups: BTreeMap<String, Group> = BTreeMap::new();
     for row in rows {
         if let Some(table_name) = row.get(0) {
-            if table_name.starts_with("bm_")
-                || table_name.starts_with("fx_")
-                || table_name.contains("tmp")
+            if table_name.starts_with("fx_") || table_name.contains("tmp") {
+                continue;
+            }
+            // Bookmap tick tables (bm_<sym>_ticks) back the march candles,
+            // aggregated on the fly across all timeframes.
+            if let Some(sym) = table_name
+                .strip_prefix("bm_")
+                .and_then(|rest| rest.strip_suffix("_ticks"))
             {
+                let entry = groups
+                    .entry(sym.to_lowercase())
+                    .or_insert_with(|| Group { tables: Vec::new() });
+                for tf in TIMEFRAMES {
+                    if !entry.tables.iter().any(|(existing, _)| existing == tf) {
+                        entry.tables.push((tf.to_string(), table_name.to_string()));
+                    }
+                }
+                continue;
+            }
+            if table_name.starts_with("bm_") {
                 continue;
             }
             if let Some(pos) = table_name.rfind('_') {
@@ -793,34 +809,37 @@ pub async fn ticks(
     questdb: &QuestDb,
     symbol: &str,
     since: Option<i64>,
+    before: Option<i64>,
+    limit: Option<i64>,
 ) -> Result<Vec<Tick>, ApiError> {
     validate_symbol(symbol)?;
 
+    // Page of the newest ticks matching the filters, returned in ascending
+    // order. `since` bounds below (live catch-up), `before` bounds above
+    // (lazy backfill of older history as the user scrolls left).
+    let limit = limit.unwrap_or(10_000).clamp(1, 50_000);
+    let mut filter = String::new();
+    if let Some(since) = since {
+        filter.push_str(&format!("WHERE cast(timestamp as long) > {since} "));
+    }
+    if let Some(before) = before {
+        filter.push_str(if filter.is_empty() { "WHERE " } else { "AND " });
+        filter.push_str(&format!("cast(timestamp as long) < {before} "));
+    }
+
     // Try to query with best_bid and best_ask columns first
-    let sql_with_bbo = if let Some(since) = since {
-        format!(
-            concat!(
-                "SELECT ts,price,size,side,best_bid,best_ask FROM (",
-                "SELECT cast(timestamp as long) ts,price,size,side,best_bid,best_ask ",
-                "FROM bm_{symbol}_ticks ",
-                "WHERE cast(timestamp as long) > {since} ",
-                "ORDER BY timestamp DESC LIMIT 10000",
-                ") ORDER BY ts ASC",
-            ),
-            symbol = symbol,
-            since = since
-        )
-    } else {
-        format!(
-            concat!(
-                "SELECT ts,price,size,side,best_bid,best_ask FROM (",
-                "SELECT cast(timestamp as long) ts,price,size,side,best_bid,best_ask ",
-                "FROM bm_{symbol}_ticks ORDER BY timestamp DESC LIMIT 100",
-                ") ORDER BY ts ASC",
-            ),
-            symbol = symbol
-        )
-    };
+    let sql_with_bbo = format!(
+        concat!(
+            "SELECT ts,price,size,side,best_bid,best_ask FROM (",
+            "SELECT cast(timestamp as long) ts,price,size,side,best_bid,best_ask ",
+            "FROM bm_{symbol}_ticks {filter}",
+            "ORDER BY timestamp DESC LIMIT {limit}",
+            ") ORDER BY ts ASC",
+        ),
+        symbol = symbol,
+        filter = filter,
+        limit = limit
+    );
 
     match query(questdb, &sql_with_bbo).await {
         Ok(rows) => {
@@ -840,30 +859,18 @@ pub async fn ticks(
         }
         Err(_) => {
             // Fallback for tables without best_bid/best_ask columns
-            let sql_without_bbo = if let Some(since) = since {
-                format!(
-                    concat!(
-                        "SELECT ts,price,size,side FROM (",
-                        "SELECT cast(timestamp as long) ts,price,size,side ",
-                        "FROM bm_{symbol}_ticks ",
-                        "WHERE cast(timestamp as long) > {since} ",
-                        "ORDER BY timestamp DESC LIMIT 10000",
-                        ") ORDER BY ts ASC",
-                    ),
-                    symbol = symbol,
-                    since = since
-                )
-            } else {
-                format!(
-                    concat!(
-                        "SELECT ts,price,size,side FROM (",
-                        "SELECT cast(timestamp as long) ts,price,size,side ",
-                        "FROM bm_{symbol}_ticks ORDER BY timestamp DESC LIMIT 100",
-                        ") ORDER BY ts ASC",
-                    ),
-                    symbol = symbol
-                )
-            };
+            let sql_without_bbo = format!(
+                concat!(
+                    "SELECT ts,price,size,side FROM (",
+                    "SELECT cast(timestamp as long) ts,price,size,side ",
+                    "FROM bm_{symbol}_ticks {filter}",
+                    "ORDER BY timestamp DESC LIMIT {limit}",
+                    ") ORDER BY ts ASC",
+                ),
+                symbol = symbol,
+                filter = filter,
+                limit = limit
+            );
             let rows = query(questdb, &sql_without_bbo).await?;
             rows.into_iter()
                 .map(|row| {

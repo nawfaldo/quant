@@ -10,7 +10,7 @@ export default defineConfig({
     tailwindcss(),
   ],
   server: {
-    allowedHosts: ['anon.tail87f761.ts.net'],
+    allowedHosts: ['.ngrok-free.app', '.ngrok.app', '.ngrok.io'],
     proxy: {
       '/api': {
         target: 'http://127.0.0.1:8080',

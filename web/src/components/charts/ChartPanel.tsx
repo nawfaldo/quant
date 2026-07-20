@@ -53,10 +53,7 @@ interface ChartPanelProps {
   onOpenSymbolModal: () => void;
 }
 
-function matchesMarchSymbol(
-  posSymbol: string,
-  marchSymbol: string,
-): boolean {
+function matchesMarchSymbol(posSymbol: string, marchSymbol: string): boolean {
   const ps = posSymbol.toLowerCase();
   const ms = marchSymbol.toLowerCase();
   if (ms === "nq") {
@@ -77,13 +74,21 @@ interface Tick {
   best_ask?: number;
 }
 
+// One page of ticks, ascending. `since` bounds below (live catch-up),
+// `before` bounds above (lazy backfill of older history on scroll-left).
+const TICK_PAGE_SIZE = 10_000;
+
 async function fetchMarchTicks(
   symbol: string,
-  since?: number,
+  opts: { since?: number; before?: number; limit?: number } = {},
 ): Promise<Tick[]> {
   const params = new URLSearchParams({ symbol });
-  if (since !== undefined) params.set("since", String(since));
-  const res = await fetch(`${BACKEND_URL}/api/march/ticks?${params.toString()}`);
+  if (opts.since !== undefined) params.set("since", String(opts.since));
+  if (opts.before !== undefined) params.set("before", String(opts.before));
+  params.set("limit", String(opts.limit ?? TICK_PAGE_SIZE));
+  const res = await fetch(
+    `${BACKEND_URL}/api/march/ticks?${params.toString()}`,
+  );
   if (!res.ok) throw new Error(`Backend error: ${res.status}`);
   return res.json();
 }
@@ -98,6 +103,75 @@ async function fetchMarchTicks(
 const RTH_OPEN_MIN = 9 * 60 + 30; // 09:30 ET
 const RTH_CLOSE_MIN = 16 * 60; // 16:00 ET
 const SESSION_PROFILE_ROW_SIZE = 5.0;
+
+// Aggregate ascending-sorted raw ticks into the per-second series data used by
+// tick mode (bid/ask lines, session-anchored CVD, trade bubbles). Single O(n)
+// pass — ticks within the same second overwrite the previous point in place.
+function aggregateTicks(ticks: Tick[]) {
+  const bidPoints: { time: UTCTimestamp; value: number }[] = [];
+  const askPoints: { time: UTCTimestamp; value: number }[] = [];
+  const cvdPoints: { time: UTCTimestamp; value: number }[] = [];
+  const bubblePoints: {
+    time: number;
+    price: number;
+    size: number;
+    isBuy: boolean;
+  }[] = [];
+
+  let cvdAcc = 0;
+  let cvdDay = -1;
+  let cvdAnchored = false;
+
+  for (const tick of ticks) {
+    if (!Number.isFinite(tick.ts) || !Number.isFinite(tick.price)) continue;
+    const tsSecs = Math.floor(tick.ts / 1_000_000_000);
+    const bidPrice = tick.best_bid ?? tick.price;
+    const askPrice = tick.best_ask ?? tick.price;
+
+    const barDay = Math.floor(tsSecs / 86400);
+    const barMin = Math.floor((tsSecs % 86400) / 60);
+    let cvdReset = false;
+    if (barDay !== cvdDay) {
+      cvdDay = barDay;
+      cvdAnchored = false;
+      if (barMin >= RTH_OPEN_MIN) {
+        cvdAnchored = true;
+        cvdReset = true;
+      }
+    }
+    if (!cvdAnchored && barMin >= RTH_OPEN_MIN) {
+      cvdAnchored = true;
+      cvdReset = true;
+    }
+    if (cvdReset) cvdAcc = 0;
+
+    const side = tick.side?.toUpperCase();
+    const size = Number.isFinite(tick.size) ? tick.size : 0;
+    cvdAcc += side === "BUY" ? size : side === "SELL" ? -size : 0;
+
+    const last = bidPoints.length - 1;
+    if (last >= 0 && bidPoints[last].time === tsSecs) {
+      bidPoints[last].value = bidPrice;
+      askPoints[last].value = askPrice;
+      cvdPoints[last].value = cvdAcc;
+    } else {
+      bidPoints.push({ time: tsSecs as UTCTimestamp, value: bidPrice });
+      askPoints.push({ time: tsSecs as UTCTimestamp, value: askPrice });
+      cvdPoints.push({ time: tsSecs as UTCTimestamp, value: cvdAcc });
+    }
+
+    if (size > 0) {
+      bubblePoints.push({
+        time: tick.ts / 1_000_000_000,
+        price: tick.price,
+        size,
+        isBuy: side === "BUY",
+      });
+    }
+  }
+
+  return { bidPoints, askPoints, cvdPoints, bubblePoints, cvdAcc, cvdDay, cvdAnchored };
+}
 
 async function fetchMarchCandles(
   symbol: string,
@@ -166,7 +240,10 @@ async function fetchMarchVolumeProfileDelta(
   from?: string,
   to?: string,
 ): Promise<VolumeProfileDeltaBin[]> {
-  const params = new URLSearchParams({ symbol, tick_size: tickSize.toString() });
+  const params = new URLSearchParams({
+    symbol,
+    tick_size: tickSize.toString(),
+  });
   if (from) params.set("from", from);
   if (to) params.set("to", to);
   const res = await fetch(
@@ -325,7 +402,7 @@ export default function ChartPanel({
     cvd,
   } = config;
 
-  const isTickMode = tf.table === 'tick';
+  const isTickMode = tf.table === "tick";
 
   const containerRef = useRef<HTMLDivElement>(null);
   const { visibleTradeStrategies, allTrades, allFxTrades } = useApp();
@@ -430,7 +507,7 @@ export default function ChartPanel({
     });
 
     // In tick mode, use two LineSeries (green for Bid, red for Ask); otherwise CandlestickSeries.
-    const isTickModeLocal = tf.table === 'tick';
+    const isTickModeLocal = tf.table === "tick";
     const series = isTickModeLocal
       ? chart.addSeries(LineSeries, {
           color: "#00c864", // Green for Bid
@@ -469,7 +546,7 @@ export default function ChartPanel({
         crosshairMarkerVisible: false,
       });
       // Tick mode: only heatmap + tick bubbles + active positions
-      tickBubblesPlugin.current.setPriceStep(symbol === 'es' ? 0.25 : 0.25);
+      tickBubblesPlugin.current.setPriceStep(symbol === "es" ? 0.25 : 0.25);
       tickBubblesPlugin.current.clear();
       series.attachPrimitive(tickBubblesPlugin.current);
       series.attachPrimitive(activePositionsPlugin.current);
@@ -500,8 +577,6 @@ export default function ChartPanel({
         });
     vwapSeriesRef.current = vwapSeries;
 
-
-
     // The fx_nq overlay candles live in a SECOND pane (created on demand by the
     // toggle effect below), so NQ keeps its own full pane + price axis on top and
     // fx_nq stacks underneath with its own axis.
@@ -510,6 +585,14 @@ export default function ChartPanel({
     let lastCandle: Bar | null = null;
     // Highest tick timestamp (ns) seen so far; null means "give me the latest".
     let lastTickNanos: number | null = null;
+
+    // Tick-mode raw tick store (ascending). Older pages are lazily prepended
+    // as the user scrolls left; live WS ticks are appended so rebuilds after a
+    // backfill never drop them.
+    let allTicks: Tick[] = [];
+    let oldestTickNanos: number | null = null;
+    let backfillPending = false;
+    let backfillDone = false;
 
     // 24h VWAP state — typical price (h+l+c)/3 weighted by bar volume, with the
     // running sums RE-ANCHORED (reset) at THREE points each ET day: midnight,
@@ -550,9 +633,11 @@ export default function ChartPanel({
       // Tick mode: route ticks to the line series + tick bubbles primitive.
       if (isTickModeLocal) {
         for (const tick of ticks) {
-          if (!Number.isFinite(tick.ts) || !Number.isFinite(tick.price)) continue;
+          if (!Number.isFinite(tick.ts) || !Number.isFinite(tick.price))
+            continue;
           if (lastTickNanos === null || tick.ts > lastTickNanos)
             lastTickNanos = tick.ts;
+          allTicks.push(tick);
           const tsSecs = Math.floor(tick.ts / 1_000_000_000);
           const size = Number.isFinite(tick.size) ? tick.size : 0;
           const side = tick.side?.toUpperCase();
@@ -580,10 +665,14 @@ export default function ChartPanel({
             cvdAccumulator = 0;
           }
 
-          const signedSize = side === "BUY" ? size : side === "SELL" ? -size : 0;
+          const signedSize =
+            side === "BUY" ? size : side === "SELL" ? -size : 0;
           cvdAccumulator += signedSize;
 
-          const newPoint = { time: tsSecs as UTCTimestamp, value: cvdAccumulator };
+          const newPoint = {
+            time: tsSecs as UTCTimestamp,
+            value: cvdAccumulator,
+          };
           const points = cvdPointsRef.current;
           if (points.length > 0 && points[points.length - 1].time === tsSecs) {
             points[points.length - 1] = newPoint;
@@ -592,11 +681,22 @@ export default function ChartPanel({
           }
 
           try {
-            bidSeriesRef.current?.update({ time: tsSecs as UTCTimestamp, value: bidPrice });
-            askSeriesRef.current?.update({ time: tsSecs as UTCTimestamp, value: askPrice });
+            bidSeriesRef.current?.update({
+              time: tsSecs as UTCTimestamp,
+              value: bidPrice,
+            });
+            askSeriesRef.current?.update({
+              time: tsSecs as UTCTimestamp,
+              value: askPrice,
+            });
             cvdSeriesRef.current?.update(newPoint);
             if (size > 0) {
-              tickBubblesPlugin.current.addTick(tsSecs, tick.price, size, isBuy);
+              tickBubblesPlugin.current.addTick(
+                tsSecs,
+                tick.price,
+                size,
+                isBuy,
+              );
             }
           } catch {
             // lightweight-charts rejected this point; skip it.
@@ -749,9 +849,15 @@ export default function ChartPanel({
             }
           }
 
-          const newPoint = { time: candleStartSecs as UTCTimestamp, value: cvdAccumulator };
+          const newPoint = {
+            time: candleStartSecs as UTCTimestamp,
+            value: cvdAccumulator,
+          };
           const points = cvdPointsRef.current;
-          if (points.length > 0 && points[points.length - 1].time === candleStartSecs) {
+          if (
+            points.length > 0 &&
+            points[points.length - 1].time === candleStartSecs
+          ) {
             points[points.length - 1] = newPoint;
           } else {
             points.push(newPoint);
@@ -836,105 +942,84 @@ export default function ChartPanel({
 
       const isLatest = mode === "latest";
 
-      // Tick mode: fetch historical ticks from /api/march/ticks and display them as bid/ask lines + bubbles
+      // Tick mode: newest page from /api/march/ticks rendered as bid/ask
+      // lines + bubbles; older history is lazily backfilled page-by-page as
+      // the user scrolls toward the left edge.
       if (isTickModeLocal) {
-        try {
-          const sinceNanos = new Date(fromDate + "T00:00:00Z").getTime() * 1_000_000;
-          const ticks = await fetchMarchTicks(symbol, sinceNanos);
-          if (!active) return;
-
-          // Aggregate historical ticks by second for lightweight-charts LineSeries (must be unique timestamps)
-          const bidPoints: { time: UTCTimestamp; value: number }[] = [];
-          const askPoints: { time: UTCTimestamp; value: number }[] = [];
-          const cvdPoints: { time: UTCTimestamp; value: number }[] = [];
-          const bubblePoints: any[] = [];
-
-          // Sort ticks chronologically
-          ticks.sort((a, b) => a.ts - b.ts);
-
-          let localCvdAcc = 0;
-          let localCvdDay = -1;
-          let localCvdAnchored = false;
-
-          // Build unique arrays of bid/ask/cvd points
-          for (const tick of ticks) {
-            const tsSecs = Math.floor(tick.ts / 1_000_000_000);
-            const bidPrice = tick.best_bid ?? tick.price;
-            const askPrice = tick.best_ask ?? tick.price;
-
-            // CVD accumulation
-            const barDay = Math.floor(tsSecs / 86400);
-            const barMin = Math.floor((tsSecs % 86400) / 60);
-            let cvdReset = false;
-            if (barDay !== localCvdDay) {
-              localCvdDay = barDay;
-              localCvdAnchored = false;
-              if (barMin >= RTH_OPEN_MIN) {
-                localCvdAnchored = true;
-                cvdReset = true;
-              }
-            }
-            if (!localCvdAnchored && barMin >= RTH_OPEN_MIN) {
-              localCvdAnchored = true;
-              cvdReset = true;
-            }
-
-            if (cvdReset) {
-              localCvdAcc = 0;
-            }
-
-            const signedSize = tick.side?.toUpperCase() === "BUY" ? tick.size : tick.side?.toUpperCase() === "SELL" ? -tick.size : 0;
-            localCvdAcc += signedSize;
-
-            // To ensure unique ascending order in setData, only add/overwrite the last one for this second
-            const indexInBid = bidPoints.findIndex(p => p.time === tsSecs);
-            if (indexInBid >= 0) {
-              bidPoints[indexInBid].value = bidPrice;
-              askPoints[indexInBid].value = askPrice;
-              cvdPoints[indexInBid].value = localCvdAcc;
-            } else {
-              bidPoints.push({ time: tsSecs as UTCTimestamp, value: bidPrice });
-              askPoints.push({ time: tsSecs as UTCTimestamp, value: askPrice });
-              cvdPoints.push({ time: tsSecs as UTCTimestamp, value: localCvdAcc });
-            }
-
-            // Store raw tick for bubbles
-            if (tick.size > 0) {
-              bubblePoints.push({
-                time: tick.ts / 1_000_000_000,
-                price: tick.price,
-                size: tick.size,
-                isBuy: tick.side?.toUpperCase() === "BUY",
-              });
-            }
-          }
-
-          // Sort arrays to be absolutely sure they are ascending
-          bidPoints.sort((a, b) => (a.time as number) - (b.time as number));
-          askPoints.sort((a, b) => (a.time as number) - (b.time as number));
-          cvdPoints.sort((a, b) => (a.time as number) - (b.time as number));
-
-          bidSeriesRef.current?.setData(bidPoints);
-          askSeriesRef.current?.setData(askPoints);
-          cvdPointsRef.current = cvdPoints;
-          cvdSeriesRef.current?.setData(cvdPoints);
-          tickBubblesPlugin.current.setData(bubblePoints);
-
-          if (bidPoints.length > 0 && chart) {
+        // Re-aggregate the full tick store and push it into the chart. Cheap
+        // (single O(n) pass), only runs on initial load and per backfill page.
+        const rebuildTickSeries = (preserveView: boolean) => {
+          const agg = aggregateTicks(allTicks);
+          const view = preserveView
+            ? chart.timeScale().getVisibleRange()
+            : null;
+          bidSeriesRef.current?.setData(agg.bidPoints);
+          askSeriesRef.current?.setData(agg.askPoints);
+          cvdPointsRef.current = agg.cvdPoints;
+          cvdSeriesRef.current?.setData(agg.cvdPoints);
+          tickBubblesPlugin.current.setData(agg.bubblePoints);
+          if (view) {
+            try {
+              chart.timeScale().setVisibleRange(view);
+            } catch {}
+          } else if (agg.bidPoints.length > 0) {
             chart.timeScale().fitContent();
           }
+          // Seed streaming CVD state from the aggregation result.
+          cvdAccumulator = agg.cvdAcc;
+          curCvdDay = agg.cvdDay;
+          cvdAnchored = agg.cvdAnchored;
+        };
 
-          // Seed streaming state
-          if (ticks.length > 0) {
-            lastTickNanos = ticks[ticks.length - 1].ts;
-            const lastTs = Math.floor(ticks[ticks.length - 1].ts / 1_000_000_000);
-            curCvdDay = Math.floor(lastTs / 86400);
-            cvdAnchored = Math.floor((lastTs % 86400) / 60) >= RTH_OPEN_MIN;
-            cvdAccumulator = localCvdAcc;
+        const loadOlderTicks = async () => {
+          if (backfillPending || backfillDone || oldestTickNanos === null)
+            return;
+          backfillPending = true;
+          setStreamStatus("loading");
+          try {
+            const older = await fetchMarchTicks(symbol, {
+              before: oldestTickNanos,
+            });
+            if (!active) return;
+            if (older.length === 0) {
+              backfillDone = true;
+              return;
+            }
+            if (older.length < TICK_PAGE_SIZE) backfillDone = true;
+            oldestTickNanos = older[0].ts;
+            allTicks = older.concat(allTicks);
+            rebuildTickSeries(true);
+          } catch (err) {
+            console.warn("Failed to backfill older ticks:", err);
+          } finally {
+            backfillPending = false;
+            if (active) setStreamStatus("idle");
           }
+        };
+
+        try {
+          const ticks = await fetchMarchTicks(symbol, {});
+          if (!active) return;
+          ticks.sort((a, b) => a.ts - b.ts);
+          allTicks = ticks;
+          if (ticks.length > 0) {
+            oldestTickNanos = ticks[0].ts;
+            lastTickNanos = ticks[ticks.length - 1].ts;
+          } else {
+            backfillDone = true;
+          }
+          rebuildTickSeries(false);
         } catch (err) {
           console.warn("Failed to load historical ticks:", err);
         }
+
+        // Lazy backfill: when the visible window nears the left edge of the
+        // loaded data, fetch the previous page. Subscription dies with the
+        // chart instance on cleanup.
+        chart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
+          if (!active || !range) return;
+          if (range.from < 200) void loadOlderTicks();
+        });
 
         setLoading(false);
         setStreamStatus("idle");
@@ -1141,12 +1226,59 @@ export default function ChartPanel({
 
       // 4. Switch to the realtime WebSocket stream (sub-100ms path).
       connectWs();
+
+      // 5. QuestDB candle polling — same source and cadence as the heatmap,
+      // so candles and heatmap always advance together even when the WS push
+      // drops ticks. The WS remains the low-latency path; the DB is the
+      // authoritative baseline that backfills anything the WS missed.
+      const pollCandles = async () => {
+        try {
+          const lastTime = lastCandle ? (lastCandle.time as number) : undefined;
+          const dayStr =
+            lastTime !== undefined
+              ? new Date(lastTime * 1000).toISOString().slice(0, 10)
+              : fromDate;
+          const recent = await fetchMarchCandles(symbol, tf, dayStr);
+          if (!active) return;
+          for (const c of recent) {
+            const t = c.time as number;
+            if (lastTime !== undefined && t < lastTime) continue;
+            try {
+              series.update(c as any);
+            } catch {
+              // A WS tick already advanced the series past this bar; skip it.
+            }
+            if (volumeSeriesRef.current) {
+              try {
+                volumeSeriesRef.current.update({
+                  time: c.time,
+                  value: c.volume ?? 0,
+                  color: c.close >= c.open ? "#089981" : "#F23645",
+                });
+              } catch {}
+            }
+            if (!lastCandle || t >= (lastCandle.time as number)) {
+              lastCandle = { ...c };
+              lastTickNanos = Math.max(
+                lastTickNanos ?? 0,
+                t * 1_000_000_000,
+              );
+            }
+          }
+        } catch {
+          // Transient fetch failure — next poll retries.
+        }
+        if (active) candlePollId = window.setTimeout(pollCandles, 2000);
+      };
+      void pollCandles();
     }
 
+    let candlePollId: number | undefined;
     initAndPoll();
 
     return () => {
       active = false;
+      if (candlePollId !== undefined) clearTimeout(candlePollId);
       if (reconnectId) clearTimeout(reconnectId);
       if (idleTimerId) clearTimeout(idleTimerId);
       if (profileFrameId !== null) cancelAnimationFrame(profileFrameId);
@@ -1178,7 +1310,9 @@ export default function ChartPanel({
     let lastTime: number | undefined;
     let timer: number | undefined;
     // The server doesn't know about 'tick' — use 1m for the heatmap query.
-    const heatmapTf = isTickMode ? { label: '1m', seconds: 60, table: '1m' } as const : tf;
+    const heatmapTf = isTickMode
+      ? ({ label: "1m", seconds: 60, table: "1m" } as const)
+      : tf;
     const load = async () => {
       try {
         const points = await fetchBookmapHeatmap(
@@ -1190,10 +1324,12 @@ export default function ChartPanel({
           controller.signal,
         );
         if (controller.signal.aborted) return;
-        if (lastTime === undefined) bookmapHeatmapPlugin.current.setData(points);
+        if (lastTime === undefined)
+          bookmapHeatmapPlugin.current.setData(points);
         else bookmapHeatmapPlugin.current.appendData(points);
-        for (const point of points) lastTime = Math.max(lastTime ?? 0, point.time);
-        if (mode === "latest") timer = window.setTimeout(load, 5000);
+        for (const point of points)
+          lastTime = Math.max(lastTime ?? 0, point.time);
+        if (mode === "latest") timer = window.setTimeout(load, 2000);
       } catch (err) {
         if (!controller.signal.aborted) {
           console.warn("Bookmap heatmap load failed:", err);
@@ -1206,7 +1342,16 @@ export default function ChartPanel({
       controller.abort();
       if (timer !== undefined) window.clearTimeout(timer);
     };
-  }, [bookmapHeatmap, isTickMode, symbol, tf, mode, fromDate, toDate, chartSeries]);
+  }, [
+    bookmapHeatmap,
+    isTickMode,
+    symbol,
+    tf,
+    mode,
+    fromDate,
+    toDate,
+    chartSeries,
+  ]);
 
   useEffect(() => {
     const series = chartSeries;
@@ -1369,12 +1514,22 @@ export default function ChartPanel({
   // CVD (Cumulative Volume Delta) lives in its own compact pane at the bottom.
   // It is created and removed on demand (only when cvd is enabled).
   useEffect(() => {
-    console.log("[CVD Effect] Triggered. cvd:", cvd, "chartRef.current:", !!chartRef.current, "chartSeries:", !!chartSeries);
+    console.log(
+      "[CVD Effect] Triggered. cvd:",
+      cvd,
+      "chartRef.current:",
+      !!chartRef.current,
+      "chartSeries:",
+      !!chartSeries,
+    );
     const chart = chartRef.current;
     if (!chart || !chartSeries) return;
     if (!cvd) return;
 
-    console.log("[CVD Effect] Creating CVD LineSeries. cvdPointsRef length:", cvdPointsRef.current.length);
+    console.log(
+      "[CVD Effect] Creating CVD LineSeries. cvdPointsRef length:",
+      cvdPointsRef.current.length,
+    );
     const cvdSeries = chart.addSeries(
       LineSeries,
       {
@@ -1388,7 +1543,7 @@ export default function ChartPanel({
         lastValueVisible: false,
         crosshairMarkerVisible: false,
       },
-      chart.panes().length // Add to a new pane at the bottom!
+      chart.panes().length, // Add to a new pane at the bottom!
     );
     cvdSeriesRef.current = cvdSeries;
 

@@ -127,6 +127,8 @@ async fn fx_candles(
 struct TickQuery {
     symbol: Option<String>,
     since: Option<i64>,
+    before: Option<i64>,
+    limit: Option<i64>,
 }
 async fn ticks(
     state: web::Data<AppState>,
@@ -136,6 +138,8 @@ async fn ticks(
         &state.questdb,
         query.symbol.as_deref().unwrap_or("nq"),
         query.since,
+        query.before,
+        query.limit,
     )
     .await
     {
