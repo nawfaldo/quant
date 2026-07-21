@@ -282,6 +282,7 @@ fn apply_drawdowns(body: &mut Value, drawdowns: Drawdowns) {
     body["max_drawdown_trough_date"] = Value::from(format_day(drawdowns.max_dd_trough));
     body["avg_drawdown"] = Value::from(round4(drawdowns.avg_dd));
     body["avg_drawdown_dollars"] = Value::from(round2(drawdowns.avg_dd_dollars));
+    body["avg_drawdown_time_days"] = Value::from(round2(drawdowns.avg_dd_time_days));
     body["max_intraday_drawdown"] = Value::from(round4(drawdowns.max_idd));
     body["max_intraday_drawdown_dollars"] = Value::from(round2(drawdowns.max_idd_dollars));
     body["max_intraday_drawdown_date"] = Value::from(format_day(drawdowns.max_idd_day));

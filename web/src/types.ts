@@ -34,6 +34,11 @@ export interface Backtest {
   max_drawdown_peak_date: string;
   max_drawdown_trough_date: string;
   avg_drawdown_dollars: number;
+  avg_drawdown_time_days: number;
+  annualised_std: number;
+  skew: number;
+  lower_tail: number;
+  upper_tail: number;
   max_intraday_drawdown: number;
   max_intraday_drawdown_dollars: number;
   max_intraday_drawdown_date: string;
@@ -46,6 +51,8 @@ export interface Backtest {
   avg_monthly: number;
   avg_weekly_pct: number;
   avg_monthly_pct: number;
+  avg_annual: number;
+  avg_annual_pct: number;
   instrument: string;
 }
 

@@ -30,21 +30,54 @@ function fmtDate(timestamp: string) {
   return timestamp.split(' ')[0]
 }
 
-function StatRow({ label, value, color }: { label: string; value: React.ReactNode; color?: string }) {
+function StatSection({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div className="flex items-start justify-between gap-4 py-2 border-b border-gray-800/40 last:border-b-0">
-      <span className="text-xs text-gray-500 shrink-0">{label}</span>
-      <span className={`text-right text-xs font-mono font-medium ${color ?? 'text-gray-200'}`}>{value}</span>
-    </div>
+    <section className="flex flex-col gap-2">
+      <div className="border border-[#212124] bg-[#1A1A1E] overflow-hidden shadow-2xl shadow-black/40 w-full select-text">
+        <table className="min-w-full border-collapse text-xs font-mono">
+          <thead>
+            <tr className="bg-[#28282D] border-b border-[#212124] text-gray-400 font-medium tracking-wide text-[10px] uppercase select-none">
+              <th className="text-left py-3 pl-6 font-semibold">{title}</th>
+              <th className="py-3 pr-6 font-semibold" />
+            </tr>
+          </thead>
+          <tbody>{children}</tbody>
+        </table>
+      </div>
+    </section>
   )
 }
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+function StatRow({ label, value, color }: { label: string; value: React.ReactNode; color?: string }) {
   return (
-    <section>
-      <h3 className="mb-2 text-[10px] font-semibold tracking-widest uppercase text-gray-500">{title}</h3>
-      <div className="border border-[#212124] bg-[#1A1A1E] px-4 py-1">{children}</div>
-    </section>
+    <tr className="border-b border-[#212124] last:border-0 text-gray-300 hover:bg-[#28282D]/20">
+      <td className="text-left py-3.5 pl-6 text-gray-500 whitespace-nowrap align-top">{label}</td>
+      <td className={`py-3.5 pr-6 text-right font-medium align-top ${color ?? 'text-gray-200'}`}>{value}</td>
+    </tr>
+  )
+}
+
+function SummaryCard({
+  label,
+  value,
+  valueColor,
+  sub,
+  subColor,
+}: {
+  label: string
+  value: string
+  valueColor: string
+  sub?: React.ReactNode
+  subColor?: string
+}) {
+  return (
+    <div className="flex h-28 w-56 shrink-0 flex-col rounded-xl border border-[#212124] bg-[#1A1A1E] px-5 py-4">
+      <span className="select-none text-[10px] font-semibold uppercase tracking-widest text-gray-500">{label}</span>
+      <div className={`flex flex-1 flex-col ${sub ? 'justify-end' : 'justify-center'}`}>
+        <div className={`font-mono text-2xl font-semibold leading-none ${valueColor}`}>{value}</div>
+        {sub && <div className={`mt-1.5 font-mono text-xs ${subColor}`}>{sub}</div>}
+      </div>
+    </div>
   )
 }
 
@@ -163,59 +196,76 @@ export default function BacktestResultSidebar({ backtest, isOpen, onDelete }: Ba
       {!showFx || fxData ? <>
       {activeTab === 'analysis' && report && (
         <div className="flex-1 overflow-y-auto px-8 pb-8 pt-20">
-          <div className="grid grid-cols-2 gap-6 max-w-5xl mx-auto">
-            <div className="space-y-6">
-              <Section title="Overview">
-                <StatRow label="Symbol" value={report.symbol.toUpperCase()} />
-                <StatRow label="Instrument" value={report.instrument} />
-                <StatRow label="Period" value={`${fmtDate(report.first_ts)} → ${fmtDate(report.last_ts)}`} />
-                <StatRow label="Total Days" value={String(report.total_days)} />
-                <StatRow label="Number of Trades" value={String(report.num_trades)} />
-              </Section>
+          <div className="max-w-5xl mx-auto mb-6 flex gap-4">
+            <SummaryCard
+              label="Net Profit"
+              value={fmt$(report.final_bal - report.initial_bal)}
+              valueColor={report.final_bal >= report.initial_bal ? 'text-emerald-400' : 'text-red-400'}
+              sub={
+                <span className="flex flex-col">
+                  <span className={report.net_growth >= 0 ? 'text-emerald-400' : 'text-red-400'}>
+                    {report.net_growth >= 0 ? '+' : ''}{fmtPct(report.net_growth)}
+                  </span>
+                  <span className="text-[10px] text-gray-500 mt-0.5">{fmt$(report.initial_bal)} → {fmt$(report.final_bal)}</span>
+                </span>
+              }
+            />
+            <SummaryCard
+              label="Avg Drawdown"
+              value={fmtPct(report.avg_drawdown)}
+              valueColor="text-white"
+              sub={`${report.avg_drawdown_time_days.toFixed(1)} days avg`}
+              subColor="text-gray-500"
+            />
+            <SummaryCard
+              label="Sharpe Ratio"
+              value={report.sharpe.toFixed(2)}
+              valueColor={report.sharpe >= 1 ? 'text-emerald-400' : report.sharpe >= 0 ? 'text-gray-200' : 'text-red-400'}
+            />
+          </div>
+          <div className="max-w-3xl mx-auto flex flex-col gap-5">
+            <StatSection title="Risk & Distribution">
+              <StatRow label="Annualised Std Dev" value={fmtPct(report.annualised_std)} />
+              <StatRow label="Skew" value={report.skew.toFixed(2)} />
+              <StatRow label="Lower Tail" value={report.lower_tail.toFixed(2)} />
+              <StatRow label="Upper Tail" value={report.upper_tail.toFixed(2)} />
+            </StatSection>
 
-              <Section title="Balance">
-                <StatRow label="Initial Balance" value={fmt$(report.initial_bal)} />
-                <StatRow
-                  label="Final Balance"
-                  value={`${fmt$(report.final_bal)} (${report.net_growth >= 0 ? '+' : ''}${fmtPct(report.net_growth)})`}
-                  color={report.final_bal >= report.initial_bal ? 'text-emerald-400' : 'text-red-400'}
-                />
-              </Section>
+            <StatSection title="Returns & Ratios">
+              <StatRow label="Weekly" value={`${fmt$(report.avg_weekly)} (${fmtPct(report.avg_weekly_pct)})`} color={report.avg_weekly >= 0 ? 'text-emerald-400' : 'text-red-400'} />
+              <StatRow label="Monthly" value={`${fmt$(report.avg_monthly)} (${fmtPct(report.avg_monthly_pct)})`} color={report.avg_monthly >= 0 ? 'text-emerald-400' : 'text-red-400'} />
+              <StatRow label="Annual" value={`${fmt$(report.avg_annual)} (${fmtPct(report.avg_annual_pct)})`} color={report.avg_annual >= 0 ? 'text-emerald-400' : 'text-red-400'} />
+              <StatRow label="Profit Factor" value={report.profit_factor.toFixed(2)} color={report.profit_factor >= 1 ? 'text-emerald-400' : 'text-red-400'} />
+              <StatRow label="Expectancy" value={fmt$(report.expectancy)} color={report.expectancy >= 0 ? 'text-emerald-400' : 'text-red-400'} />
+            </StatSection>
 
-              <Section title="Average Returns">
-                <StatRow label="Weekly" value={`${fmt$(report.avg_weekly)} (${fmtPct(report.avg_weekly_pct)})`} color={report.avg_weekly >= 0 ? 'text-emerald-400' : 'text-red-400'} />
-                <StatRow label="Monthly" value={`${fmt$(report.avg_monthly)} (${fmtPct(report.avg_monthly_pct)})`} color={report.avg_monthly >= 0 ? 'text-emerald-400' : 'text-red-400'} />
-              </Section>
+            <StatSection title="Drawdown">
+              <StatRow label="Max Drawdown" value={`${fmtPct(report.max_drawdown)} (${fmt$(report.max_drawdown_dollars)})`} color="text-gray-200" />
+              {report.max_drawdown_peak_date && <StatRow label="Drawdown Period" value={`${fmtDate(report.max_drawdown_peak_date)} → ${fmtDate(report.max_drawdown_trough_date)}`} />}
+              <StatRow label="Max Intraday DD" value={`${fmtPct(report.max_intraday_drawdown)} (${fmt$(report.max_intraday_drawdown_dollars)})`} color="text-gray-200" />
+              <StatRow label="Avg Intraday DD" value={`${fmtPct(report.avg_intraday_drawdown)} (${fmt$(report.avg_intraday_drawdown_dollars)})`} color="text-gray-200" />
+              <StatRow label="Max Daily Loss" value={fmt$(report.max_daily_loss)} color="text-gray-200" />
+              <StatRow label="Avg Daily Loss" value={fmt$(report.avg_daily_loss)} color="text-gray-200" />
+            </StatSection>
 
-              <Section title="Performance Ratios">
-                <StatRow label="Sharpe Ratio" value={report.sharpe.toFixed(2)} color={report.sharpe >= 1 ? 'text-emerald-400' : report.sharpe >= 0 ? 'text-gray-200' : 'text-red-400'} />
-                <StatRow label="Profit Factor" value={report.profit_factor.toFixed(2)} color={report.profit_factor >= 1 ? 'text-emerald-400' : 'text-red-400'} />
-                <StatRow label="Expectancy" value={fmt$(report.expectancy)} color={report.expectancy >= 0 ? 'text-emerald-400' : 'text-red-400'} />
-              </Section>
-            </div>
+            <StatSection title="Win / Loss">
+              <StatRow label="Win Rate" value={`${fmtPct(report.win_rate, 1)} (${report.win_count}/${report.num_trades})`} color={report.win_rate >= 50 ? 'text-emerald-400' : 'text-red-400'} />
+              <StatRow label="Total Wins" value={fmt$(report.total_win)} color="text-gray-200" />
+              <StatRow label="Total Losses" value={fmt$(report.total_loss)} color="text-gray-200" />
+              <StatRow label="Max Losing Streak" value={String(report.max_lose_streak)} />
+            </StatSection>
 
-            <div className="space-y-6">
-              <Section title="Win / Loss">
-                <StatRow label="Win Rate" value={`${fmtPct(report.win_rate, 1)} (${report.win_count}/${report.num_trades})`} color={report.win_rate >= 50 ? 'text-emerald-400' : 'text-red-400'} />
-                <StatRow label="Total Wins" value={fmt$(report.total_win)} color="text-emerald-400" />
-                <StatRow label="Total Losses" value={fmt$(report.total_loss)} color="text-red-400" />
-                <StatRow label="Max Losing Streak" value={String(report.max_lose_streak)} />
-              </Section>
+            <StatSection title="Position Sizing">
+              <StatRow label="Size" value={`${report.avg_size.toFixed(2)} (Min: ${report.min_size.toFixed(2)} / Max: ${report.max_size.toFixed(2)})`} />
+            </StatSection>
 
-              <Section title="Position Sizing">
-                <StatRow label="Size" value={`${report.avg_size.toFixed(2)} (Min: ${report.min_size.toFixed(2)} / Max: ${report.max_size.toFixed(2)})`} />
-              </Section>
-
-              <Section title="Drawdown & Loss">
-                <StatRow label="Max Drawdown" value={`${fmtPct(report.max_drawdown)} (${fmt$(report.max_drawdown_dollars)})`} color="text-red-400" />
-                {report.max_drawdown_peak_date && <StatRow label="Drawdown Period" value={`${fmtDate(report.max_drawdown_peak_date)} → ${fmtDate(report.max_drawdown_trough_date)}`} />}
-                <StatRow label="Avg Drawdown" value={`${fmtPct(report.avg_drawdown)} (${fmt$(report.avg_drawdown_dollars)})`} color="text-red-400" />
-                <StatRow label="Max Intraday DD" value={`${fmtPct(report.max_intraday_drawdown)} (${fmt$(report.max_intraday_drawdown_dollars)})`} color="text-red-400" />
-                <StatRow label="Avg Intraday DD" value={`${fmtPct(report.avg_intraday_drawdown)} (${fmt$(report.avg_intraday_drawdown_dollars)})`} color="text-red-400" />
-                <StatRow label="Max Daily Loss" value={fmt$(report.max_daily_loss)} color="text-red-400" />
-                <StatRow label="Avg Daily Loss" value={fmt$(report.avg_daily_loss)} color="text-red-400" />
-              </Section>
-            </div>
+            <StatSection title="Overview">
+              <StatRow label="Period" value={`${fmtDate(report.first_ts)} → ${fmtDate(report.last_ts)}`} />
+              <StatRow label="Total Days" value={String(report.total_days)} />
+              <StatRow label="Number of Trades" value={String(report.num_trades)} />
+              <StatRow label="Symbol" value={report.symbol.toUpperCase()} />
+              <StatRow label="Instrument" value={report.instrument} />
+            </StatSection>
           </div>
         </div>
       )}

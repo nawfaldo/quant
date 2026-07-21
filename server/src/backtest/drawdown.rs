@@ -11,8 +11,10 @@ pub(crate) struct DrawdownTracker {
     episode_dd_dollars: f64,
     episode_sum: f64,
     episode_dollars_sum: f64,
+    episode_days_sum: i64,
     episode_count: usize,
     in_drawdown: bool,
+    last_day: i64,
     current_day: Option<i64>,
     day_peak: f64,
     day_max: f64,
@@ -38,8 +40,10 @@ impl DrawdownTracker {
             episode_dd_dollars: 0.0,
             episode_sum: 0.0,
             episode_dollars_sum: 0.0,
+            episode_days_sum: 0,
             episode_count: 0,
             in_drawdown: false,
+            last_day: start_day,
             current_day: None,
             day_peak: initial,
             day_max: 0.0,
@@ -54,6 +58,7 @@ impl DrawdownTracker {
     }
 
     pub(crate) fn observe(&mut self, equity: f64, day: i64) {
+        self.last_day = day;
         if equity >= self.peak {
             self.finish_episode();
             self.peak = equity;
@@ -105,6 +110,7 @@ impl DrawdownTracker {
             max_dd_trough: self.max_dd_trough,
             avg_dd: self.episode_sum / episodes,
             avg_dd_dollars: self.episode_dollars_sum / episodes,
+            avg_dd_time_days: self.episode_days_sum as f64 / episodes,
             max_idd: self.max_idd,
             max_idd_dollars: self.max_idd_dollars,
             max_idd_day: self.max_idd_day,
@@ -119,6 +125,7 @@ impl DrawdownTracker {
         }
         self.episode_sum += self.episode_dd;
         self.episode_dollars_sum += self.episode_dd_dollars;
+        self.episode_days_sum += (self.last_day - self.peak_day).max(0);
         self.episode_count += 1;
         self.episode_dd = 0.0;
         self.episode_dd_dollars = 0.0;

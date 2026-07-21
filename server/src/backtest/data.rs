@@ -45,6 +45,11 @@ pub(crate) fn format_day(day: i64) -> String {
     let (y, m, d) = civil_from_days(day);
     format!("{y:04}-{m:02}-{d:02}")
 }
+/// (year, month) for an epoch day, used to bucket daily P&L into calendar months.
+pub(crate) fn year_month(day: i64) -> (i64, i64) {
+    let (y, m, _) = civil_from_days(day);
+    (y, m)
+}
 pub fn format_ts(ts: i64) -> String {
     format!(
         "{} {:02}:{:02}",
