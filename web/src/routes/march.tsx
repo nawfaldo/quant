@@ -2,18 +2,40 @@ import { useEffect, useRef, useState, useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { useApp } from "../context/AppContext";
-import { addAccountStrategy, addMt5Account, displayStrategyName, fetchBacktests, fetchEnvironments, fetchMarchLayouts, fetchMarchSettings, fetchMarchWorkspace, KNOWN_MARCH_STRATEGIES, saveMarchWorkspace } from "../api";
-import { TIMEFRAMES, makeDefaultPanelConfig, type Backtest, type Indicators, type LayoutPanelConfig, type MarchWorkspace, type MarchWorkspaceTab, type TF } from "../types";
+import {
+  addAccountStrategy,
+  addMt5Account,
+  displayStrategyName,
+  fetchBacktests,
+  fetchEnvironments,
+  fetchMarchLayouts,
+  fetchMarchSettings,
+  fetchMarchWorkspace,
+  KNOWN_MARCH_STRATEGIES,
+  saveMarchWorkspace,
+} from "../api";
+import {
+  TIMEFRAMES,
+  CrosshairBus,
+  isNqOrEsSymbol,
+  makeDefaultPanelConfig,
+  type Backtest,
+  type Indicators,
+  type LayoutPanelConfig,
+  type MarchWorkspace,
+  type MarchWorkspaceTab,
+  type TF,
+} from "../types";
 import ChartPanel from "../components/charts/ChartPanel";
 import LiquidGlassSwitch from "../components/buttons/LiquidGlassSwitch";
 import { SpinnerIcon } from "../components/ui/icons";
 import ModalShell from "../components/ui/ModalShell";
 import SymbolModal from "../components/modals/SymbolModal";
 
-export const Route = createFileRoute('/march')({
+export const Route = createFileRoute("/march")({
   // The root route owns this component's persistent mount.
   component: () => null,
-})
+});
 
 const DEFAULT_TF = TIMEFRAMES.find((t) => t.table === "1m") ?? TIMEFRAMES[0];
 
@@ -22,7 +44,16 @@ const LAYOUTS = [
     id: "single",
     label: "Single Panel",
     icon: (w = 14, h = 14) => (
-      <svg width={w} height={h} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <svg
+        width={w}
+        height={h}
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
         <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
       </svg>
     ),
@@ -31,7 +62,16 @@ const LAYOUTS = [
     id: "split-v",
     label: "Split Vertical",
     icon: (w = 14, h = 14) => (
-      <svg width={w} height={h} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <svg
+        width={w}
+        height={h}
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
         <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
         <line x1="12" y1="3" x2="12" y2="21" />
       </svg>
@@ -41,7 +81,16 @@ const LAYOUTS = [
     id: "split-h",
     label: "Split Horizontal",
     icon: (w = 14, h = 14) => (
-      <svg width={w} height={h} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <svg
+        width={w}
+        height={h}
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
         <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
         <line x1="3" y1="12" x2="21" y2="12" />
       </svg>
@@ -51,7 +100,16 @@ const LAYOUTS = [
     id: "grid-4",
     label: "2x2 Grid",
     icon: (w = 14, h = 14) => (
-      <svg width={w} height={h} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <svg
+        width={w}
+        height={h}
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
         <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
         <line x1="12" y1="3" x2="12" y2="21" />
         <line x1="3" y1="12" x2="21" y2="12" />
@@ -62,7 +120,16 @@ const LAYOUTS = [
     id: "split-3-v",
     label: "3 Splits Vertical",
     icon: (w = 14, h = 14) => (
-      <svg width={w} height={h} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <svg
+        width={w}
+        height={h}
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
         <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
         <line x1="9" y1="3" x2="9" y2="21" />
         <line x1="15" y1="3" x2="15" y2="21" />
@@ -73,7 +140,16 @@ const LAYOUTS = [
     id: "split-3-h",
     label: "3 Splits Horizontal",
     icon: (w = 14, h = 14) => (
-      <svg width={w} height={h} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <svg
+        width={w}
+        height={h}
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
         <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
         <line x1="3" y1="9" x2="21" y2="9" />
         <line x1="3" y1="15" x2="21" y2="15" />
@@ -84,7 +160,16 @@ const LAYOUTS = [
     id: "left-col-right-row",
     label: "Left Column, Right Rows",
     icon: (w = 14, h = 14) => (
-      <svg width={w} height={h} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <svg
+        width={w}
+        height={h}
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
         <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
         <line x1="12" y1="3" x2="12" y2="21" />
         <line x1="12" y1="12" x2="21" y2="12" />
@@ -95,7 +180,16 @@ const LAYOUTS = [
     id: "right-col-left-row",
     label: "Right Column, Left Rows",
     icon: (w = 14, h = 14) => (
-      <svg width={w} height={h} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <svg
+        width={w}
+        height={h}
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
         <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
         <line x1="12" y1="3" x2="12" y2="21" />
         <line x1="3" y1="12" x2="12" y2="12" />
@@ -106,7 +200,16 @@ const LAYOUTS = [
     id: "top-row-bottom-col",
     label: "Top Row, Bottom Columns",
     icon: (w = 14, h = 14) => (
-      <svg width={w} height={h} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <svg
+        width={w}
+        height={h}
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
         <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
         <line x1="3" y1="12" x2="21" y2="12" />
         <line x1="12" y1="12" x2="12" y2="21" />
@@ -117,7 +220,16 @@ const LAYOUTS = [
     id: "bottom-row-top-col",
     label: "Bottom Row, Top Columns",
     icon: (w = 14, h = 14) => (
-      <svg width={w} height={h} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <svg
+        width={w}
+        height={h}
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
         <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
         <line x1="3" y1="12" x2="21" y2="12" />
         <line x1="12" y1="3" x2="12" y2="12" />
@@ -136,35 +248,70 @@ interface LayoutDef {
 }
 
 const LAYOUT_GRID: Record<string, LayoutDef> = {
-  "single": { count: 1, cols: "1fr", rows: "1fr", areas: '"a"' },
+  single: { count: 1, cols: "1fr", rows: "1fr", areas: '"a"' },
   "split-v": { count: 2, cols: "1fr 1fr", rows: "1fr", areas: '"a b"' },
   "split-h": { count: 2, cols: "1fr", rows: "1fr 1fr", areas: '"a" "b"' },
-  "grid-4": { count: 4, cols: "1fr 1fr", rows: "1fr 1fr", areas: '"a b" "c d"' },
+  "grid-4": {
+    count: 4,
+    cols: "1fr 1fr",
+    rows: "1fr 1fr",
+    areas: '"a b" "c d"',
+  },
   "split-3-v": { count: 3, cols: "1fr 1fr 1fr", rows: "1fr", areas: '"a b c"' },
-  "split-3-h": { count: 3, cols: "1fr", rows: "1fr 1fr 1fr", areas: '"a" "b" "c"' },
-  "left-col-right-row": { count: 3, cols: "1fr 1fr", rows: "1fr 1fr", areas: '"a b" "a c"' },
-  "right-col-left-row": { count: 3, cols: "1fr 1fr", rows: "1fr 1fr", areas: '"b a" "c a"' },
-  "top-row-bottom-col": { count: 3, cols: "1fr 1fr", rows: "1fr 1fr", areas: '"a a" "b c"' },
-  "bottom-row-top-col": { count: 3, cols: "1fr 1fr", rows: "1fr 1fr", areas: '"b c" "a a"' },
+  "split-3-h": {
+    count: 3,
+    cols: "1fr",
+    rows: "1fr 1fr 1fr",
+    areas: '"a" "b" "c"',
+  },
+  "left-col-right-row": {
+    count: 3,
+    cols: "1fr 1fr",
+    rows: "1fr 1fr",
+    areas: '"a b" "a c"',
+  },
+  "right-col-left-row": {
+    count: 3,
+    cols: "1fr 1fr",
+    rows: "1fr 1fr",
+    areas: '"b a" "c a"',
+  },
+  "top-row-bottom-col": {
+    count: 3,
+    cols: "1fr 1fr",
+    rows: "1fr 1fr",
+    areas: '"a a" "b c"',
+  },
+  "bottom-row-top-col": {
+    count: 3,
+    cols: "1fr 1fr",
+    rows: "1fr 1fr",
+    areas: '"b c" "a a"',
+  },
 };
 
 const AREA_LETTERS = ["a", "b", "c", "d"];
 
 type MarchTab = MarchWorkspaceTab;
 
-function isMarchWorkspace(value: MarchWorkspace | null): value is MarchWorkspace {
-  return value?.version === 1 &&
+function isMarchWorkspace(
+  value: MarchWorkspace | null,
+): value is MarchWorkspace {
+  return (
+    value?.version === 1 &&
     typeof value.activeTabId === "string" &&
     Array.isArray(value.tabs) &&
     value.tabs.length > 0 &&
-    value.tabs.every((tab) =>
-      typeof tab.id === "string" &&
-      typeof tab.layout === "string" &&
-      typeof tab.bottomOpen === "boolean" &&
-      typeof tab.bottomHeight === "number" &&
-      (tab.environmentId === null || typeof tab.environmentId === "number") &&
-      Array.isArray(tab.backtestIds),
-    );
+    value.tabs.every(
+      (tab) =>
+        typeof tab.id === "string" &&
+        typeof tab.layout === "string" &&
+        typeof tab.bottomOpen === "boolean" &&
+        typeof tab.bottomHeight === "number" &&
+        (tab.environmentId === null || typeof tab.environmentId === "number") &&
+        Array.isArray(tab.backtestIds),
+    )
+  );
 }
 
 function createMarchTabId() {
@@ -203,16 +350,19 @@ export function MarchWorkspace() {
   } = useApp();
 
   const activeCfg: LayoutPanelConfig =
-    (activeMarchPanel && marchLayouts[activeMarchPanel.layout]?.[activeMarchPanel.index]) ||
+    (activeMarchPanel &&
+      marchLayouts[activeMarchPanel.layout]?.[activeMarchPanel.index]) ||
     makeDefaultPanelConfig();
 
+  const crosshairBusRef = useRef(new CrosshairBus());
   const [isPanelPopupOpen, setIsPanelPopupOpen] = useState(false);
   const [isEnvironmentPopupOpen, setIsEnvironmentPopupOpen] = useState(false);
   const [symbolModalOpen, setSymbolModalOpen] = useState(false);
-  const { data: environments = [], isLoading: isEnvironmentsLoading } = useQuery({
-    queryKey: ["environments"],
-    queryFn: fetchEnvironments,
-  });
+  const { data: environments = [], isLoading: isEnvironmentsLoading } =
+    useQuery({
+      queryKey: ["environments"],
+      queryFn: fetchEnvironments,
+    });
   const initialTabId = useRef(createMarchTabId()).current;
   const [tabs, setTabs] = useState<MarchTab[]>([
     {
@@ -250,7 +400,8 @@ export function MarchWorkspace() {
     queryFn: fetchMarchWorkspace,
     staleTime: Infinity,
   });
-  const shouldMigrateLegacyWorkspace = workspaceQuery.isSuccess && workspaceQuery.data === null;
+  const shouldMigrateLegacyWorkspace =
+    workspaceQuery.isSuccess && workspaceQuery.data === null;
   const legacySettingsQuery = useQuery({
     queryKey: ["marchSettings"],
     queryFn: fetchMarchSettings,
@@ -291,8 +442,10 @@ export function MarchWorkspace() {
 
     const storedWorkspace = workspaceQuery.data;
     if (isMarchWorkspace(storedWorkspace)) {
-      const activeTab = storedWorkspace.tabs.find((tab) => tab.id === storedWorkspace.activeTabId)
-        ?? storedWorkspace.tabs[0];
+      const activeTab =
+        storedWorkspace.tabs.find(
+          (tab) => tab.id === storedWorkspace.activeTabId,
+        ) ?? storedWorkspace.tabs[0];
       setTabs(storedWorkspace.tabs);
       setActiveTabId(activeTab.id);
       loadTab(activeTab);
@@ -300,19 +453,24 @@ export function MarchWorkspace() {
       return;
     }
 
-    if (!legacySettingsQuery.data || legacyLayoutsQuery.data === undefined) return;
+    if (!legacySettingsQuery.data || legacyLayoutsQuery.data === undefined)
+      return;
     const legacySettings = legacySettingsQuery.data;
     const layout = legacySettings.layout ?? "single";
-    const layouts = Object.keys(legacyLayoutsQuery.data).length > 0
-      ? legacyLayoutsQuery.data
-      : { [layout]: [makeDefaultPanelConfig()] };
+    const layouts =
+      Object.keys(legacyLayoutsQuery.data).length > 0
+        ? legacyLayoutsQuery.data
+        : { [layout]: [makeDefaultPanelConfig()] };
     const bottomHeight = Number(legacySettings.bottomHeight ?? 400);
     const migratedTab: MarchTab = {
       id: createMarchTabId(),
       layout,
       layouts,
-      bottomOpen: legacySettings.bottomOpen === true || legacySettings.bottomOpen === "true",
-      bottomHeight: Number.isFinite(bottomHeight) && bottomHeight > 0 ? bottomHeight : 400,
+      bottomOpen:
+        legacySettings.bottomOpen === true ||
+        legacySettings.bottomOpen === "true",
+      bottomHeight:
+        Number.isFinite(bottomHeight) && bottomHeight > 0 ? bottomHeight : 400,
       environmentId: selectedEnvironmentId,
       backtestIds: [...visibleIds],
     };
@@ -320,28 +478,54 @@ export function MarchWorkspace() {
     setActiveTabId(migratedTab.id);
     loadTab(migratedTab);
     setWorkspaceHydrated(true);
-  }, [legacyLayoutsQuery.data, legacySettingsQuery.data, selectedEnvironmentId, visibleIds, workspaceHydrated, workspaceQuery.data, workspaceQuery.isSuccess]);
+  }, [
+    legacyLayoutsQuery.data,
+    legacySettingsQuery.data,
+    selectedEnvironmentId,
+    visibleIds,
+    workspaceHydrated,
+    workspaceQuery.data,
+    workspaceQuery.isSuccess,
+  ]);
 
   // Keep the active tab's snapshot current as chart controls are changed.
   useEffect(() => {
     setTabs((prev) =>
       prev.map((tab) =>
-        tab.id === activeTabId
-          ? snapshotActiveTab(tab)
-          : tab,
+        tab.id === activeTabId ? snapshotActiveTab(tab) : tab,
       ),
     );
-  }, [activeTabId, marchLayout, marchLayouts, isBottomOpen, marchBottomHeight, selectedEnvironmentId, visibleIds]);
+  }, [
+    activeTabId,
+    marchLayout,
+    marchLayouts,
+    isBottomOpen,
+    marchBottomHeight,
+    selectedEnvironmentId,
+    visibleIds,
+  ]);
 
   useEffect(() => {
     if (!workspaceHydrated) return;
     const workspace: MarchWorkspace = {
       version: 1,
       activeTabId,
-      tabs: tabs.map((tab) => tab.id === activeTabId ? snapshotActiveTab(tab) : tab),
+      tabs: tabs.map((tab) =>
+        tab.id === activeTabId ? snapshotActiveTab(tab) : tab,
+      ),
     };
     saveWorkspaceInOrder(workspace);
-  }, [activeTabId, tabs, marchLayout, marchLayouts, isBottomOpen, marchBottomHeight, selectedEnvironmentId, visibleIds, workspaceHydrated]);
+  }, [
+    activeTabId,
+    tabs,
+    marchLayout,
+    marchLayouts,
+    isBottomOpen,
+    marchBottomHeight,
+    selectedEnvironmentId,
+    visibleIds,
+    workspaceHydrated,
+  ]);
 
   const activateTab = (tab: MarchTab) => {
     if (tab.id === activeTabId) return;
@@ -395,9 +579,17 @@ export function MarchWorkspace() {
   const commitTabIdEdit = () => {
     if (!editingTabId) return;
     const nextId = (tabIdEditorRef.current?.textContent ?? tabIdDraft).trim();
-    if (!nextId || tabs.some((tab) => tab.id !== editingTabId && tab.id === nextId)) return;
+    if (
+      !nextId ||
+      tabs.some((tab) => tab.id !== editingTabId && tab.id === nextId)
+    )
+      return;
 
-    setTabs((prev) => prev.map((tab) => tab.id === editingTabId ? { ...tab, id: nextId } : tab));
+    setTabs((prev) =>
+      prev.map((tab) =>
+        tab.id === editingTabId ? { ...tab, id: nextId } : tab,
+      ),
+    );
     if (activeTabId === editingTabId) setActiveTabId(nextId);
     setEditingTabId(null);
   };
@@ -424,7 +616,10 @@ export function MarchWorkspace() {
     if (sourceIndex === null || sourceIndex === targetIndex) return;
     setTabs((prev) => {
       const next = [...prev];
-      [next[sourceIndex], next[targetIndex]] = [next[targetIndex], next[sourceIndex]];
+      [next[sourceIndex], next[targetIndex]] = [
+        next[targetIndex],
+        next[sourceIndex],
+      ];
       return next;
     });
     draggedIdxRef.current = targetIndex;
@@ -449,7 +644,9 @@ export function MarchWorkspace() {
     };
   }, []);
 
-  const selectedEnvironment = environments.find((environment) => environment.id === selectedEnvironmentId);
+  const selectedEnvironment = environments.find(
+    (environment) => environment.id === selectedEnvironmentId,
+  );
 
   const selectEnvironment = (environmentId: number) => {
     sessionStorage.setItem("selected_environment_id", String(environmentId));
@@ -507,6 +704,8 @@ export function MarchWorkspace() {
     const stored = marchLayouts[marchLayout]?.[i] ?? makeDefaultPanelConfig();
     const tf = TIMEFRAMES.find((t) => t.table === stored.tf) ?? DEFAULT_TF;
     return {
+      panelIndex: i,
+      crosshairBus: crosshairBusRef.current,
       config: {
         symbol: stored.symbol,
         tf,
@@ -517,13 +716,18 @@ export function MarchWorkspace() {
         volume: stored.indicators.volume === true,
         volumeDeltaBubbles: stored.indicators.volume_delta_bubbles === true,
         sessionVolumeProfile: stored.indicators.session_volume_profile === true,
+        sessionVolumeProfileRth: stored.indicators.session_volume_profile_rth === true,
+        sessionVolumeProfileOvernight: stored.indicators.session_volume_profile_overnight === true,
         bookmapHeatmap: stored.indicators.bookmap_heatmap === true,
         cvd: stored.indicators.cvd === true,
+        gex: stored.indicators.gex === true,
+        gammaLevelsEod: stored.indicators.gamma_levels_eod === true,
       },
       setTf: (t: TF) => updateMarchPanel(marchLayout, i, { tf: t.table }),
       onApplyRange: (from: string, to: string) =>
         updateMarchPanel(marchLayout, i, { mode: "range", from, to }),
-      onLatest: (from: string) => updateMarchPanel(marchLayout, i, { mode: "latest", from }),
+      onLatest: (from: string) =>
+        updateMarchPanel(marchLayout, i, { mode: "latest", from }),
       onOpenIndicators: () => {
         setActiveMarchPanel({ layout: marchLayout, index: i });
         setIndicatorsOpen(true);
@@ -542,270 +746,313 @@ export function MarchWorkspace() {
   return (
     <>
       <div className="flex-1 flex flex-col bg-gray-950 min-h-0">
-      {/* Browser-style workspace tabs, matching the Test page. */}
-      <div className="flex items-end bg-[#121214] pl-0 pr-4 pt-2 border-b border-[#212124] flex-wrap gap-0.5 shrink-0 select-none">
-        {tabs.map((tab, idx) => {
-          const isActive = tab.id === activeTabId;
-          return (
-            <div
-              key={tab.id}
-              onClick={() => activateTab(tab)}
-              draggable={editingTabId !== tab.id}
-              onDragStart={(e) => handleDragStart(e, idx)}
-              onDragOver={(e) => e.preventDefault()}
-              onDragEnter={() => handleDragEnter(idx)}
-              onDragEnd={handleDragEnd}
-              className={`group relative flex items-center h-9 cursor-grab active:cursor-grabbing transition-all duration-150 ${
-                isActive ? "z-30" : "z-10"
-              } ${activeDragIdx === idx ? "opacity-40" : "opacity-100"} -ml-2.5 first:ml-0`}
-              style={{ width: "110px", minWidth: "110px" }}
-            >
+        {/* Browser-style workspace tabs, matching the Test page. */}
+        <div className="flex items-end bg-[#121214] pl-0 pr-4 pt-2 border-b border-[#212124] flex-wrap gap-0.5 shrink-0 select-none">
+          {tabs.map((tab, idx) => {
+            const isActive = tab.id === activeTabId;
+            return (
               <div
-                className="absolute inset-0 transition-colors duration-150"
-                style={{
-                  backgroundColor: isActive ? "#212124" : "#27272a",
-                  clipPath: "polygon(12px 0%, calc(100% - 12px) 0%, 100% 100%, 0% 100%)",
-                }}
-              />
-              <div
-                className="absolute inset-[1px] bottom-0 transition-colors duration-150"
-                style={{
-                  backgroundColor: isActive ? "#1A1A1E" : "#0f0f12",
-                  clipPath: "polygon(11px 0%, calc(100% - 11px) 0%, 100% 100%, 0% 100%)",
-                }}
-              />
-              <div className="relative z-10 flex items-center justify-center w-full h-full">
-                {editingTabId === tab.id ? (
-                  <span
-                    ref={tabIdEditorRef}
-                    contentEditable
-                    suppressContentEditableWarning
-                    onClick={(e) => e.stopPropagation()}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") {
-                        e.preventDefault();
-                        commitTabIdEdit();
-                      }
-                      if (e.key === "Escape") setEditingTabId(null);
-                    }}
-                    onBlur={() => setEditingTabId(null)}
-                    className="max-w-[78px] truncate font-mono text-xs text-white outline-none"
-                    aria-label="Edit March tab ID"
-                  >
-                    {tabIdDraft}
-                  </span>
-                ) : (
-                  <span
-                    onDoubleClick={(e) => {
-                      e.stopPropagation();
-                      beginTabIdEdit(tab.id);
-                    }}
-                    title="Double-click to edit tab ID"
-                    className={`font-mono text-xs cursor-text ${isActive ? "text-white font-bold" : "text-gray-500 font-medium"}`}
-                  >
-                    {tab.id}
-                  </span>
-                )}
-                {tabs.length > 1 && editingTabId !== tab.id && (
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      closeTab(tab.id);
-                    }}
-                    className={`absolute right-3 w-4 h-4 rounded-full flex items-center justify-center text-[9px] font-bold opacity-0 group-hover:opacity-100 bg-gray-800/90 hover:bg-gray-700 transition-all duration-150 ${
-                      isActive
-                        ? "text-gray-300 hover:text-white"
-                        : "text-gray-400 hover:text-white"
-                    }`}
-                    aria-label={`Close March tab ${tab.id}`}
-                  >
-                    ✕
-                  </button>
-                )}
-              </div>
-            </div>
-          );
-        })}
-        <button
-          onClick={addTab}
-          className="h-7 w-7 rounded-md flex items-center justify-center text-gray-500 hover:text-white hover:bg-gray-900 transition-colors cursor-pointer ml-3 mb-1 select-none text-lg font-light"
-          aria-label="Add March tab"
-        >
-          +
-        </button>
-      </div>
-
-      {/* Chart panel grid — driven by the selected bottom-bar layout */}
-      <div
-        className="flex-1 min-h-0 min-w-0 bg-gray-800"
-        style={{
-          display: "grid",
-          gridTemplateColumns: def.cols,
-          gridTemplateRows: def.rows,
-          gridTemplateAreas: def.areas,
-          gap: "1px",
-        }}
-      >
-        {Array.from({ length: def.count }).map((_, i) => (
-          <div
-            key={i}
-            className="min-h-0 min-w-0 overflow-hidden"
-            style={{ gridArea: AREA_LETTERS[i] }}
-          >
-            <ChartPanel {...panelProps(i)} />
-          </div>
-        ))}
-      </div>
-
-      {/* Bottom section — shared across all panels */}
-      <div
-        className="w-full bg-[#121214] shrink-0 border-t border-[#212124] flex flex-row min-h-0 relative"
-        style={{ height: isBottomOpen ? `${marchBottomHeight}px` : "50px" }}
-      >
-        {isBottomOpen && (
-          <div
-            className="absolute top-0 left-0 right-0 h-1.5 -translate-y-1/2 cursor-ns-resize z-50 select-none hover:bg-blue-500/20 active:bg-blue-500/40 transition-colors"
-            onMouseDown={handleMouseDown}
-          />
-        )}
-        {/* Controls pinned to top-right, always 50px tall */}
-        <div className="absolute top-0 right-0 h-[50px] flex items-center gap-1.5 pr-6 pl-4 z-30">
-          <div className="relative">
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                setIsEnvironmentPopupOpen(!isEnvironmentPopupOpen);
-              }}
-              className="px-2 py-1.5 text-xs text-gray-400 hover:text-white hover:bg-gray-900 rounded transition-colors flex items-center cursor-pointer border border-transparent"
-              title="Select an environment"
-              aria-haspopup="menu"
-              aria-expanded={isEnvironmentPopupOpen}
-            >
-              {selectedEnvironment ? (
-                <span className="max-w-[140px] truncate">{selectedEnvironment.name}</span>
-              ) : (
-                <span className="whitespace-nowrap">
-                  Select an Env<sup className="relative top-0.5 ml-0.5 text-[18px] font-medium leading-none">*</sup>
-                </span>
-              )}
-            </button>
-            {isEnvironmentPopupOpen && (
-              <div
-                className="absolute bottom-full right-0 mb-2.5 liquid-glass-dropdown march-panel-layout-popup rounded-lg p-2 z-50 min-w-[180px] max-w-[260px]"
-                onClick={(e) => e.stopPropagation()}
-                role="menu"
+                key={tab.id}
+                onClick={() => activateTab(tab)}
+                draggable={editingTabId !== tab.id}
+                onDragStart={(e) => handleDragStart(e, idx)}
+                onDragOver={(e) => e.preventDefault()}
+                onDragEnter={() => handleDragEnter(idx)}
+                onDragEnd={handleDragEnd}
+                className={`group relative flex items-center h-9 cursor-grab active:cursor-grabbing transition-all duration-150 ${
+                  isActive ? "z-30" : "z-10"
+                } ${activeDragIdx === idx ? "opacity-40" : "opacity-100"} -ml-2.5 first:ml-0`}
+                style={{ width: "110px", minWidth: "110px" }}
               >
-                <div className="absolute -bottom-[6px] right-2 h-2.5 w-2.5 rotate-45 march-panel-layout-popup-arrow" />
-                {isEnvironmentsLoading ? (
-                  <p className="px-2 py-1.5 text-xs text-gray-500">Loading environments…</p>
-                ) : environments.length === 0 ? (
-                  <p className="px-2 py-1.5 text-xs text-gray-500">No environments yet</p>
+                <div
+                  className="absolute inset-0 transition-colors duration-150"
+                  style={{
+                    backgroundColor: isActive ? "#212124" : "#27272a",
+                    clipPath:
+                      "polygon(12px 0%, calc(100% - 12px) 0%, 100% 100%, 0% 100%)",
+                  }}
+                />
+                <div
+                  className="absolute inset-[1px] bottom-0 transition-colors duration-150"
+                  style={{
+                    backgroundColor: isActive ? "#1A1A1E" : "#0f0f12",
+                    clipPath:
+                      "polygon(11px 0%, calc(100% - 11px) 0%, 100% 100%, 0% 100%)",
+                  }}
+                />
+                <div className="relative z-10 flex items-center justify-center w-full h-full">
+                  {editingTabId === tab.id ? (
+                    <span
+                      ref={tabIdEditorRef}
+                      contentEditable
+                      suppressContentEditableWarning
+                      onClick={(e) => e.stopPropagation()}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          commitTabIdEdit();
+                        }
+                        if (e.key === "Escape") setEditingTabId(null);
+                      }}
+                      onBlur={() => setEditingTabId(null)}
+                      className="max-w-[78px] truncate font-mono text-xs text-white outline-none"
+                      aria-label="Edit March tab ID"
+                    >
+                      {tabIdDraft}
+                    </span>
+                  ) : (
+                    <span
+                      onDoubleClick={(e) => {
+                        e.stopPropagation();
+                        beginTabIdEdit(tab.id);
+                      }}
+                      title="Double-click to edit tab ID"
+                      className={`font-mono text-xs cursor-text ${isActive ? "text-white font-bold" : "text-gray-500 font-medium"}`}
+                    >
+                      {tab.id}
+                    </span>
+                  )}
+                  {tabs.length > 1 && editingTabId !== tab.id && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        closeTab(tab.id);
+                      }}
+                      className={`absolute right-3 w-4 h-4 rounded-full flex items-center justify-center text-[9px] font-bold opacity-0 group-hover:opacity-100 bg-gray-800/90 hover:bg-gray-700 transition-all duration-150 ${
+                        isActive
+                          ? "text-gray-300 hover:text-white"
+                          : "text-gray-400 hover:text-white"
+                      }`}
+                      aria-label={`Close March tab ${tab.id}`}
+                    >
+                      ✕
+                    </button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+          <button
+            onClick={addTab}
+            className="h-7 w-7 rounded-md flex items-center justify-center text-gray-500 hover:text-white hover:bg-gray-900 transition-colors cursor-pointer ml-3 mb-1 select-none text-lg font-light"
+            aria-label="Add March tab"
+          >
+            +
+          </button>
+        </div>
+
+        {/* Chart panel grid — driven by the selected bottom-bar layout */}
+        <div
+          className="flex-1 min-h-0 min-w-0 bg-gray-800"
+          style={{
+            display: "grid",
+            gridTemplateColumns: def.cols,
+            gridTemplateRows: def.rows,
+            gridTemplateAreas: def.areas,
+            gap: "1px",
+          }}
+        >
+          {Array.from({ length: def.count }).map((_, i) => (
+            <div
+              key={i}
+              className="min-h-0 min-w-0 overflow-hidden"
+              style={{ gridArea: AREA_LETTERS[i] }}
+            >
+              <ChartPanel {...panelProps(i)} />
+            </div>
+          ))}
+        </div>
+
+        {/* Bottom section — shared across all panels */}
+        <div
+          className="w-full bg-[#121214] shrink-0 border-t border-[#212124] flex flex-row min-h-0 relative"
+          style={{ height: isBottomOpen ? `${marchBottomHeight}px` : "50px" }}
+        >
+          {isBottomOpen && (
+            <div
+              className="absolute top-0 left-0 right-0 h-1.5 -translate-y-1/2 cursor-ns-resize z-50 select-none hover:bg-blue-500/20 active:bg-blue-500/40 transition-colors"
+              onMouseDown={handleMouseDown}
+            />
+          )}
+          {/* Controls pinned to top-right, always 50px tall */}
+          <div className="absolute top-0 right-0 h-[50px] flex items-center gap-1.5 pr-6 pl-4 z-30">
+            <div className="relative">
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setIsEnvironmentPopupOpen(!isEnvironmentPopupOpen);
+                }}
+                className="px-2 py-1.5 text-xs text-gray-400 hover:text-white hover:bg-gray-900 rounded transition-colors flex items-center cursor-pointer border border-transparent"
+                title="Select an environment"
+                aria-haspopup="menu"
+                aria-expanded={isEnvironmentPopupOpen}
+              >
+                {selectedEnvironment ? (
+                  <span className="max-w-[140px] truncate">
+                    {selectedEnvironment.name}
+                  </span>
                 ) : (
-                  <div className="flex flex-col gap-1">
-                    {environments.map((environment) => {
-                      const isActive = environment.id === selectedEnvironmentId;
+                  <span className="whitespace-nowrap">
+                    Select an Env
+                    <sup className="relative top-0.5 ml-0.5 text-[18px] font-medium leading-none">
+                      *
+                    </sup>
+                  </span>
+                )}
+              </button>
+              {isEnvironmentPopupOpen && (
+                <div
+                  className="absolute bottom-full right-0 mb-2.5 liquid-glass-dropdown march-panel-layout-popup rounded-lg p-2 z-50 min-w-[180px] max-w-[260px]"
+                  onClick={(e) => e.stopPropagation()}
+                  role="menu"
+                >
+                  <div className="absolute -bottom-[6px] right-2 h-2.5 w-2.5 rotate-45 march-panel-layout-popup-arrow" />
+                  {isEnvironmentsLoading ? (
+                    <p className="px-2 py-1.5 text-xs text-gray-500">
+                      Loading environments…
+                    </p>
+                  ) : environments.length === 0 ? (
+                    <p className="px-2 py-1.5 text-xs text-gray-500">
+                      No environments yet
+                    </p>
+                  ) : (
+                    <div className="flex flex-col gap-1">
+                      {environments.map((environment) => {
+                        const isActive =
+                          environment.id === selectedEnvironmentId;
+                        return (
+                          <button
+                            key={environment.id}
+                            onClick={() => selectEnvironment(environment.id)}
+                            className={`w-full px-2 py-1.5 rounded text-left text-xs truncate transition-colors cursor-pointer ${
+                              isActive
+                                ? "bg-white text-black font-semibold"
+                                : "text-gray-300 hover:text-white hover:bg-gray-800"
+                            }`}
+                            title={environment.name}
+                            role="menuitem"
+                          >
+                            {environment.name}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div className="relative">
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setIsPanelPopupOpen(!isPanelPopupOpen);
+                }}
+                className="p-1.5 text-gray-400 hover:text-white hover:bg-gray-900 rounded transition-colors flex items-center justify-center cursor-pointer border border-transparent"
+                title="Panel Layout Options"
+              >
+                {LAYOUTS.find((l) => l.id === marchLayout)?.icon(14, 14) || (
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+                  </svg>
+                )}
+              </button>
+              {isPanelPopupOpen && (
+                <div
+                  className="absolute bottom-full right-0 mb-2.5 liquid-glass-dropdown march-panel-layout-popup rounded-lg p-2 z-50 w-[170px]"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <div className="absolute -bottom-[6px] right-2 h-2.5 w-2.5 rotate-45 march-panel-layout-popup-arrow" />
+                  <div className="grid grid-cols-5 gap-1.5">
+                    {LAYOUTS.map((layout) => {
+                      const isActive = marchLayout === layout.id;
                       return (
                         <button
-                          key={environment.id}
-                          onClick={() => selectEnvironment(environment.id)}
-                          className={`w-full px-2 py-1.5 rounded text-left text-xs truncate transition-colors cursor-pointer ${
+                          key={layout.id}
+                          onClick={() => {
+                            setMarchLayout(layout.id);
+                            setIsPanelPopupOpen(false);
+                          }}
+                          title={layout.label}
+                          className={`w-7 h-7 flex items-center justify-center rounded transition-all duration-150 cursor-pointer ${
                             isActive
-                              ? "bg-white text-black font-semibold"
-                              : "text-gray-300 hover:text-white hover:bg-gray-800"
+                              ? "bg-white text-black font-semibold shadow-sm"
+                              : "text-gray-400 hover:text-white hover:bg-gray-800"
                           }`}
-                          title={environment.name}
-                          role="menuitem"
                         >
-                          {environment.name}
+                          {layout.icon(14, 14)}
                         </button>
                       );
                     })}
                   </div>
-                )}
-              </div>
-            )}
-          </div>
+                </div>
+              )}
+            </div>
 
-          <div className="relative">
             <button
-              onClick={(e) => {
-                e.stopPropagation();
-                setIsPanelPopupOpen(!isPanelPopupOpen);
+              onClick={() => {
+                const nextOpen = !isBottomOpen;
+                setIsBottomOpen(nextOpen);
+                if (nextOpen && marchBottomHeight <= 100) {
+                  setMarchBottomHeight(400);
+                }
               }}
-              className="p-1.5 text-gray-400 hover:text-white hover:bg-gray-900 rounded transition-colors flex items-center justify-center cursor-pointer border border-transparent"
-              title="Panel Layout Options"
+              className="p-1.5 text-gray-400 hover:text-white hover:bg-gray-900 rounded transition-colors"
+              title={isBottomOpen ? "Collapse Section" : "Expand Section"}
             >
-              {LAYOUTS.find((l) => l.id === marchLayout)?.icon(14, 14) || (
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+              {isBottomOpen ? (
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <polyline points="6 9 12 15 18 9" />
+                </svg>
+              ) : (
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <polyline points="18 15 12 9 6 15" />
                 </svg>
               )}
             </button>
-            {isPanelPopupOpen && (
-              <div
-                className="absolute bottom-full right-0 mb-2.5 liquid-glass-dropdown march-panel-layout-popup rounded-lg p-2 z-50 w-[170px]"
-                onClick={(e) => e.stopPropagation()}
-              >
-                <div className="absolute -bottom-[6px] right-2 h-2.5 w-2.5 rotate-45 march-panel-layout-popup-arrow" />
-                <div className="grid grid-cols-5 gap-1.5">
-                  {LAYOUTS.map((layout) => {
-                    const isActive = marchLayout === layout.id;
-                    return (
-                      <button
-                        key={layout.id}
-                        onClick={() => {
-                          setMarchLayout(layout.id);
-                          setIsPanelPopupOpen(false);
-                        }}
-                        title={layout.label}
-                        className={`w-7 h-7 flex items-center justify-center rounded transition-all duration-150 cursor-pointer ${
-                          isActive
-                            ? "bg-white text-black font-semibold shadow-sm"
-                            : "text-gray-400 hover:text-white hover:bg-gray-800"
-                        }`}
-                      >
-                        {layout.icon(14, 14)}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
           </div>
-
-          <button
-            onClick={() => {
-              const nextOpen = !isBottomOpen;
-              setIsBottomOpen(nextOpen);
-              if (nextOpen && marchBottomHeight <= 100) {
-                setMarchBottomHeight(400);
-              }
-            }}
-            className="p-1.5 text-gray-400 hover:text-white hover:bg-gray-900 rounded transition-colors"
-            title={isBottomOpen ? "Collapse Section" : "Expand Section"}
-          >
-            {isBottomOpen ? (
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                <polyline points="6 9 12 15 18 9" />
-              </svg>
-            ) : (
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                <polyline points="18 15 12 9 6 15" />
-              </svg>
-            )}
-          </button>
         </div>
-      </div>
       </div>
 
       <IndicatorsModal
         open={indicatorsOpen}
         onClose={() => setIndicatorsOpen(false)}
         indicators={activeCfg.indicators}
+        symbol={activeCfg.symbol}
         onToggle={(key) => {
           if (!activeMarchPanel) return;
           updateMarchPanel(activeMarchPanel.layout, activeMarchPanel.index, {
-            indicators: { ...activeCfg.indicators, [key]: !activeCfg.indicators[key] },
+            indicators: {
+              ...activeCfg.indicators,
+              [key]: !activeCfg.indicators[key],
+            },
           });
         }}
       />
@@ -843,14 +1090,22 @@ export function MarchWorkspace() {
           } else if (defaultTf) {
             patch.tf = defaultTf;
           }
-          updateMarchPanel(activeMarchPanel.layout, activeMarchPanel.index, patch);
+          updateMarchPanel(
+            activeMarchPanel.layout,
+            activeMarchPanel.index,
+            patch,
+          );
         }}
       />
     </>
   );
 }
 
-function AccountModal({ open, onClose, onAdded }: {
+function AccountModal({
+  open,
+  onClose,
+  onAdded,
+}: {
   open: boolean;
   onClose: () => void;
   onAdded: (id: number) => void;
@@ -874,7 +1129,11 @@ function AccountModal({ open, onClose, onAdded }: {
     if (!login.trim() || busy) return;
     setBusy(true);
     try {
-      const id = await addMt5Account({ name: name.trim(), login: login.trim(), server: server.trim() });
+      const id = await addMt5Account({
+        name: name.trim(),
+        login: login.trim(),
+        server: server.trim(),
+      });
       await queryClient.invalidateQueries({ queryKey: ["mt5Accounts"] });
       onAdded(id);
       onClose();
@@ -885,11 +1144,31 @@ function AccountModal({ open, onClose, onAdded }: {
   }
 
   return (
-    <ModalShell open={open} onClose={onClose} title="Add MT5 Account" className="bg-[#222831]">
+    <ModalShell
+      open={open}
+      onClose={onClose}
+      title="Add MT5 Account"
+      className="bg-[#222831]"
+    >
       <div className="px-4 py-3 flex flex-col gap-3">
-        <ModalField label="Name" value={name} onChange={setName} placeholder="My account" />
-        <ModalField label="Login" value={login} onChange={setLogin} placeholder="12345678" />
-        <ModalField label="Server" value={server} onChange={setServer} placeholder="Broker-Server" />
+        <ModalField
+          label="Name"
+          value={name}
+          onChange={setName}
+          placeholder="My account"
+        />
+        <ModalField
+          label="Login"
+          value={login}
+          onChange={setLogin}
+          placeholder="12345678"
+        />
+        <ModalField
+          label="Server"
+          value={server}
+          onChange={setServer}
+          placeholder="Broker-Server"
+        />
       </div>
       <ModalActions
         busy={busy}
@@ -902,7 +1181,11 @@ function AccountModal({ open, onClose, onAdded }: {
   );
 }
 
-function StrategyModal({ open, onClose, accountId }: {
+function StrategyModal({
+  open,
+  onClose,
+  accountId,
+}: {
   open: boolean;
   onClose: () => void;
   accountId: number | null;
@@ -925,7 +1208,9 @@ function StrategyModal({ open, onClose, accountId }: {
     setBusy(true);
     try {
       await addAccountStrategy(accountId, { strategy, symbol: symbol.trim() });
-      await queryClient.invalidateQueries({ queryKey: ["accountStrategies", accountId] });
+      await queryClient.invalidateQueries({
+        queryKey: ["accountStrategies", accountId],
+      });
       onClose();
     } catch (error) {
       console.error("Failed to add strategy:", error);
@@ -934,21 +1219,35 @@ function StrategyModal({ open, onClose, accountId }: {
   }
 
   return (
-    <ModalShell open={open} onClose={onClose} title="Add Strategy" className="bg-[#222831]">
+    <ModalShell
+      open={open}
+      onClose={onClose}
+      title="Add Strategy"
+      className="bg-[#222831]"
+    >
       <div className="px-4 py-3 flex flex-col gap-3">
         <div className="flex items-center gap-3">
-          <label className="w-20 text-xs text-gray-500 shrink-0">Strategy</label>
+          <label className="w-20 text-xs text-gray-500 shrink-0">
+            Strategy
+          </label>
           <select
             value={strategy}
             onChange={(event) => setStrategy(event.target.value)}
             className="flex-1 bg-black/20 border border-white/10 text-sm text-gray-200 rounded-md px-3 py-1.5 outline-none focus:border-white/25 transition-colors cursor-pointer"
           >
             {KNOWN_MARCH_STRATEGIES.map((value) => (
-              <option key={value} value={value}>{displayStrategyName(value)}</option>
+              <option key={value} value={value}>
+                {displayStrategyName(value)}
+              </option>
             ))}
           </select>
         </div>
-        <ModalField label="Symbol" value={symbol} onChange={setSymbol} placeholder="NAS100" />
+        <ModalField
+          label="Symbol"
+          value={symbol}
+          onChange={setSymbol}
+          placeholder="NAS100"
+        />
       </div>
       <ModalActions
         busy={busy}
@@ -962,41 +1261,64 @@ function StrategyModal({ open, onClose, accountId }: {
 }
 
 const INDICATOR_ROWS: { key: keyof Indicators; label: string }[] = [
-  { key: "bookmap_heatmap", label: "Bookmap Heatmap" },
-  { key: "session_volume_profile", label: "Session Volume Profile" },
+  { key: "bookmap_heatmap", label: "Liquidity Heatmap" },
+  { key: "session_volume_profile", label: "Full Volume Profile" },
+  { key: "session_volume_profile_rth", label: "RTH Volume Profile" },
+  { key: "session_volume_profile_overnight", label: "Overnight Volume Profile" },
   { key: "volume", label: "Volume Bars" },
   { key: "volume_delta_bubbles", label: "Volume Delta Bubbles" },
   { key: "vwap", label: "VWAP" },
   { key: "cvd", label: "Cumulative Volume Delta" },
+  { key: "gex", label: "GEX Profile" },
+  { key: "gamma_levels_eod", label: "Gamma Level EOD" },
 ];
 
 function SearchIcon() {
   return (
-    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-gray-400">
+    <svg
+      width="13"
+      height="13"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className="shrink-0 text-gray-400"
+    >
       <circle cx="11" cy="11" r="8" />
       <line x1="21" y1="21" x2="16.65" y2="16.65" />
     </svg>
   );
 }
 
-function IndicatorsModal({ open, onClose, indicators, onToggle }: {
+function IndicatorsModal({
+  open,
+  onClose,
+  indicators,
+  symbol,
+  onToggle,
+}: {
   open: boolean;
   onClose: () => void;
   indicators: Indicators;
+  symbol?: string;
   onToggle: (key: keyof Indicators) => void;
 }) {
   const [searchQuery, setSearchQuery] = useState("");
+  const isSupported = isNqOrEsSymbol(symbol);
 
   const filteredIndicators = useMemo(() => {
+    if (!isSupported) return [];
     const q = searchQuery.trim().toLowerCase();
     if (!q) return INDICATOR_ROWS;
     return INDICATOR_ROWS.filter(
       ({ label, key }: { key: keyof Indicators; label: string }) =>
-        label.toLowerCase().includes(q) || key.toLowerCase().includes(q)
+        label.toLowerCase().includes(q) || key.toLowerCase().includes(q),
     );
-  }, [searchQuery]);
+  }, [searchQuery, isSupported]);
 
-  const searchControl = (
+  const searchControl = isSupported ? (
     <div className="flex items-center gap-2 flex-1 min-w-0 ml-2">
       <div className="liquid-glass-btn liquid-glass-btn-no-grow !rounded-xl relative inline-flex items-center gap-1.5 px-2.5 py-2 text-xs text-gray-200 !shadow-none w-48 shrink-0">
         <SearchIcon />
@@ -1009,7 +1331,7 @@ function IndicatorsModal({ open, onClose, indicators, onToggle }: {
         />
       </div>
     </div>
-  );
+  ) : undefined;
 
   return (
     <ModalShell
@@ -1023,24 +1345,33 @@ function IndicatorsModal({ open, onClose, indicators, onToggle }: {
       <div className="flex-1 min-h-0 flex flex-col pt-2 px-0">
         <div className="overflow-y-auto flex-1 min-h-0">
           <div className="flex flex-col pb-12">
-            {filteredIndicators.length === 0 ? (
+            {!isSupported ? (
+              <div className="text-xs text-gray-400 font-mono text-center py-12 px-6 flex flex-col items-center justify-center gap-2">
+                <span className="font-semibold text-gray-300">No Indicators Available</span>
+                <span>Indicators are only available for NQ and ES symbols.</span>
+              </div>
+            ) : filteredIndicators.length === 0 ? (
               <div className="text-xs text-gray-500 font-mono text-center py-8 px-4">
                 No indicators found matching search query
               </div>
             ) : (
-              filteredIndicators.map(({ key, label }: { key: keyof Indicators; label: string }) => (
-                <button
-                  key={key}
-                  onClick={() => onToggle(key)}
-                  type="button"
-                  aria-pressed={indicators[key] === true}
-                  className="group relative flex items-center justify-between py-3 px-4 hover:bg-[#212126]/50 transition-colors text-left cursor-pointer w-full"
-                >
-                  <span className="font-semibold text-gray-200 text-xs flex-1">{label}</span>
-                  <LiquidGlassSwitch checked={indicators[key] === true} />
-                  <div className="absolute bottom-0 left-4 right-0 border-b border-white/15 pointer-events-none" />
-                </button>
-              ))
+              filteredIndicators.map(
+                ({ key, label }: { key: keyof Indicators; label: string }) => (
+                  <button
+                    key={key}
+                    onClick={() => onToggle(key)}
+                    type="button"
+                    aria-pressed={indicators[key] === true}
+                    className="group relative flex items-center justify-between py-3 px-4 hover:bg-[#212126]/50 transition-colors text-left cursor-pointer w-full"
+                  >
+                    <span className="font-semibold text-gray-200 text-xs flex-1">
+                      {label}
+                    </span>
+                    <LiquidGlassSwitch checked={indicators[key] === true} />
+                    <div className="absolute bottom-0 left-4 right-0 border-b border-white/15 pointer-events-none" />
+                  </button>
+                ),
+              )
             )}
           </div>
         </div>
@@ -1049,7 +1380,15 @@ function IndicatorsModal({ open, onClose, indicators, onToggle }: {
   );
 }
 
-function BacktestsModal({ open, onClose, visibleIds, loadingIds, onToggle, activeSymbol, environmentId }: {
+function BacktestsModal({
+  open,
+  onClose,
+  visibleIds,
+  loadingIds,
+  onToggle,
+  activeSymbol,
+  environmentId,
+}: {
   open: boolean;
   onClose: () => void;
   visibleIds: Set<number>;
@@ -1059,7 +1398,11 @@ function BacktestsModal({ open, onClose, visibleIds, loadingIds, onToggle, activ
   environmentId: number | null;
 }) {
   const [searchQuery, setSearchQuery] = useState("");
-  const { data: backtests, isLoading, isError } = useQuery({
+  const {
+    data: backtests,
+    isLoading,
+    isError,
+  } = useQuery({
     queryKey: ["backtests"],
     queryFn: fetchBacktests,
     enabled: open,
@@ -1067,13 +1410,17 @@ function BacktestsModal({ open, onClose, visibleIds, loadingIds, onToggle, activ
   });
 
   const filteredBacktests = useMemo<Backtest[]>(() => {
-    const list = backtests?.filter(
-      (b: Backtest) => b.environment_id === environmentId && b.symbol.toLowerCase() === activeSymbol.toLowerCase(),
-    ) || [];
+    const list =
+      backtests?.filter(
+        (b: Backtest) =>
+          b.environment_id === environmentId &&
+          b.symbol.toLowerCase() === activeSymbol.toLowerCase(),
+      ) || [];
     const q = searchQuery.trim().toLowerCase();
     if (!q) return list;
     return list.filter(
-      (b: Backtest) => b.strategy.toLowerCase().includes(q) || b.id.toString().includes(q)
+      (b: Backtest) =>
+        b.strategy.toLowerCase().includes(q) || b.id.toString().includes(q),
     );
   }, [backtests, environmentId, activeSymbol, searchQuery]);
 
@@ -1104,16 +1451,31 @@ function BacktestsModal({ open, onClose, visibleIds, loadingIds, onToggle, activ
       <div className="flex-1 min-h-0 flex flex-col pt-2 px-0">
         <div className="overflow-y-auto flex-1 min-h-0">
           <div className="flex flex-col pb-12">
-            {isLoading && <div className="text-xs text-gray-500 font-mono text-center py-8 px-4">Loading…</div>}
-            {isError && <div className="text-xs text-red-400 text-center py-8 px-4">Failed to load backtests</div>}
-            {!isLoading && !isError && environmentId === null && (
-              <div className="text-xs text-gray-500 text-center py-8 px-4">Select an environment first</div>
-            )}
-            {!isLoading && !isError && environmentId !== null && filteredBacktests.length === 0 && (
-              <div className="text-xs text-gray-500 text-center py-8 px-4">
-                {searchQuery ? "No backtests found matching search query" : "No backtests for this environment and symbol"}
+            {isLoading && (
+              <div className="text-xs text-gray-500 font-mono text-center py-8 px-4">
+                Loading…
               </div>
             )}
+            {isError && (
+              <div className="text-xs text-red-400 text-center py-8 px-4">
+                Failed to load backtests
+              </div>
+            )}
+            {!isLoading && !isError && environmentId === null && (
+              <div className="text-xs text-gray-500 text-center py-8 px-4">
+                Select an environment first
+              </div>
+            )}
+            {!isLoading &&
+              !isError &&
+              environmentId !== null &&
+              filteredBacktests.length === 0 && (
+                <div className="text-xs text-gray-500 text-center py-8 px-4">
+                  {searchQuery
+                    ? "No backtests found matching search query"
+                    : "No backtests for this environment and symbol"}
+                </div>
+              )}
             {filteredBacktests.map((backtest: Backtest) => (
               <BacktestRow
                 key={backtest.id}
@@ -1130,7 +1492,12 @@ function BacktestsModal({ open, onClose, visibleIds, loadingIds, onToggle, activ
   );
 }
 
-function BacktestRow({ backtest, visible, loading, onToggle }: {
+function BacktestRow({
+  backtest,
+  visible,
+  loading,
+  onToggle,
+}: {
   backtest: Backtest;
   visible: boolean;
   loading: boolean;
@@ -1142,7 +1509,10 @@ function BacktestRow({ backtest, visible, loading, onToggle }: {
       className="group relative flex items-center justify-between py-3 px-4 hover:bg-[#212126]/50 transition-colors cursor-pointer w-full"
     >
       <span className="font-semibold text-gray-200 text-xs truncate flex-1 min-w-0 pr-3">
-        {backtest.strategy} <span className="text-gray-500 font-mono text-[11px] ml-1">#{backtest.id}</span>
+        {backtest.strategy}{" "}
+        <span className="text-gray-500 font-mono text-[11px] ml-1">
+          #{backtest.id}
+        </span>
       </span>
       {loading ? (
         <SpinnerIcon />
@@ -1166,7 +1536,12 @@ function BacktestRow({ backtest, visible, loading, onToggle }: {
   );
 }
 
-function ModalField({ label, value, onChange, placeholder }: {
+function ModalField({
+  label,
+  value,
+  onChange,
+  placeholder,
+}: {
   label: string;
   value: string;
   onChange: (value: string) => void;
@@ -1185,7 +1560,13 @@ function ModalField({ label, value, onChange, placeholder }: {
   );
 }
 
-function ModalActions({ busy, disabled, submitLabel, onClose, onSubmit }: {
+function ModalActions({
+  busy,
+  disabled,
+  submitLabel,
+  onClose,
+  onSubmit,
+}: {
   busy: boolean;
   disabled: boolean;
   submitLabel: string;
@@ -1194,14 +1575,19 @@ function ModalActions({ busy, disabled, submitLabel, onClose, onSubmit }: {
 }) {
   return (
     <div className="px-4 py-3 flex items-center justify-end gap-2">
-      <button onClick={onClose} className="px-3 py-1.5 text-xs font-medium rounded-md text-gray-400 hover:text-gray-200 hover:bg-white/5 transition-colors">
+      <button
+        onClick={onClose}
+        className="px-3 py-1.5 text-xs font-medium rounded-md text-gray-400 hover:text-gray-200 hover:bg-white/5 transition-colors"
+      >
         Cancel
       </button>
       <button
         onClick={onSubmit}
         disabled={disabled || busy}
         className={`px-4 py-1.5 text-xs font-medium rounded-md transition-colors ${
-          !disabled && !busy ? "bg-emerald-600 text-white hover:bg-emerald-500" : "bg-gray-700/60 text-gray-500 cursor-default"
+          !disabled && !busy
+            ? "bg-emerald-600 text-white hover:bg-emerald-500"
+            : "bg-gray-700/60 text-gray-500 cursor-default"
         }`}
       >
         {busy ? "Saving…" : submitLabel}

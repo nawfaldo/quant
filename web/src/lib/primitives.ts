@@ -76,167 +76,180 @@ class BookmapHeatmapRenderer implements IPrimitivePaneRenderer {
       : 0;
     let to = range.to as number;
     if (to >= lastBarTime) {
-      // Cap at the end of the currently forming bar so the heatmap fills the
-      // live column in real time without racing ahead of the price line.
-      to = Math.min(
-        Math.max(to, dataEndTime + 10),
-        lastBarTime + this.primitive.timeStepSeconds,
-      );
+      // In tick mode the series has per-second data so the heatmap must not
+      // extend more than ~1 second past the last data point. In candle mode
+      // it fills the currently forming bar (one timeStep wide).
+      const liveGrace = this.primitive.tickMode
+        ? 1
+        : this.primitive.timeStepSeconds;
+      to = Math.min(Math.max(to, dataEndTime + 10), lastBarTime + liveGrace);
     }
-    target.useBitmapCoordinateSpace(({ context: ctx, horizontalPixelRatio: hpr, verticalPixelRatio: vpr }) => {
-      ctx.save();
-      const width = ctx.canvas.width;
-      const height = ctx.canvas.height;
-      const topPrice = series.coordinateToPrice(0);
-      const bottomPrice = series.coordinateToPrice(height / vpr);
-      const profile = HEATMAP_PROFILES[this.primitive.symbol as "nq" | "es"] ?? HEATMAP_PROFILES.nq;
-      const cacheKey = [
-        this.primitive.dataRevision,
-        from,
-        to,
-        width,
-        height,
-        hpr,
-        vpr,
-        topPrice,
-        bottomPrice,
-        this.primitive.symbol,
-      ].join(":");
-      const cached = this.primitive.renderCache;
-      if (cached && this.primitive.renderCacheKey === cacheKey) {
-        ctx.drawImage(cached, 0, 0);
-        ctx.restore();
-        return;
-      }
+    target.useBitmapCoordinateSpace(
+      ({
+        context: ctx,
+        horizontalPixelRatio: hpr,
+        verticalPixelRatio: vpr,
+      }) => {
+        ctx.save();
+        const width = ctx.canvas.width;
+        const height = ctx.canvas.height;
+        const topPrice = series.coordinateToPrice(0);
+        const bottomPrice = series.coordinateToPrice(height / vpr);
+        const profile =
+          HEATMAP_PROFILES[this.primitive.symbol as "nq" | "es"] ??
+          HEATMAP_PROFILES.nq;
+        const cacheKey = [
+          this.primitive.dataRevision,
+          from,
+          to,
+          width,
+          height,
+          hpr,
+          vpr,
+          topPrice,
+          bottomPrice,
+          this.primitive.symbol,
+        ].join(":");
+        const cached = this.primitive.renderCache;
+        if (cached && this.primitive.renderCacheKey === cacheKey) {
+          ctx.drawImage(cached, 0, 0);
+          ctx.restore();
+          return;
+        }
 
-      const bitmap = this.primitive.getRenderCache(width, height);
-      const drawCtx = bitmap.getContext("2d", { alpha: true });
-      if (!drawCtx) {
-        ctx.restore();
-        return;
-      }
-      drawCtx.clearRect(0, 0, width, height);
+        const bitmap = this.primitive.getRenderCache(width, height);
+        const drawCtx = bitmap.getContext("2d", { alpha: true });
+        if (!drawCtx) {
+          ctx.restore();
+          return;
+        }
+        drawCtx.clearRect(0, 0, width, height);
 
-      // Normalize against only the cells inside the current time/price
-      // viewport. This makes the palette respond to pan and zoom: red means
-      // unusually large liquidity for what the trader can currently see, not
-      // for an unrelated outlier elsewhere in the downloaded session.
-      const visibleSizeCounts = new Map<number, number>();
-      let visibleSizeCount = 0;
-      for (const level of levels) {
-        const y = series.priceToCoordinate(level.price);
-        if (y === null || y * vpr < 0 || y * vpr > height) continue;
-        const points = level.points;
-        const start = heatmapVisibleStart(points, from);
-        for (let i = start; i < points.length; i++) {
-          const point = points[i];
-          if (point.time > to) break;
-          const end = heatmapSegmentEnd(points, i, to, dataEndTime);
-          if (point.size > 0 && end >= from) {
-            const sizeBucket = Math.max(1, Math.round(point.size));
-            visibleSizeCounts.set(
-              sizeBucket,
-              (visibleSizeCounts.get(sizeBucket) ?? 0) + 1,
-            );
-            visibleSizeCount++;
+        // Normalize against only the cells inside the current time/price
+        // viewport. This makes the palette respond to pan and zoom: red means
+        // unusually large liquidity for what the trader can currently see, not
+        // for an unrelated outlier elsewhere in the downloaded session.
+        const visibleSizeCounts = new Map<number, number>();
+        let visibleSizeCount = 0;
+        for (const level of levels) {
+          const y = series.priceToCoordinate(level.price);
+          if (y === null || y * vpr < 0 || y * vpr > height) continue;
+          const points = level.points;
+          const start = heatmapVisibleStart(points, from);
+          for (let i = start; i < points.length; i++) {
+            const point = points[i];
+            if (point.time > to) break;
+            const end = heatmapSegmentEnd(points, i, to, dataEndTime);
+            if (point.size > 0 && end >= from) {
+              const sizeBucket = Math.max(1, Math.round(point.size));
+              visibleSizeCounts.set(
+                sizeBucket,
+                (visibleSizeCounts.get(sizeBucket) ?? 0) + 1,
+              );
+              visibleSizeCount++;
+            }
           }
         }
-      }
-      const percentileTarget = Math.max(
-        1,
-        Math.ceil(visibleSizeCount * profile.hotPercentile),
-      );
-      const sortedSizes = Array.from(visibleSizeCounts.keys()).sort((a, b) => a - b);
-      let scale = 1;
-      let cumulative = 0;
-      for (const size of sortedSizes) {
-        cumulative += visibleSizeCounts.get(size) ?? 0;
-        scale = size;
-        if (cumulative >= percentileTarget) break;
-      }
-
-      for (const level of levels) {
-        const y = series.priceToCoordinate(level.price);
-        if (y === null) continue;
-        const yNext = series.priceToCoordinate(level.price + 0.25);
-        // Switch rendering style with vertical price zoom. At close zoom each
-        // exchange tick has enough room to be a crisp Bookmap-style cell. Once
-        // ticks collapse below two CSS pixels, expand and soften them so nearby
-        // levels blend into the continuous zoomed-out heatmap instead of
-        // degenerating into one-pixel horizontal lines.
-        const nativeRowHeight = Math.abs((yNext ?? y - 1) - y) * vpr;
-        const nativeCssHeight = nativeRowHeight / vpr;
-        const detailedRows = nativeCssHeight >= 2;
-        const rowHeight = detailedRows
-          ? Math.max(vpr, nativeRowHeight * 0.96)
-          : (2.5 + Math.max(0, 1 - nativeCssHeight) * 0.75) * vpr;
-        const zoomCompression = Math.max(
-          0,
-          Math.min(1, (2 - nativeCssHeight) / 2),
+        const percentileTarget = Math.max(
+          1,
+          Math.ceil(visibleSizeCount * profile.hotPercentile),
         );
-        const minimumVisibleSize =
-          scale * profile.zoomOutFloor * zoomCompression;
-        const points = level.points;
-        const start = heatmapVisibleStart(points, from);
-        for (let i = start; i < points.length; i++) {
-          const point = points[i];
-          if (point.time > to) break;
-          if (point.size <= 0) continue;
-          const end = heatmapSegmentEnd(points, i, to, dataEndTime);
-          if (end < from) continue;
-          if (point.size < minimumVisibleSize) continue;
-          const x1 = heatmapTimeCoordinate(
-            chart,
-            Math.max(from, point.time),
-            this.primitive.timeStepSeconds,
+        const sortedSizes = Array.from(visibleSizeCounts.keys()).sort(
+          (a, b) => a - b,
+        );
+        let scale = 1;
+        let cumulative = 0;
+        for (const size of sortedSizes) {
+          cumulative += visibleSizeCounts.get(size) ?? 0;
+          scale = size;
+          if (cumulative >= percentileTarget) break;
+        }
+
+        for (const level of levels) {
+          const y = series.priceToCoordinate(level.price);
+          if (y === null) continue;
+          const yNext = series.priceToCoordinate(level.price + 0.25);
+          // Switch rendering style with vertical price zoom. At close zoom each
+          // exchange tick has enough room to be a crisp Bookmap-style cell. Once
+          // ticks collapse below two CSS pixels, expand and soften them so nearby
+          // levels blend into the continuous zoomed-out heatmap instead of
+          // degenerating into one-pixel horizontal lines.
+          const nativeRowHeight = Math.abs((yNext ?? y - 1) - y) * vpr;
+          const nativeCssHeight = nativeRowHeight / vpr;
+          const detailedRows = nativeCssHeight >= 2;
+          const rowHeight = detailedRows
+            ? Math.max(vpr, nativeRowHeight * 0.96)
+            : (2.5 + Math.max(0, 1 - nativeCssHeight) * 0.75) * vpr;
+          const zoomCompression = Math.max(
+            0,
+            Math.min(1, (2 - nativeCssHeight) / 2),
           );
-          const x2 = heatmapTimeCoordinate(
-            chart,
-            Math.min(to, end),
-            this.primitive.timeStepSeconds,
-          );
-          if (x1 === null || x2 === null || x2 <= x1) continue;
-          const intensity = Math.pow(
-            Math.min(1, point.size / scale),
-            profile.gamma,
-          );
-          drawCtx.fillStyle = HEATMAP_COLORS[Math.round(intensity * 255)];
-          drawCtx.globalAlpha = detailedRows
-            ? 1
-            : Math.min(0.96, 0.86 + nativeCssHeight * 0.08);
-          const top = detailedRows
-            ? Math.round(y * vpr - rowHeight / 2)
-            : y * vpr - rowHeight / 2;
-          const height = detailedRows ? Math.max(1, Math.round(rowHeight)) : rowHeight;
-          drawCtx.fillRect(
-            x1 * hpr,
-            top,
-            Math.max(hpr, (x2 - x1) * hpr + 0.5),
-            height,
-          );
-          // Label the still-active (live edge) levels with their size, but
-          // only once they are hot enough to render orange/red. The last point
-          // of a level is its current state; when scrolled into history the
-          // loop breaks before reaching it, so no historical labels appear.
-          if (i === points.length - 1 && intensity >= 0.85) {
-            drawCtx.globalAlpha = 1;
-            drawCtx.fillStyle = "#ffffff";
-            drawCtx.font = `${Math.round(9 * vpr)}px ui-monospace, monospace`;
-            drawCtx.textAlign = "left";
-            drawCtx.textBaseline = "middle";
-            drawCtx.fillText(
-              String(Math.round(point.size)),
-              x2 * hpr + 4 * hpr,
-              y * vpr,
+          const minimumVisibleSize =
+            scale * profile.zoomOutFloor * zoomCompression;
+          const points = level.points;
+          const start = heatmapVisibleStart(points, from);
+          for (let i = start; i < points.length; i++) {
+            const point = points[i];
+            if (point.time > to) break;
+            if (point.size <= 0) continue;
+            const end = heatmapSegmentEnd(points, i, to, dataEndTime);
+            if (end < from) continue;
+            if (point.size < minimumVisibleSize) continue;
+            const x1 = heatmapTimeCoordinate(
+              chart,
+              Math.max(from, point.time),
+              this.primitive.timeStepSeconds,
             );
+            const x2 = heatmapTimeCoordinate(
+              chart,
+              Math.min(to, end),
+              this.primitive.timeStepSeconds,
+            );
+            if (x1 === null || x2 === null || x2 <= x1) continue;
+            const intensity = Math.pow(
+              Math.min(1, point.size / scale),
+              profile.gamma,
+            );
+            drawCtx.fillStyle = HEATMAP_COLORS[Math.round(intensity * 255)];
+            drawCtx.globalAlpha = detailedRows
+              ? 1
+              : Math.min(0.96, 0.86 + nativeCssHeight * 0.08);
+            const top = detailedRows
+              ? Math.round(y * vpr - rowHeight / 2)
+              : y * vpr - rowHeight / 2;
+            const height = detailedRows
+              ? Math.max(1, Math.round(rowHeight))
+              : rowHeight;
+            drawCtx.fillRect(
+              x1 * hpr,
+              top,
+              Math.max(hpr, (x2 - x1) * hpr + 0.5),
+              height,
+            );
+            // Label the still-active (live edge) levels with their size, but
+            // only once they are hot enough to render orange/red. The last point
+            // of a level is its current state; when scrolled into history the
+            // loop breaks before reaching it, so no historical labels appear.
+            if (i === points.length - 1 && intensity >= 0.85) {
+              drawCtx.globalAlpha = 1;
+              drawCtx.fillStyle = "#ffffff";
+              drawCtx.font = `${Math.round(9 * vpr)}px ui-monospace, monospace`;
+              drawCtx.textAlign = "left";
+              drawCtx.textBaseline = "middle";
+              drawCtx.fillText(
+                String(Math.round(point.size)),
+                x2 * hpr + 4 * hpr,
+                y * vpr,
+              );
+            }
           }
         }
-      }
-      drawCtx.globalAlpha = 1;
-      this.primitive.renderCacheKey = cacheKey;
-      ctx.drawImage(bitmap, 0, 0);
-      ctx.restore();
-    });
+        drawCtx.globalAlpha = 1;
+        this.primitive.renderCacheKey = cacheKey;
+        ctx.drawImage(bitmap, 0, 0);
+        ctx.restore();
+      },
+    );
   }
 }
 
@@ -280,12 +293,28 @@ function heatmapTimeCoordinate(
 
   // At the live right edge the candles may lag the depth feed by several bars
   // (the live tick stream stalls independently of the heatmap poll). Walk back
-  // to the newest bucket that still maps to a bar and extrapolate forward at
-  // the chart's bar spacing rather than dropping the newer depth cells.
-  for (let back = 0; back <= 60; back++) {
+  // to the newest data point that the chart can resolve and extrapolate forward
+  // at the local bar spacing.
+  //
+  // Phase 1: 1-second stride for up to stepSeconds seconds — resolves quickly
+  // for tick-mode charts whose series has per-second data points.
+  // `(a - b)` = pixel distance of 1 second; `back` = seconds walked back;
+  // `fraction * stepSeconds` = sub-bucket offset in seconds (fraction is 0..1
+  // over the full stepSeconds bucket, so we scale it to actual seconds).
+  for (let back = 0; back <= stepSeconds; back++) {
+    const t0 = (bucket - back) as UTCTimestamp;
+    const a = scale.timeToCoordinate(t0);
+    if (a === null) continue;
+    const b = scale.timeToCoordinate((bucket - back - 1) as UTCTimestamp);
+    if (b !== null) return a + (a - b) * (back + fraction * stepSeconds);
+  }
+  // Phase 2: stepSeconds stride for wider lookback (candle-mode fallback).
+  for (let back = 1; back <= 60; back++) {
     const t0 = (bucket - back * stepSeconds) as UTCTimestamp;
     const a = scale.timeToCoordinate(t0);
-    const b = scale.timeToCoordinate((bucket - (back + 1) * stepSeconds) as UTCTimestamp);
+    const b = scale.timeToCoordinate(
+      (bucket - (back + 1) * stepSeconds) as UTCTimestamp,
+    );
     if (a !== null && b !== null) return a + (a - b) * (back + fraction);
   }
   return null;
@@ -296,8 +325,12 @@ class BookmapHeatmapView implements IPrimitivePaneView {
   constructor(primitive: BookmapHeatmapPrimitive) {
     this.primitive = primitive;
   }
-  renderer(): IPrimitivePaneRenderer { return new BookmapHeatmapRenderer(this.primitive); }
-  zOrder() { return "bottom" as const; }
+  renderer(): IPrimitivePaneRenderer {
+    return new BookmapHeatmapRenderer(this.primitive);
+  }
+  zOrder() {
+    return "bottom" as const;
+  }
 }
 
 export class BookmapHeatmapPrimitive implements ISeriesPrimitive {
@@ -309,6 +342,7 @@ export class BookmapHeatmapPrimitive implements ISeriesPrimitive {
   levels: HeatmapLevel[] = [];
   dataEndTime = 0;
   timeStepSeconds = 60;
+  tickMode = false;
   symbol: string = "nq";
   dataRevision = 0;
   renderCache: HTMLCanvasElement | null = null;
@@ -319,12 +353,26 @@ export class BookmapHeatmapPrimitive implements ISeriesPrimitive {
     this._chart = p.chart;
     this._requestUpdate = p.requestUpdate;
   }
-  detached() { this._series = null; this._chart = null; }
+  detached() {
+    this._series = null;
+    this._chart = null;
+  }
   updateAllViews() {}
-  paneViews() { return [this._view]; }
-  getSeries() { return this._series; }
-  getChart() { return this._chart; }
-  setTimeStep(seconds: number) { this.timeStepSeconds = Math.max(1, seconds); }
+  paneViews() {
+    return [this._view];
+  }
+  getSeries() {
+    return this._series;
+  }
+  getChart() {
+    return this._chart;
+  }
+  setTimeStep(seconds: number) {
+    this.timeStepSeconds = Math.max(1, seconds);
+  }
+  setTickMode(enabled: boolean) {
+    this.tickMode = enabled;
+  }
   setSymbol(symbol: string) {
     if (this.symbol === symbol) return;
     this.symbol = symbol;
@@ -332,7 +380,10 @@ export class BookmapHeatmapPrimitive implements ISeriesPrimitive {
   }
   getRenderCache(width: number, height: number) {
     if (!this.renderCache) this.renderCache = document.createElement("canvas");
-    if (this.renderCache.width !== width || this.renderCache.height !== height) {
+    if (
+      this.renderCache.width !== width ||
+      this.renderCache.height !== height
+    ) {
       this.renderCache.width = width;
       this.renderCache.height = height;
       this.renderCacheKey = "";
@@ -956,6 +1007,8 @@ export interface SessionVolumeProfileRow {
 export interface SessionVolumeProfile {
   startTime: number;
   endTime: number;
+  firstCandleTime: number;
+  lastCandleTime: number;
   rows: SessionVolumeProfileRow[];
   pocPrice: number;
   maxVolume: number;
@@ -966,20 +1019,67 @@ const PROFILE_VALUE_AREA_FRACTION = 0.4;
 interface ProfileAccumulator {
   startTime: number;
   endTime: number;
+  firstCandleTime: number;
+  lastCandleTime: number;
   volumes: Map<number, number>;
 }
 
-function profileDayKey(time: number) {
-  // March timestamps are ET wall-clock values stored as fake UTC, so an epoch
-  // day boundary here is the displayed market-day boundary. Keep one profile
-  // for that entire day; do not split it at RTH open or close.
-  return Math.floor(time / 86400);
+export type ProfileSessionMode = "full" | "rth" | "overnight";
+
+export function getProfileSessionKey(
+  time: number,
+  mode: ProfileSessionMode,
+): number | null {
+  if (!Number.isFinite(time)) return null;
+  const secOfDay = ((time % 86400) + 86400) % 86400;
+  const dayIdx = Math.floor(time / 86400);
+
+  if (mode === "rth") {
+    // 09:30 ET (34200s) to 16:00 ET (57600s)
+    if (secOfDay < 34200 || secOfDay >= 57600) return null;
+    return dayIdx;
+  }
+  if (mode === "overnight") {
+    // 18:00 ET (64800s) yesterday to 09:30 ET (34200s) today
+    if (secOfDay >= 64800) {
+      return dayIdx;
+    } else if (secOfDay < 34200) {
+      return dayIdx - 1;
+    } else {
+      return null;
+    }
+  }
+  // "full": 00:00 to 23:59 ET
+  return dayIdx;
+}
+
+export function getProfileSessionTimeRange(
+  sessionKey: number,
+  mode: ProfileSessionMode,
+): { startTime: number; endTime: number } {
+  if (mode === "rth") {
+    return {
+      startTime: sessionKey * 86400 + 34200,
+      endTime: sessionKey * 86400 + 57600,
+    };
+  }
+  if (mode === "overnight") {
+    return {
+      startTime: sessionKey * 86400 + 64800,
+      endTime: (sessionKey + 1) * 86400 + 34200,
+    };
+  }
+  return {
+    startTime: sessionKey * 86400,
+    endTime: sessionKey * 86400 + 86399,
+  };
 }
 
 export function buildSessionVolumeProfiles(
   candles: Bar[],
   tickSize: number,
   _tfSeconds: number,
+  mode: ProfileSessionMode = "full",
 ): SessionVolumeProfile[] {
   if (candles.length === 0 || tickSize <= 0) return [];
 
@@ -990,18 +1090,24 @@ export function buildSessionVolumeProfiles(
     if (!Number.isFinite(time) || !Number.isFinite(volume) || volume <= 0)
       continue;
 
-    const key = profileDayKey(time);
+    const key = getProfileSessionKey(time, mode);
+    if (key === null) continue;
+
     let session = sessions.get(key);
     if (!session) {
-      session = { startTime: time, endTime: time, volumes: new Map() };
+      const range = getProfileSessionTimeRange(key, mode);
+      session = {
+        startTime: range.startTime,
+        endTime: range.endTime,
+        firstCandleTime: time,
+        lastCandleTime: time,
+        volumes: new Map(),
+      };
       sessions.set(key, session);
     }
-    session.endTime = time;
+    session.firstCandleTime = Math.min(session.firstCandleTime, time);
+    session.lastCandleTime = Math.max(session.lastCandleTime, time);
 
-    // OHLCV bars do not contain trade-at-price detail. Distribute each bar's
-    // volume uniformly over every tick row it touched. This produces the dense,
-    // continuous session silhouette expected from a volume profile while
-    // remaining a frontend-only approximation.
     const lowBin = Math.round(candle.low / tickSize);
     const highBin = Math.round(candle.high / tickSize);
     if (!Number.isFinite(lowBin) || !Number.isFinite(highBin)) continue;
@@ -1025,8 +1131,6 @@ export function buildSessionVolumeProfiles(
     let valueAreaVolume = maxVolume;
     let lowerIndex = pocIndex - 1;
     let upperIndex = pocIndex + 1;
-    // Build a contiguous 40% value area outwards from POC, always taking the
-    // higher-volume neighboring row first.
     while (
       valueAreaVolume < totalVolume * PROFILE_VALUE_AREA_FRACTION &&
       (lowerIndex >= 0 || upperIndex < entries.length)
@@ -1043,6 +1147,8 @@ export function buildSessionVolumeProfiles(
     profiles.push({
       startTime: session.startTime,
       endTime: session.endTime,
+      firstCandleTime: session.firstCandleTime,
+      lastCandleTime: session.lastCandleTime,
       pocPrice: pocBin * tickSize,
       maxVolume,
       rows: entries.map(([bin, volume]) => ({
@@ -1084,13 +1190,26 @@ class SessionVolumeProfileRenderer implements IPrimitivePaneRenderer {
         ctx.setLineDash([]);
 
         for (const profile of p.profiles) {
-          if (profile.endTime < from || profile.startTime > to) continue;
-          const startX = timeScale.timeToCoordinate(
+          if (profile.lastCandleTime < from || profile.firstCandleTime > to)
+            continue;
+          let startX = timeScale.timeToCoordinate(
             profile.startTime as UTCTimestamp,
           );
-          const endX = timeScale.timeToCoordinate(
+          if (startX === null) {
+            startX = timeScale.timeToCoordinate(
+              profile.firstCandleTime as UTCTimestamp,
+            );
+          }
+
+          let endX = timeScale.timeToCoordinate(
             profile.endTime as UTCTimestamp,
           );
+          if (endX === null) {
+            endX = timeScale.timeToCoordinate(
+              profile.lastCandleTime as UTCTimestamp,
+            );
+          }
+
           if (startX === null || endX === null || profile.maxVolume <= 0)
             continue;
 
@@ -1105,13 +1224,12 @@ class SessionVolumeProfileRenderer implements IPrimitivePaneRenderer {
           // profile spill into the next session.
           const profileHeight = Math.abs(lastRowY - firstRowY) + barSpacing;
           const sessionWidth = Math.max(barSpacing, endX - startX + barSpacing);
-          const profileWidth = Math.max(
-            3,
-            Math.min(320, profileHeight * 0.9, sessionWidth),
-          ) * 0.75;
+          const profileWidth =
+            Math.max(3, Math.min(320, profileHeight * 0.9, sessionWidth)) *
+            0.75;
           const left = (startX - barSpacing * 0.45) * hpr;
-          const sessionKey = Math.floor(profile.startTime / 86400);
-          const sessionMap = p.sessionDeltas.get(sessionKey);
+          const sessionKey = getProfileSessionKey(profile.startTime, p.sessionMode);
+          const sessionMap = sessionKey !== null ? p.sessionDeltas.get(sessionKey) : undefined;
 
           for (const row of profile.rows) {
             const centerY = series.priceToCoordinate(row.price);
@@ -1135,10 +1253,15 @@ class SessionVolumeProfileRenderer implements IPrimitivePaneRenderer {
             if (delta !== 0) {
               const deltaWidth = Math.max(
                 1,
-                profileWidth * (Math.abs(delta) / profile.maxVolume) * hpr * 5.0,
+                profileWidth *
+                  (Math.abs(delta) / profile.maxVolume) *
+                  hpr *
+                  2.0,
               );
               ctx.fillStyle =
-                delta > 0 ? "rgba(8, 153, 129, 0.35)" : "rgba(242, 54, 69, 0.35)";
+                delta > 0
+                  ? "rgba(8, 153, 129, 0.35)"
+                  : "rgba(242, 54, 69, 0.35)";
               ctx.fillRect(
                 left - deltaWidth,
                 top,
@@ -1185,6 +1308,7 @@ export class SessionVolumeProfilePrimitive implements ISeriesPrimitive {
   profiles: SessionVolumeProfile[] = [];
   tickSize = 0.25;
   symbol = "";
+  sessionMode: ProfileSessionMode = "full";
   sessionDeltas = new Map<number, Map<number, number>>();
   loadedHistoryDays = new Set<number>();
 
@@ -1224,18 +1348,23 @@ export class SessionVolumeProfilePrimitive implements ISeriesPrimitive {
     tickSize: number,
     tfSeconds: number,
     symbol?: string,
+    mode?: ProfileSessionMode,
   ) {
     const sym = symbol || "";
-    if (sym !== this.symbol || tickSize !== this.tickSize) {
+    const m = mode || "full";
+    if (sym !== this.symbol || tickSize !== this.tickSize || m !== this.sessionMode) {
       this.sessionDeltas.clear();
       this.loadedHistoryDays.clear();
     }
     this.tickSize = tickSize;
     this.symbol = sym;
-    this.setData(buildSessionVolumeProfiles(candles, tickSize, tfSeconds));
+    this.sessionMode = m;
+    this.setData(buildSessionVolumeProfiles(candles, tickSize, tfSeconds, this.sessionMode));
   }
 
-  setHistoricalDeltas(bins: { day: number; price_bin: number; delta: number }[]) {
+  setHistoricalDeltas(
+    bins: { day: number; price_bin: number; delta: number }[],
+  ) {
     this.loadedHistoryDays.clear();
     for (const bin of bins) {
       const sessionKey = Math.floor(bin.day / 86400);
@@ -1249,7 +1378,10 @@ export class SessionVolumeProfilePrimitive implements ISeriesPrimitive {
         this.sessionDeltas.set(sessionKey, sessionMap);
       }
       const priceBinKey = Math.round(bin.price_bin / this.tickSize);
-      sessionMap.set(priceBinKey, (sessionMap.get(priceBinKey) ?? 0) + bin.delta);
+      sessionMap.set(
+        priceBinKey,
+        (sessionMap.get(priceBinKey) ?? 0) + bin.delta,
+      );
     }
     this._requestUpdate?.();
   }
@@ -1260,7 +1392,8 @@ export class SessionVolumeProfilePrimitive implements ISeriesPrimitive {
       sideUpper === "BUY" ? size : sideUpper === "SELL" ? -size : 0;
     if (signedSize === 0) return;
 
-    const sessionKey = Math.floor(tsSecs / 86400);
+    const sessionKey = getProfileSessionKey(tsSecs, this.sessionMode);
+    if (sessionKey === null) return;
     const bin = Math.round(price / this.tickSize);
 
     let sessionMap = this.sessionDeltas.get(sessionKey);
@@ -1452,7 +1585,7 @@ export class VolumeDeltaBubblesPrimitive implements ISeriesPrimitive {
 // ---------------------------------------------------------------------------
 
 export interface TickBubbleRaw {
-  time: number;   // seconds
+  time: number; // seconds
   price: number;
   size: number;
   isBuy: boolean;
@@ -1476,129 +1609,147 @@ class TickBubblesRenderer implements IPrimitivePaneRenderer {
     const from = range.from as number;
     const to = range.to as number;
 
-    target.useBitmapCoordinateSpace(({
-      context: ctx,
-      horizontalPixelRatio: hpr,
-      verticalPixelRatio: vpr,
-    }) => {
-      const canvasWidth = ctx.canvas.width / hpr;
-      const visibleSeconds = Math.max(1, to - from);
+    target.useBitmapCoordinateSpace(
+      ({
+        context: ctx,
+        horizontalPixelRatio: hpr,
+        verticalPixelRatio: vpr,
+      }) => {
+        const canvasWidth = ctx.canvas.width / hpr;
+        const visibleSeconds = Math.max(1, to - from);
 
-      // Time bucket: each bucket gets ~20 CSS px of horizontal space.
-      // Allow time buckets down to 0.01 seconds for high zoom resolution.
-      const bucketsAcross = Math.max(1, Math.floor(canvasWidth / 20));
-      const timeBucketSize = Math.max(0.01, visibleSeconds / bucketsAcross);
+        // Time bucket: each bucket gets ~20 CSS px of horizontal space.
+        // Allow time buckets down to 0.01 seconds for high zoom resolution.
+        const bucketsAcross = Math.max(1, Math.floor(canvasWidth / 20));
+        const timeBucketSize = Math.max(0.01, visibleSeconds / bucketsAcross);
 
-      // Price bucket: use the symbol tick size (0.25 for NQ/ES).
+        // Price bucket: use the symbol tick size (0.25 for NQ/ES).
 
-      // Binary search for the start of visible ticks.
-      let lo = 0, hi = ticks.length;
-      while (lo < hi) {
-        const mid = (lo + hi) >>> 1;
-        if (ticks[mid].time < from) lo = mid + 1;
-        else hi = mid;
-      }
-
-      // Aggregate ticks into time buckets.
-      const buckets = new Map<string, { buyVol: number; sellVol: number; time: number; sumPriceVol: number; totalVol: number }>();
-      for (let i = lo; i < ticks.length; i++) {
-        const tick = ticks[i];
-        if (tick.time > to) break;
-        const tb = Math.floor(tick.time / timeBucketSize) * timeBucketSize;
-        const key = `${tb}`;
-        let bucket = buckets.get(key);
-        if (!bucket) {
-          bucket = { buyVol: 0, sellVol: 0, time: tb + timeBucketSize / 2, sumPriceVol: 0, totalVol: 0 };
-          buckets.set(key, bucket);
-        }
-        if (tick.isBuy) bucket.buyVol += tick.size;
-        else bucket.sellVol += tick.size;
-        bucket.sumPriceVol += tick.price * tick.size;
-        bucket.totalVol += tick.size;
-      }
-
-      if (buckets.size === 0) return;
-
-      // Find the max volume across visible buckets for radius scaling.
-      let maxVol = 0;
-      for (const b of buckets.values()) {
-        if (b.totalVol > maxVol) maxVol = b.totalVol;
-      }
-      if (maxVol <= 0) return;
-
-      const ts = chart.timeScale();
-      const pixelRatio = Math.max(hpr, vpr);
-      // Radius range: smallest bubble 3px, largest 25px (CSS) to allow bigger bubbles as requested.
-      const minR = 3 * pixelRatio;
-      const maxR = 25 * pixelRatio;
-
-      ctx.save();
-      for (const b of buckets.values()) {
-        if (b.totalVol <= 0) continue;
-
-        // Sub-second coordinate interpolation
-        const tFloat = b.time;
-        const t1 = Math.floor(tFloat);
-        const t2 = t1 + 1;
-        const x1 = ts.timeToCoordinate(t1 as UTCTimestamp);
-        const x2 = ts.timeToCoordinate(t2 as UTCTimestamp);
-        
-        let x: number | null = null;
-        if (x1 !== null && x2 !== null) {
-          x = x1 + (x2 - x1) * (tFloat - t1);
-        } else if (x1 !== null) {
-          x = x1;
-        } else if (x2 !== null) {
-          x = x2;
+        // Binary search for the start of visible ticks.
+        let lo = 0,
+          hi = ticks.length;
+        while (lo < hi) {
+          const mid = (lo + hi) >>> 1;
+          if (ticks[mid].time < from) lo = mid + 1;
+          else hi = mid;
         }
 
-        // Volume-weighted average price for y-coordinate
-        const avgPrice = b.sumPriceVol / b.totalVol;
-        const y = series.priceToCoordinate(avgPrice);
-        if (x === null || y === null) continue;
-
-        const strength = Math.sqrt(b.totalVol / maxVol);
-        const radius = minR + (maxR - minR) * strength;
-        const isBuyWinner = b.buyVol >= b.sellVol;
-
-        const cx = x * hpr;
-        const cy = y * vpr;
-
-        // 3D Spherical Radial Gradient
-        // Light source is offset slightly up and left (cx - r*0.25, cy - r*0.25)
-        const gradient = ctx.createRadialGradient(
-          cx - radius * 0.22,
-          cy - radius * 0.22,
-          0,
-          cx,
-          cy,
-          radius
-        );
-
-        if (isBuyWinner) {
-          gradient.addColorStop(0, "rgba(220, 255, 235, 0.95)"); // SPECULAR HIGHLIGHT
-          gradient.addColorStop(0.18, "rgba(0, 230, 115, 0.85)"); // BRIGHT SHIELD
-          gradient.addColorStop(0.7, "rgba(0, 130, 65, 0.75)");   // BASE COLOR
-          gradient.addColorStop(1, "rgba(0, 60, 25, 0.85)");      // SHADOW BOUNDARY
-        } else {
-          gradient.addColorStop(0, "rgba(255, 220, 220, 0.95)"); // SPECULAR HIGHLIGHT
-          gradient.addColorStop(0.18, "rgba(235, 55, 55, 0.85)"); // BRIGHT SHIELD
-          gradient.addColorStop(0.7, "rgba(140, 20, 20, 0.75)");   // BASE COLOR
-          gradient.addColorStop(1, "rgba(70, 10, 10, 0.85)");      // SHADOW BOUNDARY
+        // Aggregate ticks into time buckets.
+        const buckets = new Map<
+          string,
+          {
+            buyVol: number;
+            sellVol: number;
+            time: number;
+            sumPriceVol: number;
+            totalVol: number;
+          }
+        >();
+        for (let i = lo; i < ticks.length; i++) {
+          const tick = ticks[i];
+          if (tick.time > to) break;
+          const tb = Math.floor(tick.time / timeBucketSize) * timeBucketSize;
+          const key = `${tb}`;
+          let bucket = buckets.get(key);
+          if (!bucket) {
+            bucket = {
+              buyVol: 0,
+              sellVol: 0,
+              time: tb + timeBucketSize / 2,
+              sumPriceVol: 0,
+              totalVol: 0,
+            };
+            buckets.set(key, bucket);
+          }
+          if (tick.isBuy) bucket.buyVol += tick.size;
+          else bucket.sellVol += tick.size;
+          bucket.sumPriceVol += tick.price * tick.size;
+          bucket.totalVol += tick.size;
         }
 
-        ctx.beginPath();
-        ctx.arc(cx, cy, radius, 0, Math.PI * 2);
-        ctx.fillStyle = gradient;
-        ctx.fill();
+        if (buckets.size === 0) return;
 
-        // Thin dark border to visually separate overlapping spheres
-        ctx.strokeStyle = "rgba(10, 10, 10, 0.35)";
-        ctx.lineWidth = 0.5 * pixelRatio;
-        ctx.stroke();
-      }
-      ctx.restore();
-    });
+        // Find the max volume across visible buckets for radius scaling.
+        let maxVol = 0;
+        for (const b of buckets.values()) {
+          if (b.totalVol > maxVol) maxVol = b.totalVol;
+        }
+        if (maxVol <= 0) return;
+
+        const ts = chart.timeScale();
+        const pixelRatio = Math.max(hpr, vpr);
+        // Radius range: smallest bubble 3px, largest 25px (CSS) to allow bigger bubbles as requested.
+        const minR = 3 * pixelRatio;
+        const maxR = 25 * pixelRatio;
+
+        ctx.save();
+        for (const b of buckets.values()) {
+          if (b.totalVol <= 0) continue;
+
+          // Sub-second coordinate interpolation
+          const tFloat = b.time;
+          const t1 = Math.floor(tFloat);
+          const t2 = t1 + 1;
+          const x1 = ts.timeToCoordinate(t1 as UTCTimestamp);
+          const x2 = ts.timeToCoordinate(t2 as UTCTimestamp);
+
+          let x: number | null = null;
+          if (x1 !== null && x2 !== null) {
+            x = x1 + (x2 - x1) * (tFloat - t1);
+          } else if (x1 !== null) {
+            x = x1;
+          } else if (x2 !== null) {
+            x = x2;
+          }
+
+          // Volume-weighted average price for y-coordinate
+          const avgPrice = b.sumPriceVol / b.totalVol;
+          const y = series.priceToCoordinate(avgPrice);
+          if (x === null || y === null) continue;
+
+          const strength = Math.sqrt(b.totalVol / maxVol);
+          const radius = minR + (maxR - minR) * strength;
+          const isBuyWinner = b.buyVol >= b.sellVol;
+
+          const cx = x * hpr;
+          const cy = y * vpr;
+
+          // 3D Spherical Radial Gradient
+          // Light source is offset slightly up and left (cx - r*0.25, cy - r*0.25)
+          const gradient = ctx.createRadialGradient(
+            cx - radius * 0.22,
+            cy - radius * 0.22,
+            0,
+            cx,
+            cy,
+            radius,
+          );
+
+          if (isBuyWinner) {
+            gradient.addColorStop(0, "rgba(220, 255, 235, 0.95)"); // SPECULAR HIGHLIGHT
+            gradient.addColorStop(0.18, "rgba(0, 230, 115, 0.85)"); // BRIGHT SHIELD
+            gradient.addColorStop(0.7, "rgba(0, 130, 65, 0.75)"); // BASE COLOR
+            gradient.addColorStop(1, "rgba(0, 60, 25, 0.85)"); // SHADOW BOUNDARY
+          } else {
+            gradient.addColorStop(0, "rgba(255, 220, 220, 0.95)"); // SPECULAR HIGHLIGHT
+            gradient.addColorStop(0.18, "rgba(235, 55, 55, 0.85)"); // BRIGHT SHIELD
+            gradient.addColorStop(0.7, "rgba(140, 20, 20, 0.75)"); // BASE COLOR
+            gradient.addColorStop(1, "rgba(70, 10, 10, 0.85)"); // SHADOW BOUNDARY
+          }
+
+          ctx.beginPath();
+          ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+          ctx.fillStyle = gradient;
+          ctx.fill();
+
+          // Thin dark border to visually separate overlapping spheres
+          ctx.strokeStyle = "rgba(10, 10, 10, 0.35)";
+          ctx.lineWidth = 0.5 * pixelRatio;
+          ctx.stroke();
+        }
+        ctx.restore();
+      },
+    );
   }
 }
 
@@ -1610,7 +1761,9 @@ class TickBubblesView implements IPrimitivePaneView {
   renderer(): IPrimitivePaneRenderer {
     return new TickBubblesRenderer(this.primitive);
   }
-  zOrder() { return "top" as const; }
+  zOrder() {
+    return "top" as const;
+  }
 }
 
 export class TickBubblesPrimitive implements ISeriesPrimitive {
@@ -1631,9 +1784,15 @@ export class TickBubblesPrimitive implements ISeriesPrimitive {
     this._chart = null;
   }
   updateAllViews() {}
-  paneViews() { return [this._view]; }
-  getSeries() { return this._series as ISeriesApi<"Candlestick"> | null; }
-  getChart() { return this._chart; }
+  paneViews() {
+    return [this._view];
+  }
+  getSeries() {
+    return this._series as ISeriesApi<"Candlestick"> | null;
+  }
+  getChart() {
+    return this._chart;
+  }
 
   setPriceStep(step: number) {
     this.priceStep = Math.max(0.01, step);
@@ -1655,3 +1814,384 @@ export class TickBubblesPrimitive implements ISeriesPrimitive {
     this._requestUpdate?.();
   }
 }
+
+// ---------------------------------------------------------------------------
+// GEX profile — a net-gamma butterfly bar chart (all expirations combined) anchored to the LAST
+// candle: its zero axis sits just to the right of the latest price and the whole
+// band moves with the chart, so panning left carries it (and the latest price)
+// off screen together. Vertically each strike is placed at its true price level
+// (ETF strike → futures via the latest-close ratio), so the spot strike lands on
+// the last-price line. Each strike draws one bar for its net GEX: positive →
+// translucent red wing right, negative → translucent green wing left.
+// ---------------------------------------------------------------------------
+
+export interface GexLevel {
+  strike: number; // ETF strike price
+  net: number; // net gamma exposure (call - put); sign picks the wing
+}
+
+const GEX_POS_FILL = "rgba(38, 166, 154, 0.4)"; // translucent green, net long gamma (right)
+const GEX_NEG_FILL = "rgba(239, 83, 80, 0.4)"; // translucent red, net short gamma (left)
+const GEX_AXIS_COLOR = "rgba(148, 163, 184, 0.3)";
+const GEX_BAND_WIDTH = 220; // css px the butterfly occupies (both wings)
+const GEX_BAND_GAP = 8; // css px gap between the last candle and the band
+
+class GexProfileRenderer implements IPrimitivePaneRenderer {
+  private primitive: GexProfilePrimitive;
+  constructor(primitive: GexProfilePrimitive) {
+    this.primitive = primitive;
+  }
+
+  draw(target: CanvasRenderingTarget2D) {
+    const p = this.primitive;
+    const series = p.getSeries();
+    const chart = p.getChart();
+    if (!p.enabled || !series || !chart) return;
+    if (p.futuresLevels.length === 0) return;
+
+    const data = series.data();
+    if (data.length === 0) return;
+    const lastBar = data[data.length - 1] as { time: number; close?: number };
+
+    const timeScale = chart.timeScale();
+    const lastX = timeScale.timeToCoordinate(lastBar.time as UTCTimestamp);
+    if (lastX === null) return;
+
+    let maxAbs = 0;
+    for (const level of p.futuresLevels) {
+      const a = Math.abs(level.net);
+      if (a > maxAbs) maxAbs = a;
+    }
+    if (maxAbs <= 0) return;
+
+    // Strike spacing in futures space — sizes each bar's thickness.
+    const strikeStep =
+      p.futuresLevels.length > 1
+        ? Math.abs(p.futuresLevels[1].strike - p.futuresLevels[0].strike)
+        : 1;
+
+    target.useBitmapCoordinateSpace(
+      ({
+        context: ctx,
+        horizontalPixelRatio: hpr,
+        verticalPixelRatio: vpr,
+      }) => {
+        const paneHeight = ctx.canvas.height / vpr;
+        const maxWing = GEX_BAND_WIDTH / 2;
+        const axisX = lastX + GEX_BAND_GAP + maxWing;
+
+        ctx.save();
+
+        // Zero axis for the butterfly (net GEX = 0), just right of latest price.
+        ctx.strokeStyle = GEX_AXIS_COLOR;
+        ctx.lineWidth = Math.max(1, hpr);
+        ctx.beginPath();
+        ctx.moveTo(axisX * hpr, 0);
+        ctx.lineTo(axisX * hpr, ctx.canvas.height);
+        ctx.stroke();
+
+        for (const level of p.futuresLevels) {
+          const y = series.priceToCoordinate(level.strike);
+          if (y === null) continue;
+          if (y < 0 || y > paneHeight) continue;
+
+          // Row thickness from the strike spacing, capped so wide zoom stays tidy.
+          const yNext = series.priceToCoordinate(level.strike + (strikeStep || 1));
+          const rowH = yNext !== null ? Math.abs(yNext - y) : 6;
+          const th = Math.max(1.5, Math.min(rowH * 0.7, 16)) * vpr;
+          const top = y * vpr - th / 2;
+
+          const w = maxWing * Math.sqrt(Math.abs(level.net) / maxAbs);
+          if (w <= 0.5) continue;
+          if (level.net >= 0) {
+            ctx.fillStyle = GEX_POS_FILL;
+            ctx.fillRect(axisX * hpr, top, w * hpr, th);
+          } else {
+            ctx.fillStyle = GEX_NEG_FILL;
+            ctx.fillRect((axisX - w) * hpr, top, w * hpr, th);
+          }
+        }
+
+        ctx.restore();
+      },
+    );
+  }
+}
+
+class GexProfileView implements IPrimitivePaneView {
+  private primitive: GexProfilePrimitive;
+  constructor(primitive: GexProfilePrimitive) {
+    this.primitive = primitive;
+  }
+  renderer(): IPrimitivePaneRenderer {
+    return new GexProfileRenderer(this.primitive);
+  }
+  zOrder() {
+    return "top" as const;
+  }
+}
+
+export class GexProfilePrimitive implements ISeriesPrimitive {
+  private _series: ISeriesApi<"Candlestick"> | null = null;
+  private _chart: IChartApiBase<Time> | null = null;
+  private _requestUpdate: (() => void) | null = null;
+  private _view = new GexProfileView(this);
+  levels: GexLevel[] = [];
+  /** Levels with strikes already mapped to futures price space. Computed once
+   *  in setData() so bars don't shift on every price tick. */
+  futuresLevels: { strike: number; net: number }[] = [];
+  etfSpot = 0;
+  enabled = false;
+
+  attached(p: SeriesAttachedParameter) {
+    this._series = p.series as ISeriesApi<"Candlestick">;
+    this._chart = p.chart;
+    this._requestUpdate = p.requestUpdate;
+  }
+  detached() {
+    this._series = null;
+    this._chart = null;
+  }
+  updateAllViews() {}
+  paneViews() {
+    return [this._view];
+  }
+  getSeries() {
+    return this._series;
+  }
+  getChart() {
+    return this._chart;
+  }
+
+  setEnabled(enabled: boolean) {
+    this.enabled = enabled;
+    this._requestUpdate?.();
+  }
+
+  setData(levels: GexLevel[], etfSpot: number) {
+    this.levels = levels;
+    this.etfSpot = etfSpot;
+
+    // Snapshot the current futures close to lock the ETF→futures ratio at data
+    // refresh time.  Bars stay at these fixed price levels until the next GEX
+    // data update, so they don't jitter with every price tick.
+    const series = this._series;
+    if (series && etfSpot > 0) {
+      const data = series.data();
+      if (data.length > 0) {
+        const lastClose = (data[data.length - 1] as { close?: number }).close;
+        if (lastClose && Number.isFinite(lastClose)) {
+          const ratio = lastClose / etfSpot;
+          this.futuresLevels = levels.map((l) => ({
+            strike: l.strike * ratio,
+            net: l.net,
+          }));
+          this._requestUpdate?.();
+          return;
+        }
+      }
+    }
+    // Fallback: use raw ETF strikes (no mapping)
+    this.futuresLevels = levels.map((l) => ({ strike: l.strike, net: l.net }));
+    this._requestUpdate?.();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Gamma Level EOD Primitive — draws horizontal price lines for 6 key gamma levels:
+// gex_1, gex_2, gex_3, high_volume, call_resistance_0dte, put_support_0dte
+// ---------------------------------------------------------------------------
+
+export interface GammaLevelItem {
+  level_name: string;
+  strike: number;
+  gex: number;
+}
+
+export interface MappedGammaLevelItem {
+  level_name: string;
+  rawStrike: number;
+  futuresStrike: number;
+  gex: number;
+}
+
+const GAMMA_LEVEL_CONFIGS: Record<
+  string,
+  { label: string; badgeColor: string }
+> = {
+  zero_gamma: { label: "Zero Gamma", badgeColor: "rgba(168, 85, 247, 0.9)" },
+  gex_1: { label: "GEX 1", badgeColor: "rgba(38, 166, 154, 0.9)" },
+  gex_2: { label: "GEX 2", badgeColor: "rgba(38, 166, 154, 0.9)" },
+  gex_3: { label: "GEX 3", badgeColor: "rgba(38, 166, 154, 0.9)" },
+  high_volume: { label: "Hi Vol", badgeColor: "rgba(59, 130, 246, 0.9)" },
+  call_resistance_0dte: { label: "Call Res", badgeColor: "rgba(239, 68, 68, 0.9)" },
+  put_support_0dte: { label: "Put Sup", badgeColor: "rgba(34, 197, 94, 0.9)" },
+};
+
+class GammaLevelsEodRenderer implements IPrimitivePaneRenderer {
+  private primitive: GammaLevelsEodPrimitive;
+  constructor(primitive: GammaLevelsEodPrimitive) {
+    this.primitive = primitive;
+  }
+
+  draw(target: CanvasRenderingTarget2D) {
+    const p = this.primitive;
+    const series = p.getSeries();
+    const chart = p.getChart();
+    if (!p.enabled || !series || !chart) return;
+    if (p.futuresLevels.length === 0) return;
+
+    // Set the starting X position of lines to the latest price candle
+    const data = series.data();
+    if (data.length === 0) return;
+    const lastBar = data[data.length - 1] as { time: number };
+    const timeScale = chart.timeScale();
+    const lastX = timeScale.timeToCoordinate(lastBar.time as UTCTimestamp);
+    if (lastX === null) return;
+
+    target.useBitmapCoordinateSpace(
+      ({
+        context: ctx,
+        horizontalPixelRatio: hpr,
+        verticalPixelRatio: vpr,
+      }) => {
+        const width = ctx.canvas.width;
+        const height = ctx.canvas.height;
+        const lineStartX = lastX * hpr;
+
+        // If the latest candle position is off-screen to the right, hide lines and text
+        if (lineStartX >= width) return;
+        const drawStartX = Math.max(0, lineStartX);
+
+        ctx.save();
+
+        // Group levels that land at the exact same Y position to avoid overlapping text
+        const grouped = new Map<number, { y: number; labels: string[] }>();
+        for (const item of p.futuresLevels) {
+          const y = series.priceToCoordinate(item.futuresStrike);
+          if (y === null || y < 0 || y > height / vpr) continue;
+
+          const config = GAMMA_LEVEL_CONFIGS[item.level_name];
+          const label = config?.label ?? item.level_name;
+          const key = Math.round(y * vpr * 2); // 0.5px bucket
+
+          const entry = grouped.get(key);
+          if (entry) {
+            if (!entry.labels.includes(label)) {
+              entry.labels.push(label);
+            }
+          } else {
+            grouped.set(key, { y, labels: [label] });
+          }
+        }
+
+        for (const { y, labels } of grouped.values()) {
+          const yPx = y * vpr;
+
+          // 1. Solid white line starting from current price position
+          ctx.strokeStyle = "rgba(255, 255, 255, 0.85)";
+          ctx.lineWidth = 1 * vpr;
+          ctx.setLineDash([]);
+          ctx.beginPath();
+          ctx.moveTo(drawStartX, yPx);
+          ctx.lineTo(width, yPx);
+          ctx.stroke();
+
+          // 2. White text label right-aligned near the price scale on the right edge
+          const labelX = width - 12 * hpr;
+          const combinedLabel = labels.join(" / ");
+          ctx.font = `600 ${Math.round(11 * vpr)}px Inter, sans-serif, system-ui`;
+          ctx.fillStyle = "#ffffff";
+          ctx.textAlign = "right";
+          ctx.textBaseline = "bottom";
+          ctx.fillText(combinedLabel, labelX, yPx - 2 * vpr);
+        }
+
+        ctx.restore();
+      },
+    );
+  }
+}
+
+class GammaLevelsEodView implements IPrimitivePaneView {
+  private primitive: GammaLevelsEodPrimitive;
+  constructor(primitive: GammaLevelsEodPrimitive) {
+    this.primitive = primitive;
+  }
+  renderer(): IPrimitivePaneRenderer {
+    return new GammaLevelsEodRenderer(this.primitive);
+  }
+  zOrder() {
+    return "top" as const;
+  }
+}
+
+export class GammaLevelsEodPrimitive implements ISeriesPrimitive {
+  private _series: ISeriesApi<"Candlestick"> | null = null;
+  private _chart: IChartApiBase<Time> | null = null;
+  private _requestUpdate: (() => void) | null = null;
+  private _view = new GammaLevelsEodView(this);
+  levels: GammaLevelItem[] = [];
+  futuresLevels: MappedGammaLevelItem[] = [];
+  etfSpot = 0;
+  enabled = false;
+
+  attached(p: SeriesAttachedParameter) {
+    this._series = p.series as ISeriesApi<"Candlestick">;
+    this._chart = p.chart;
+    this._requestUpdate = p.requestUpdate;
+  }
+  detached() {
+    this._series = null;
+    this._chart = null;
+  }
+  updateAllViews() {}
+  paneViews() {
+    return [this._view];
+  }
+  priceAxisViews() {
+    return [];
+  }
+  getSeries() {
+    return this._series;
+  }
+  getChart() {
+    return this._chart;
+  }
+
+  setEnabled(enabled: boolean) {
+    this.enabled = enabled;
+    this._requestUpdate?.();
+  }
+
+  setData(levels: GammaLevelItem[], etfSpot: number) {
+    this.levels = levels;
+    this.etfSpot = etfSpot;
+
+    const series = this._series;
+    if (series && etfSpot > 0) {
+      const data = series.data();
+      if (data.length > 0) {
+        const lastClose = (data[data.length - 1] as { close?: number }).close;
+        if (lastClose && Number.isFinite(lastClose)) {
+          const ratio = lastClose / etfSpot;
+          this.futuresLevels = levels.map((l) => ({
+            ...l,
+            rawStrike: l.strike,
+            futuresStrike: l.strike * ratio,
+          }));
+          this._requestUpdate?.();
+          return;
+        }
+      }
+    }
+    this.futuresLevels = levels.map((l) => ({
+      ...l,
+      rawStrike: l.strike,
+      futuresStrike: l.strike,
+    }));
+    this._requestUpdate?.();
+  }
+}
+
+

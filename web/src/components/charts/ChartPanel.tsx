@@ -15,16 +15,24 @@ import {
   type HistoricalTradeInfo,
   TradeLinesPrimitive,
   SessionVolumeProfilePrimitive,
+  type ProfileSessionMode,
   VolumeDeltaBubblesPrimitive,
   BookmapHeatmapPrimitive,
   type BookmapHeatmapPoint,
   type VolumeDeltaBubble,
   TickBubblesPrimitive,
+  GexProfilePrimitive,
+  GammaLevelsEodPrimitive,
 } from "../../lib/primitives";
 import { useQuery } from "@tanstack/react-query";
 import { useApp } from "../../context/AppContext";
-import { fetchActivePositions, fetchLiveTradeHistory } from "../../api";
-import { BACKEND_URL, type Bar, type TF } from "../../types";
+import {
+  fetchActivePositions,
+  fetchGex,
+  fetchLiveTradeHistory,
+  gexEtfForSymbol,
+} from "../../api";
+import { BACKEND_URL, CrosshairBus, type Bar, type TF } from "../../types";
 import Header from "../navigation/Header";
 
 // Per-panel chart configuration. Each ChartPanel runs its own data fetch and
@@ -39,12 +47,18 @@ export interface PanelConfig {
   volume: boolean;
   volumeDeltaBubbles: boolean;
   sessionVolumeProfile: boolean;
+  sessionVolumeProfileRth?: boolean;
+  sessionVolumeProfileOvernight?: boolean;
   bookmapHeatmap: boolean;
   cvd: boolean;
+  gex: boolean;
+  gammaLevelsEod: boolean;
 }
 
 interface ChartPanelProps {
   config: PanelConfig;
+  panelIndex?: number;
+  crosshairBus?: CrosshairBus;
   setTf: (tf: TF) => void;
   onApplyRange: (from: string, to: string) => void;
   onLatest: (from: string) => void;
@@ -102,7 +116,7 @@ async function fetchMarchTicks(
 // computation used by the main web chart.
 const RTH_OPEN_MIN = 9 * 60 + 30; // 09:30 ET
 const RTH_CLOSE_MIN = 16 * 60; // 16:00 ET
-const SESSION_PROFILE_ROW_SIZE = 5.0;
+const SESSION_PROFILE_ROW_SIZE = 1.0;
 
 // Aggregate ascending-sorted raw ticks into the per-second series data used by
 // tick mode (bid/ask lines, session-anchored CVD, trade bubbles). Single O(n)
@@ -170,7 +184,15 @@ function aggregateTicks(ticks: Tick[]) {
     }
   }
 
-  return { bidPoints, askPoints, cvdPoints, bubblePoints, cvdAcc, cvdDay, cvdAnchored };
+  return {
+    bidPoints,
+    askPoints,
+    cvdPoints,
+    bubblePoints,
+    cvdAcc,
+    cvdDay,
+    cvdAnchored,
+  };
 }
 
 async function fetchMarchCandles(
@@ -237,12 +259,14 @@ interface VolumeProfileDeltaBin {
 async function fetchMarchVolumeProfileDelta(
   symbol: string,
   tickSize: number,
+  mode: ProfileSessionMode,
   from?: string,
   to?: string,
 ): Promise<VolumeProfileDeltaBin[]> {
   const params = new URLSearchParams({
     symbol,
     tick_size: tickSize.toString(),
+    mode,
   });
   if (from) params.set("from", from);
   if (to) params.set("to", to);
@@ -381,6 +405,8 @@ function fillGaps(
 
 export default function ChartPanel({
   config,
+  panelIndex,
+  crosshairBus,
   setTf,
   onApplyRange,
   onLatest,
@@ -398,8 +424,12 @@ export default function ChartPanel({
     volume,
     volumeDeltaBubbles,
     sessionVolumeProfile,
+    sessionVolumeProfileRth = false,
+    sessionVolumeProfileOvernight = false,
     bookmapHeatmap,
     cvd,
+    gex,
+    gammaLevelsEod,
   } = config;
 
   const isTickMode = tf.table === "tick";
@@ -419,6 +449,7 @@ export default function ChartPanel({
   const [chartSeries, setChartSeries] = useState<any>(null);
   const [candlesRevision, setCandlesRevision] = useState(0);
   const chartRef = useRef<any>(null);
+  const mainSeriesRef = useRef<any>(null);
   const vwapSeriesRef = useRef<any>(null);
   const volumeSeriesRef = useRef<any>(null);
   const bidSeriesRef = useRef<any>(null);
@@ -432,6 +463,13 @@ export default function ChartPanel({
   volumeDeltaBubblesEnabledRef.current = volumeDeltaBubbles;
   const sessionVolumeProfileEnabledRef = useRef(sessionVolumeProfile);
   sessionVolumeProfileEnabledRef.current = sessionVolumeProfile;
+  const sessionVolumeProfileRthEnabledRef = useRef(sessionVolumeProfileRth);
+  sessionVolumeProfileRthEnabledRef.current = sessionVolumeProfileRth;
+  const sessionVolumeProfileOvernightEnabledRef = useRef(
+    sessionVolumeProfileOvernight,
+  );
+  sessionVolumeProfileOvernightEnabledRef.current =
+    sessionVolumeProfileOvernight;
   const fxSeriesRef = useRef<any>(null);
   const [showFxNq, setShowFxNq] = useState(false);
   const activePositionsPlugin = useRef(new ActivePositionsPrimitive());
@@ -441,9 +479,17 @@ export default function ChartPanel({
   const sessionVolumeProfilePlugin = useRef(
     new SessionVolumeProfilePrimitive(),
   );
+  const sessionVolumeProfileRthPlugin = useRef(
+    new SessionVolumeProfilePrimitive(),
+  );
+  const sessionVolumeProfileOvernightPlugin = useRef(
+    new SessionVolumeProfilePrimitive(),
+  );
   const volumeDeltaBubblesPlugin = useRef(new VolumeDeltaBubblesPrimitive());
   const bookmapHeatmapPlugin = useRef(new BookmapHeatmapPrimitive());
   const tickBubblesPlugin = useRef(new TickBubblesPrimitive());
+  const gexProfilePlugin = useRef(new GexProfilePrimitive());
+  const gammaLevelsEodPlugin = useRef(new GammaLevelsEodPrimitive());
 
   const { data: positions } = useQuery({
     queryKey: ["activePositions"],
@@ -456,6 +502,19 @@ export default function ChartPanel({
     queryKey: ["liveTradeHistory"],
     queryFn: fetchLiveTradeHistory,
     refetchInterval: 5000,
+    retry: false,
+  });
+
+  // GEX snapshot for the mapped ETF (QQQ for NQ, SPY for ES). Only fetched when
+  // the overlay is on and the symbol has a mapping; refreshed on the scraper's
+  // 5s cadence.
+  const gexEnabled = gex && !isTickMode && gexEtfForSymbol(symbol) !== null;
+  const { data: gexData } = useQuery({
+    queryKey: ["gex", symbol],
+    queryFn: () => fetchGex(symbol),
+    enabled: gexEnabled,
+    refetchInterval: 5000,
+    staleTime: 2500,
     retry: false,
   });
 
@@ -531,9 +590,11 @@ export default function ChartPanel({
           priceLineVisible: mode === "latest",
         });
     setChartSeries(series);
+    mainSeriesRef.current = series;
     chartRef.current = chart;
     bookmapHeatmapPlugin.current.setTimeStep(isTickModeLocal ? 60 : tf.seconds);
     bookmapHeatmapPlugin.current.setSymbol(symbol);
+    bookmapHeatmapPlugin.current.setTickMode(isTickModeLocal);
     series.attachPrimitive(bookmapHeatmapPlugin.current);
     if (isTickModeLocal) {
       bidSeriesRef.current = series;
@@ -558,8 +619,14 @@ export default function ChartPanel({
       series.attachPrimitive(historicalTradesPlugin.current);
       series.attachPrimitive(tradeLinesPrimitive.current);
       series.attachPrimitive(sessionVolumeProfilePlugin.current);
+      series.attachPrimitive(sessionVolumeProfileRthPlugin.current);
+      series.attachPrimitive(sessionVolumeProfileOvernightPlugin.current);
       series.attachPrimitive(volumeDeltaBubblesPlugin.current);
+      series.attachPrimitive(gexProfilePlugin.current);
+      series.attachPrimitive(gammaLevelsEodPlugin.current);
       sessionVolumeProfilePlugin.current.setData([]);
+      sessionVolumeProfileRthPlugin.current.setData([]);
+      sessionVolumeProfileOvernightPlugin.current.setData([]);
       volumeDeltaBubblesPlugin.current.setData([]);
       historicalDeltaRef.current.clear();
       liveDeltaRef.current.clear();
@@ -614,16 +681,37 @@ export default function ChartPanel({
     let cvdAnchored: boolean = false;
 
     function scheduleSessionVolumeProfileUpdate() {
-      if (!sessionVolumeProfileEnabledRef.current || profileFrameId !== null)
-        return;
+      if (profileFrameId !== null) return;
       profileFrameId = window.requestAnimationFrame(() => {
         profileFrameId = null;
-        sessionVolumeProfilePlugin.current.setCandles(
-          candleHistoryRef.current,
-          symbol === "es" ? 2.0 : SESSION_PROFILE_ROW_SIZE,
-          tf.seconds,
-          symbol,
-        );
+        const tickSize = symbol === "es" ? 0.25 : SESSION_PROFILE_ROW_SIZE;
+        if (sessionVolumeProfileEnabledRef.current) {
+          sessionVolumeProfilePlugin.current.setCandles(
+            candleHistoryRef.current,
+            tickSize,
+            tf.seconds,
+            symbol,
+            "full",
+          );
+        }
+        if (sessionVolumeProfileRthEnabledRef.current) {
+          sessionVolumeProfileRthPlugin.current.setCandles(
+            candleHistoryRef.current,
+            tickSize,
+            tf.seconds,
+            symbol,
+            "rth",
+          );
+        }
+        if (sessionVolumeProfileOvernightEnabledRef.current) {
+          sessionVolumeProfileOvernightPlugin.current.setCandles(
+            candleHistoryRef.current,
+            tickSize,
+            tf.seconds,
+            symbol,
+            "overnight",
+          );
+        }
       });
     }
 
@@ -729,6 +817,22 @@ export default function ChartPanel({
             );
             if (sessionVolumeProfileEnabledRef.current && tick.side) {
               sessionVolumeProfilePlugin.current.addLiveTick(
+                tsSecs,
+                tick.price,
+                size,
+                tick.side,
+              );
+            }
+            if (sessionVolumeProfileRthEnabledRef.current && tick.side) {
+              sessionVolumeProfileRthPlugin.current.addLiveTick(
+                tsSecs,
+                tick.price,
+                size,
+                tick.side,
+              );
+            }
+            if (sessionVolumeProfileOvernightEnabledRef.current && tick.side) {
+              sessionVolumeProfileOvernightPlugin.current.addLiveTick(
                 tsSecs,
                 tick.price,
                 size,
@@ -1259,10 +1363,7 @@ export default function ChartPanel({
             }
             if (!lastCandle || t >= (lastCandle.time as number)) {
               lastCandle = { ...c };
-              lastTickNanos = Math.max(
-                lastTickNanos ?? 0,
-                t * 1_000_000_000,
-              );
+              lastTickNanos = Math.max(lastTickNanos ?? 0, t * 1_000_000_000);
             }
           }
         } catch {
@@ -1276,8 +1377,76 @@ export default function ChartPanel({
     let candlePollId: number | undefined;
     initAndPoll();
 
+    const handleCrosshairMove = (param: any) => {
+      if (!crosshairBus || panelIndex === undefined) return;
+      if (!param || !param.sourceEvent) return;
+
+      if (
+        param.time !== undefined &&
+        param.point !== undefined &&
+        param.point.x >= 0 &&
+        param.point.y >= 0
+      ) {
+        let price: number | undefined = undefined;
+        const mainSeries = mainSeriesRef.current;
+        if (mainSeries) {
+          try {
+            price = mainSeries.coordinateToPrice(param.point.y) ?? undefined;
+          } catch {}
+          if (price === undefined && param.seriesData) {
+            const data = param.seriesData.get(mainSeries) as any;
+            if (data) {
+              price =
+                typeof data.close === "number"
+                  ? data.close
+                  : typeof data.value === "number"
+                    ? data.value
+                    : undefined;
+            }
+          }
+        }
+        crosshairBus.emit({
+          symbol,
+          sourceIndex: panelIndex,
+          time: param.time,
+          price,
+        });
+      } else {
+        crosshairBus.emit({
+          symbol,
+          sourceIndex: panelIndex,
+          time: undefined,
+          price: undefined,
+        });
+      }
+    };
+
+    chart.subscribeCrosshairMove(handleCrosshairMove);
+
+    const handleMouseLeave = () => {
+      if (crosshairBus && panelIndex !== undefined) {
+        crosshairBus.emit({
+          symbol,
+          sourceIndex: panelIndex,
+          time: undefined,
+          price: undefined,
+        });
+      }
+    };
+
+    const containerEl = containerRef.current;
+    if (containerEl) {
+      containerEl.addEventListener("mouseleave", handleMouseLeave);
+    }
+
     return () => {
       active = false;
+      if (containerEl) {
+        containerEl.removeEventListener("mouseleave", handleMouseLeave);
+      }
+      try {
+        chart.unsubscribeCrosshairMove(handleCrosshairMove);
+      } catch {}
       if (candlePollId !== undefined) clearTimeout(candlePollId);
       if (reconnectId) clearTimeout(reconnectId);
       if (idleTimerId) clearTimeout(idleTimerId);
@@ -1293,11 +1462,41 @@ export default function ChartPanel({
       tickBubblesPlugin.current.clear();
       setChartSeries(null);
       chartRef.current = null;
+      mainSeriesRef.current = null;
       fxSeriesRef.current = null;
       volumeSeriesRef.current = null;
       candleHistoryRef.current = [];
     };
-  }, [symbol, tf, mode, fromDate, toDate]);
+  }, [symbol, tf, mode, fromDate, toDate, crosshairBus, panelIndex]);
+
+  useEffect(() => {
+    if (!crosshairBus || panelIndex === undefined) return;
+
+    const unsubscribe = crosshairBus.subscribe((evt) => {
+      if (
+        evt.sourceIndex !== panelIndex &&
+        evt.symbol.toLowerCase() === symbol.toLowerCase()
+      ) {
+        const chart = chartRef.current;
+        const series = mainSeriesRef.current;
+        if (chart && series) {
+          if (evt.time !== undefined && evt.price !== undefined) {
+            try {
+              chart.setCrosshairPosition(evt.price, evt.time, series);
+            } catch {}
+          } else {
+            try {
+              chart.clearCrosshairPosition();
+            } catch {}
+          }
+        }
+      }
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, [crosshairBus, panelIndex, symbol]);
 
   useEffect(() => {
     // In tick mode, always load the heatmap regardless of the indicator toggle.
@@ -1511,6 +1710,46 @@ export default function ChartPanel({
     vwapSeriesRef.current?.applyOptions({ visible: vwap });
   }, [vwap, chartSeries]);
 
+  // Feed the GEX butterfly overlay (right of the latest candle). The primitive
+  // translates ETF strikes → futures price on each draw from the live close, so
+  // it only needs the raw levels and the ETF spot here.
+  const gammaLevelsEodEnabled = gammaLevelsEod && !isTickMode && gexEtfForSymbol(symbol) !== null;
+
+  useEffect(() => {
+    const plugin = gexProfilePlugin.current;
+    if (!chartSeries) return;
+    if (gexEnabled && gexData) {
+      plugin.setData(
+        gexData.levels.map((l) => ({
+          strike: l.strike,
+          net: l.net_gex,
+        })),
+        gexData.spot_price,
+      );
+      plugin.setEnabled(true);
+    } else {
+      plugin.setEnabled(false);
+    }
+  }, [gexEnabled, gexData, chartSeries]);
+
+  useEffect(() => {
+    const plugin = gammaLevelsEodPlugin.current;
+    if (!chartSeries) return;
+    if (gammaLevelsEodEnabled && gexData && gexData.gamma_levels) {
+      plugin.setData(
+        gexData.gamma_levels.map((l) => ({
+          level_name: l.level_name,
+          strike: l.strike,
+          gex: l.gex,
+        })),
+        gexData.spot_price,
+      );
+      plugin.setEnabled(true);
+    } else {
+      plugin.setEnabled(false);
+    }
+  }, [gammaLevelsEodEnabled, gexData, chartSeries]);
+
   // CVD (Cumulative Volume Delta) lives in its own compact pane at the bottom.
   // It is created and removed on demand (only when cvd is enabled).
   useEffect(() => {
@@ -1594,30 +1833,32 @@ export default function ChartPanel({
     }
 
     let active = true;
-    const tickSize = symbol === "es" ? 2.0 : SESSION_PROFILE_ROW_SIZE;
+    const tickSize = symbol === "es" ? 0.25 : SESSION_PROFILE_ROW_SIZE;
 
     sessionVolumeProfilePlugin.current.setCandles(
       candleHistoryRef.current,
       tickSize,
       tf.seconds,
       symbol,
+      "full",
     );
 
     (async () => {
       try {
         const bins =
           mode === "latest"
-            ? await fetchMarchVolumeProfileDelta(symbol, tickSize, fromDate)
+            ? await fetchMarchVolumeProfileDelta(symbol, tickSize, "full", fromDate)
             : await fetchMarchVolumeProfileDelta(
                 symbol,
                 tickSize,
+                "full",
                 fromDate,
                 toDate,
               );
         if (!active) return;
         sessionVolumeProfilePlugin.current.setHistoricalDeltas(bins);
       } catch (err) {
-        console.warn("Volume profile delta history unavailable:", err);
+        console.warn("Full volume profile delta history unavailable:", err);
       }
     })();
 
@@ -1626,6 +1867,111 @@ export default function ChartPanel({
     };
   }, [
     sessionVolumeProfile,
+    tf,
+    chartSeries,
+    candlesRevision,
+    symbol,
+    mode,
+    fromDate,
+    toDate,
+  ]);
+
+  useEffect(() => {
+    if (!sessionVolumeProfileRth || !chartSeries) {
+      sessionVolumeProfileRthPlugin.current.setData([]);
+      return;
+    }
+
+    let active = true;
+    const tickSize = symbol === "es" ? 0.25 : SESSION_PROFILE_ROW_SIZE;
+
+    sessionVolumeProfileRthPlugin.current.setCandles(
+      candleHistoryRef.current,
+      tickSize,
+      tf.seconds,
+      symbol,
+      "rth",
+    );
+
+    (async () => {
+      try {
+        const bins =
+          mode === "latest"
+            ? await fetchMarchVolumeProfileDelta(symbol, tickSize, "rth", fromDate)
+            : await fetchMarchVolumeProfileDelta(
+                symbol,
+                tickSize,
+                "rth",
+                fromDate,
+                toDate,
+              );
+        if (!active) return;
+        sessionVolumeProfileRthPlugin.current.setHistoricalDeltas(bins);
+      } catch (err) {
+        console.warn("RTH volume profile delta history unavailable:", err);
+      }
+    })();
+
+    return () => {
+      active = false;
+    };
+  }, [
+    sessionVolumeProfileRth,
+    tf,
+    chartSeries,
+    candlesRevision,
+    symbol,
+    mode,
+    fromDate,
+    toDate,
+  ]);
+
+  useEffect(() => {
+    if (!sessionVolumeProfileOvernight || !chartSeries) {
+      sessionVolumeProfileOvernightPlugin.current.setData([]);
+      return;
+    }
+
+    let active = true;
+    const tickSize = symbol === "es" ? 0.25 : SESSION_PROFILE_ROW_SIZE;
+
+    sessionVolumeProfileOvernightPlugin.current.setCandles(
+      candleHistoryRef.current,
+      tickSize,
+      tf.seconds,
+      symbol,
+      "overnight",
+    );
+
+    (async () => {
+      try {
+        const bins =
+          mode === "latest"
+            ? await fetchMarchVolumeProfileDelta(
+                symbol,
+                tickSize,
+                "overnight",
+                fromDate,
+              )
+            : await fetchMarchVolumeProfileDelta(
+                symbol,
+                tickSize,
+                "overnight",
+                fromDate,
+                toDate,
+              );
+        if (!active) return;
+        sessionVolumeProfileOvernightPlugin.current.setHistoricalDeltas(bins);
+      } catch (err) {
+        console.warn("Overnight volume profile delta history unavailable:", err);
+      }
+    })();
+
+    return () => {
+      active = false;
+    };
+  }, [
+    sessionVolumeProfileOvernight,
     tf,
     chartSeries,
     candlesRevision,

@@ -34,6 +34,7 @@ struct CandleQuery {
     to: Option<String>,
     since: Option<i64>,
     tick_size: Option<f64>,
+    mode: Option<String>,
 }
 fn binary(data: Vec<u8>) -> HttpResponse {
     HttpResponse::Ok()
@@ -173,11 +174,13 @@ async fn volume_profile_delta(
     query: web::Query<CandleQuery>,
 ) -> Result<HttpResponse, ApiError> {
     let tick_size = query.tick_size.unwrap_or(5.0);
+    let mode = query.mode.as_deref().unwrap_or("full");
     Ok(HttpResponse::Ok().json(
         market::volume_profile_delta(
             &state.questdb,
             query.symbol.as_deref().unwrap_or("nq"),
             tick_size,
+            mode,
             market::date(query.from.as_deref()),
             market::date(query.to.as_deref()),
         )

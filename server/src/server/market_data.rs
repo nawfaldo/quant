@@ -929,6 +929,7 @@ pub async fn volume_profile_delta(
     questdb: &QuestDb,
     symbol: &str,
     tick_size: f64,
+    mode: &str,
     from: &str,
     to: &str,
 ) -> Result<Vec<VolumeProfileDeltaBin>, ApiError> {
@@ -937,12 +938,12 @@ pub async fn volume_profile_delta(
     let sql = format!(
         concat!(
             "SELECT ",
-            "cast(date_trunc('day', timestamp) as long) day, ",
+            "cast(date_trunc('minute', timestamp) as long) ts_min, ",
             "round(price / {tick_size}) * {tick_size} price_bin, ",
             "side, ",
             "sum(size) total_vol ",
             "FROM bm_{symbol}_ticks {filter} ",
-            "GROUP BY day, price_bin, side"
+            "GROUP BY ts_min, price_bin, side"
         ),
         symbol = symbol,
         tick_size = tick_size,
@@ -957,11 +958,34 @@ pub async fn volume_profile_delta(
         Err(error) => return Err(error),
     };
 
-    let mut bins = Vec::new();
+    let mut session_map: std::collections::BTreeMap<(i64, i64), f64> = std::collections::BTreeMap::new();
     for row in rows {
-        let day_nanos: i64 = parse(&row, 0)?;
-        let day_secs = day_nanos / 1_000_000_000;
+        let ts_nanos: i64 = parse(&row, 0)?;
+        let ts_secs = ts_nanos / 1_000_000_000;
+        let sec_of_day = ((ts_secs % 86400) + 86400) % 86400;
+        let day_idx = ts_secs / 86400;
+
+        let session_day = match mode {
+            "rth" => {
+                if sec_of_day < 34200 || sec_of_day >= 57600 {
+                    continue;
+                }
+                day_idx * 86400
+            }
+            "overnight" => {
+                if sec_of_day >= 64800 {
+                    day_idx * 86400
+                } else if sec_of_day < 34200 {
+                    (day_idx - 1) * 86400
+                } else {
+                    continue;
+                }
+            }
+            _ => day_idx * 86400,
+        };
+
         let price_bin: f64 = parse(&row, 1)?;
+        let price_key = (price_bin / tick_size).round() as i64;
         let side = field(&row, 2)?;
         let total_vol: f64 = parse(&row, 3)?;
 
@@ -971,12 +995,17 @@ pub async fn volume_profile_delta(
             -total_vol
         };
 
-        bins.push(VolumeProfileDeltaBin {
-            day: day_secs,
-            price_bin,
-            delta: signed_vol,
-        });
+        *session_map.entry((session_day, price_key)).or_insert(0.0) += signed_vol;
     }
+
+    let bins = session_map
+        .into_iter()
+        .map(|((day, price_key), delta)| VolumeProfileDeltaBin {
+            day,
+            price_bin: (price_key as f64) * tick_size,
+            delta,
+        })
+        .collect();
 
     Ok(bins)
 }
