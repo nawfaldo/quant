@@ -1,5 +1,5 @@
 use super::super::{
-    data::{format_day, format_ts},
+    data::{format_day, format_ts, year_month},
     engine::EngineConfig,
     types::Trade,
 };
@@ -12,6 +12,7 @@ pub(crate) struct Drawdowns {
     pub(crate) max_dd_trough: i64,
     pub(crate) avg_dd: f64,
     pub(crate) avg_dd_dollars: f64,
+    pub(crate) avg_dd_time_days: f64,
     pub(crate) max_idd: f64,
     pub(crate) max_idd_dollars: f64,
     pub(crate) max_idd_day: i64,
@@ -76,6 +77,11 @@ pub(crate) fn report(
     } else {
         0.0
     };
+    let avg_annual = if total_days > 0 {
+        net / (total_days as f64 / 365.25)
+    } else {
+        0.0
+    };
     let mut daily = std::collections::BTreeMap::new();
     for t in trades {
         *daily
@@ -121,8 +127,52 @@ pub(crate) fn report(
     } else {
         0.0
     };
+    let daily_std = variance.sqrt();
     let sharpe = if variance > 0.0 {
-        mean / variance.sqrt() * 252f64.sqrt()
+        mean / daily_std * 252f64.sqrt()
+    } else {
+        0.0
+    };
+    // Annualised standard deviation of returns, as a percentage (Carver's table).
+    let annualised_std = daily_std * 252f64.sqrt() * 100.0;
+
+    // Risk-of-ruin distribution stats (Rob Carver, "Advanced Futures Trading
+    // Strategies"). Skew is measured on monthly percentage returns; the fat-tail
+    // ratios on the demeaned daily return series.
+    let mut monthly = std::collections::BTreeMap::new();
+    for (day, pnl) in &daily {
+        *monthly.entry(year_month(*day)).or_insert(0.0) += *pnl;
+    }
+    let mut month_equity = cfg.initial;
+    let monthly_returns = monthly
+        .values()
+        .map(|pnl| {
+            let r = if month_equity > 0.0 {
+                pnl / month_equity
+            } else {
+                0.0
+            };
+            month_equity += pnl;
+            r
+        })
+        .collect::<Vec<_>>();
+    let skew = skewness(&monthly_returns);
+
+    // Fat tails: demean daily returns, then compare percentile spreads to the
+    // 4.43 ratio a Gaussian distribution would give. >1 means fatter than normal.
+    const GAUSSIAN_RATIO: f64 = 4.43;
+    let demeaned = returns.iter().map(|r| r - mean).collect::<Vec<_>>();
+    let p1 = percentile(&demeaned, 1.0);
+    let p30 = percentile(&demeaned, 30.0);
+    let p70 = percentile(&demeaned, 70.0);
+    let p99 = percentile(&demeaned, 99.0);
+    let lower_tail = if p30 != 0.0 {
+        (p1 / p30) / GAUSSIAN_RATIO
+    } else {
+        0.0
+    };
+    let upper_tail = if p70 != 0.0 {
+        (p99 / p70) / GAUSSIAN_RATIO
     } else {
         0.0
     };
@@ -137,7 +187,7 @@ pub(crate) fn report(
         day => format_day(day),
     };
 
-    json!({
+    let mut report = json!({
         "symbol": cfg.symbol,
         "instrument": cfg.instrument.name(&cfg.symbol),
         "first_ts": format_ts(first),
@@ -179,7 +229,49 @@ pub(crate) fn report(
         "trades": trades,
         "montecarlo": Value::Null,
         "fx": Value::Null,
-    })
+    });
+    report["avg_drawdown_time_days"] = json!(round2(dd.avg_dd_time_days));
+    report["avg_annual"] = json!(round2(avg_annual));
+    report["avg_annual_pct"] = json!(round4(percentage_of(avg_annual, cfg.initial)));
+    report["annualised_std"] = json!(round4(annualised_std));
+    report["skew"] = json!(round2(skew));
+    report["lower_tail"] = json!(round2(lower_tail));
+    report["upper_tail"] = json!(round2(upper_tail));
+    report
+}
+
+/// Population skewness: mean of cubed deviations over the cubed standard
+/// deviation. Zero for fewer than three points or a flat series.
+fn skewness(values: &[f64]) -> f64 {
+    let n = values.len();
+    if n < 3 {
+        return 0.0;
+    }
+    let mean = values.iter().sum::<f64>() / n as f64;
+    let variance = values.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / n as f64;
+    let sd = variance.sqrt();
+    if sd == 0.0 {
+        return 0.0;
+    }
+    let m3 = values.iter().map(|v| (v - mean).powi(3)).sum::<f64>() / n as f64;
+    m3 / sd.powi(3)
+}
+
+/// Linear-interpolation percentile (`pct` in 0..=100) over an unsorted slice.
+fn percentile(values: &[f64], pct: f64) -> f64 {
+    if values.is_empty() {
+        return 0.0;
+    }
+    let mut sorted = values.to_vec();
+    sorted.sort_by(f64::total_cmp);
+    if sorted.len() == 1 {
+        return sorted[0];
+    }
+    let rank = pct / 100.0 * (sorted.len() - 1) as f64;
+    let lower = rank.floor() as usize;
+    let upper = rank.ceil() as usize;
+    let weight = rank - lower as f64;
+    sorted[lower] * (1.0 - weight) + sorted[upper] * weight
 }
 
 fn round2(value: f64) -> f64 {

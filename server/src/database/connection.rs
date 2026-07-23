@@ -21,6 +21,16 @@ const DEFAULT_SETTINGS: &[(&str, &str)] = &[
     ("march_bottom_height", "400"),
 ];
 
+const COLUMN_MIGRATIONS: &[&str] = &[
+    "ALTER TABLE backtests ADD COLUMN avg_drawdown_time_days REAL NOT NULL DEFAULT 0",
+    "ALTER TABLE backtests ADD COLUMN avg_annual REAL NOT NULL DEFAULT 0",
+    "ALTER TABLE backtests ADD COLUMN avg_annual_pct REAL NOT NULL DEFAULT 0",
+    "ALTER TABLE backtests ADD COLUMN annualised_std REAL NOT NULL DEFAULT 0",
+    "ALTER TABLE backtests ADD COLUMN skew REAL NOT NULL DEFAULT 0",
+    "ALTER TABLE backtests ADD COLUMN lower_tail REAL NOT NULL DEFAULT 0",
+    "ALTER TABLE backtests ADD COLUMN upper_tail REAL NOT NULL DEFAULT 0",
+];
+
 const RETIRED_PAPER_ENVIRONMENTS_CLEANUP: &str = r#"
 DELETE FROM montecarlo_paths
 WHERE mc_id IN (
@@ -83,6 +93,15 @@ impl Database {
     pub async fn initialize(&self) -> Result<(), ApiError> {
         let connection = self.orm().await?;
         connection.execute_unprepared(SCHEMA).await?;
+        // Best-effort column additions for databases created before the column
+        // existed. SQLite rejects a duplicate column, which we treat as success.
+        for statement in COLUMN_MIGRATIONS {
+            if let Err(error) = connection.execute_unprepared(statement).await {
+                if !error.to_string().contains("duplicate column name") {
+                    return Err(error.into());
+                }
+            }
+        }
         connection
             .execute_unprepared(RETIRED_PAPER_ENVIRONMENTS_CLEANUP)
             .await?;

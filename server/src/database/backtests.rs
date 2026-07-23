@@ -42,6 +42,13 @@ const BACKTEST_COLUMNS: &[(&str, ColumnKind)] = &[
     ("max_drawdown_peak_date", ColumnKind::Text),
     ("max_drawdown_trough_date", ColumnKind::Text),
     ("avg_drawdown_dollars", ColumnKind::Real),
+    ("avg_drawdown_time_days", ColumnKind::Real),
+    ("avg_annual", ColumnKind::Real),
+    ("avg_annual_pct", ColumnKind::Real),
+    ("annualised_std", ColumnKind::Real),
+    ("skew", ColumnKind::Real),
+    ("lower_tail", ColumnKind::Real),
+    ("upper_tail", ColumnKind::Real),
     ("max_intraday_drawdown", ColumnKind::Real),
     ("max_intraday_drawdown_dollars", ColumnKind::Real),
     ("max_intraday_drawdown_date", ColumnKind::Text),
@@ -84,6 +91,13 @@ const REPORT_FIELDS: &[&str] = &[
     "max_drawdown_peak_date",
     "max_drawdown_trough_date",
     "avg_drawdown_dollars",
+    "avg_drawdown_time_days",
+    "avg_annual",
+    "avg_annual_pct",
+    "annualised_std",
+    "skew",
+    "lower_tail",
+    "upper_tail",
     "max_intraday_drawdown",
     "max_intraday_drawdown_dollars",
     "max_intraday_drawdown_date",
@@ -438,6 +452,8 @@ fn backtest_json(row: QueryResult) -> Result<JsonValue, ApiError> {
                     | "max_size"
                     | "avg_weekly_pct"
                     | "avg_monthly_pct"
+                    | "avg_annual_pct"
+                    | "annualised_std"
                     | "max_intraday_drawdown"
                     | "avg_intraday_drawdown" => 4,
                     _ => 2,
