@@ -1,0 +1,2006 @@
+       Time Series Reversal in Trend-Following Strategies?,??
+                               Jiadong Liua,∗, Fotis Papailiasb,c
+                 a
+                     Queen’s Management School, Queen’s University Belfast, UK
+                        b
+                          King’s Business School, King’s College London, UK
+                                      c
+                                        Knot Analytics Ltd, UK
+
+
+
+
+Abstract
+This paper empirically studies the reversal pattern following the formation of trend-
+following signals in the time series context. This reversal pattern is statistically
+significant and usually occurs between 12 and 24 months after the formation of trend-
+following signals. Employing a universe of 55 liquid futures, we find that instruments
+with sell signals in the trend-following portfolio (“losers”) contribute to this type of
+reversal, even if their profits are not realised. The instruments with buy signals
+in the trend-following portfolio (“winners”) contribute much less. A double-sorted
+investment strategy based on both return continuation and reversal yields to portfolio
+gains which are significantly higher than that of the corresponding trend-following
+strategy.
+Keywords: Reversal, Trend-following Strategies, Market Timing, Time Series
+Momentum, Return Signal Momentum
+
+
+
+
+   ?
+     First Draft: May 22, 2017. This Version: December 9, 2021.
+  ??
+     We are grateful for comments which significantly improved the paper from the Editor, John A.
+Doukas and two anonymous referees. We also thank Bumjean Sohn, and the seminar participants
+at the APAD 2018 conference in Busan, South Korea, the Infiniti 2019 Conference in Tianjing,
+China, and Queen’s University Belfast, UK.
+   ∗
+     Corresponding Author. Queen’s Management School, Queen’s University Belfast, Riddel Hall,
+185 Stranmillis Road, BT9 5EE, UK. email: liu.jiadong@qub.ac.uk.
+
+
+                                                1
+
+
+
+
+                Electronic copy available at: https://ssrn.com/abstract=2971875
+1. Introduction
+
+    The time series continuation of financial asset returns1 has been widely studied in
+the academic literature, through investigating serial correlation (Fama and French,
+1988; Lo and MacKinlay, 1988; Lewellen, 2002; DeMiguel et al., 2014) and time series
+momentum (TSM) (Moskowitz et al., 2012; Menkhoff et al., 2012; Georgopoulou
+and Wang, 2016). One practical application of time series continuation is the trend
+strategy which in recent years has become increasingly popular among hedge funds.
+However, what has not yet been examined exhaustively is the reversal effect which
+emerges after the continuation pattern.2
+    This paper empirically investigates the reversal property of various financial as-
+sets and analyses its relationship with continuation focusing exclusively on the time
+series dimension. Return continuation and reversals are usually closely related and
+discussed together in the literature. Historically, most studies have focused on cross-
+sectional momentum and reversals which have been documented internationally and
+in various financial assets.3 According to a number of well-known behavioural the-
+ories by Barberis et al. (1998), Daniel et al. (1998), and Hong and Stein (1999)
+among others, the rationale behind momentum and reversals is related to short-term
+under-reaction and delayed over-reaction. In the time series context, Moskowitz et al.
+(2012) also attribute the TSM effect to these behavioural features. Some recent stud-
+ies attempt to explain the momentum and reversal effect using rational expectation
+models, for example, information percolation (Andrei and Cujean, 2017), heteroge-
+neous beliefs (Ottaviani and Sørensen, 2015) and time-varying factor loading (Kelly
+
+   1
+     Return continuation is seen in the finance literature as an analogue of momentum; see, among
+others, Rouwenhorst (1998) and Fama (1998). Sometimes these two words are used interchangeably.
+However, return continuation is applicable across a wider range of dynamics.
+   2
+     Though some studies in the literature mention it, for example, Moskowitz et al. (2012) uncovered
+a long-term reversal beyond one year of TSM signals.
+   3
+     Cross-sectional momentum and reversals have been extensively studied in various financial
+markets, see, e.g., the US stock market (De Bondt and Thaler, 1985; Lo and MacKinlay, 1990),
+international stock markets (Fama and French, 1998; Rouwenhorst, 1998), country indices (Bhojraj
+and Swaminathan, 2006), various asset classes (Asness et al., 2013), and commodities (Miffre and
+Rallis, 2007; Gorton et al., 2013).
+
+
+
+                                                 2
+
+
+
+
+                 Electronic copy available at: https://ssrn.com/abstract=2971875
+et al., 2021). The above-mentioned literature suggests the existence of a certain
+linkage between time series continuation and reversal.
+    Recently, however, Conrad and Yavuz (2017) argue that cross-sectional momen-
+tum and reversals are not pervasively linked to each other. This finding contradicts
+the conventional view that, if momentum and reversals are linked, the securities
+which exhibit momentum should also exhibit reversals soon afterwards. This in-
+creases our interest in investigating time series continuation and time series reversal.
+    In our empirical study, we decompose different trend-following strategies based
+on a portfolio of 55 of the world’s most liquid commodity and financial futures.
+We find that time series momentum and reversal do not occur in the same group of
+assets. Those assets that show strong momentum profit do not experience significant
+reversal. This means that we arrive at a conclusion similar to that of Conrad and
+Yavuz (2017) regarding the cross-sectional analysis. Interestingly, we observe that
+instruments with sell signals (past “losers”) contribute to this type of reversal. By
+contrast, the instruments with buy signals (past “winners”) contribute much less.
+    Our finding challenges the prominent behavioural theories in the areas of momen-
+tum and reversal, especially the unified theory of Hong and Stein (1999). According
+to the latter, momentum and reversal can be generated simultaneously by a model
+based on a single risky asset. Therefore, Hong and Stein (1999) provide the be-
+havioural explanation for momentum and reversal more in the time series context
+rather than in the cross-sectional one. The empirical results in the present study,
+suggest that time series momentum is not linked to time series reversal, implying
+that the unified theory of Hong and Stein (1999) could be misleading.
+    But, our results are consistent with several studies proposing that momentum and
+reversal should be treated as separate effects. George and Hwang (2004, 2007) put
+forward two separate theories to explain the two phenomena in which momentum is
+caused by anchoring bias whereas reversal is linked to capital gain lock-in theory. Yao
+(2012) suggest that the reversal effect could be driven by the January seasonality in
+the stock market, whereas momentum is not. A number of empirical studies suggest
+that reversal does not necessarily follow momentum in stock markets; see, e.g., Lee
+and Swaminathan (2000), Cooper et al. (2004), and Conrad and Yavuz (2017). Li
+
+                                             3
+
+
+
+
+               Electronic copy available at: https://ssrn.com/abstract=2971875
+and Galvani (2018) also find a similar result in the corporate bond market.
+    One effective way to examine time series reversal in financial assets is to employ
+contrarian trend-following strategies. Trend-following trading signals depend on their
+own past returns without a cross-sectional comparison. The simple moving average
+is one of the most intuitive trend-following strategies based on technical analysis.
+Recently, researchers have attributed the profitability of trend-following strategies
+to time series continuation and introduced more advanced methods such as TSM,
+see Moskowitz et al. (2012), and return signal momentum (RSM), see Papailias et al.
+(2021). Therefore, we base our investigation on these two momentum approaches in
+the time series domain.
+    We first capture the timing of time series reversal and find that it occurs from 12
+to 24 months after the portfolio formation. This finding differs from the traditional
+cross-sectional reversals which usually last longer, between 2 and 5 years after the
+portfolio formation date.4 Moskowitz et al. (2012) document a strong short-term
+(1–12 month) TSM, but no statistically significant long-term (2–5 years) reversal.
+    Like Conrad and Yavuz (2017), we classify instruments in trend-following strate-
+gies into four groups: “realised winner”, “realised loser”, “contrarian winner”, and
+“contrarian loser”. The realised winner sub-portfolio consists of instruments with
+positive trend-following trading signals (winners) whose profits are realised in the
+subsequent investment horizon (1–12 months). The realised loser sub-portfolio con-
+sists of instruments with negative trading signals (losers) that later produce negative
+returns, meaning that the losers portfolio realises its profit. By contrast, the con-
+trarian winners and contrarian losers include instruments with positive and negative
+signals that fail to gain profits. The construction of the above four sub-portfolios
+allows us to see which part of the trend-following returns contributes most to time
+
+   4
+     Of course, we cannot rule out the possibility that this difference might occur due to various
+factors such as the sample period and the specific market. For example, cross-sectional reversals
+require a long-term ranking period of 2–5 years in stock markets (De Bondt and Thaler, 1985), but
+reduce to 1.5–3 years in commodity markets, as suggested by Bianchi et al. (2015). Bhojraj and
+Swaminathan (2006) find that the reversals of country indices occur from 2 to 3 years after the
+1-year momentum effect.
+
+
+
+                                                4
+
+
+
+
+                Electronic copy available at: https://ssrn.com/abstract=2971875
+series reversal.
+    Next, to properly investigate the relationship between time series continuation
+and reversal, we perform both sign analysis and performance evaluation to determine
+the future returns of the above-mentioned portfolio segmentations. In the sign anal-
+ysis, we find that the loser sub-portfolios, no matter whether their profits are realised
+or not, i.e. both realised losers and contrarian losers, experience strong subsequent
+reversal. By contrast, the results from the winner subgroups lead to mixed answers:
+the realised winners exhibit strong reversal, while the contrarian winners do not.
+    The results of performance evaluation again suggest that the loser subgroups,
+especially the contrarian losers, contribute the most to the time series reversal. This
+conclusion is consistent with the results about cross-sectional reversal noted by Con-
+rad and Yavuz (2017); they do not observe statistically significant returns for realised
+portfolios (realised winners minus realised losers) but do observe significant returns
+for contrarian portfolios (contrarian winners minus contrarian losers). We take a step
+further by showing that the positive returns generated by the realised winner and
+the realised loser offset each other when considered together. However, the reversal
+of a contrarian loser is much stronger than that of a contrarian winner, which leads
+to more statistically significant results for contrarian portfolios.
+    A double-sorted trading strategy is then constructed, holding the four previ-
+ously mentioned decompositions of trend-following strategies. We call this a “trend-
+following reversal strategy”, since it combines time series continuation and reversal.
+It differs from the widely documented cross-sectional reversal as it does not require
+any relative return comparisons. For each single asset, we first sort on the 12-month
+returns skipping the most recent 12 months (ranking period 1) and second sort on
+the recent 12-month returns (ranking period 2), and then invest in the following
+month. For instance, a realised winner strategy contains assets with positive returns
+in both ranking periods, 1 and 2. Figure 1 illustrates how these four double-sorted
+strategies are constructed. Our results suggest that holding the realised winner and
+the contrarian loser subgroups can yield annualised returns as high as 22% and 24%,
+respectively. These strategies are liquid and well diversified in the context of real
+market trading.
+
+                                             5
+
+
+
+
+               Electronic copy available at: https://ssrn.com/abstract=2971875
+    To understand the risk exposure of these strategies, we run factor regressions on
+the trend-following reversal returns against a series of standard financial market risk
+factors. The regression output reveals that the trend-following reversal returns are
+closely related to the market as well as the momentum factors. However, certain
+strategies, especially the contrarian loser, produce significant alphas which are not
+explained by the popular risk factors. Moreover, the contrarian loser represents an
+effective strategy for investors to avoid momentum risks, owing to its low correlation
+with trend-following factors.
+    In short, the contribution of this paper to the literature is threefold. First, we find
+that time series reversal usually occurs between 12 and 24 months after the formation
+of trend-following strategies, which is much shorter than the findings documented
+in the cross-sectional reversal literature. Second, we determine which of the trend-
+following components contributes most to the reversal profits; this finding contradicts
+the prominent behavioural theory of Hong and Stein (1999). Third, we document a
+trend-following reversal strategy earning significant abnormal returns based on both
+time series continuation and reversal.
+    The rest of the paper is organised as follows. In Section 2 we describe our
+data collection and transformation methods, and explain the intuitions of differ-
+ent trend-following trading signals. Section 3 presents the performance results of
+multiple trend-following strategies and uncovers the timing of time series reversal.
+In Section 4, we perform two analyses—sign analysis and sub-portfolio performance
+evaluation—to investigate the reversal property of each subgroup via a decomposi-
+tion of trend-following strategies. Section 5 introduces the trend-following reversal
+strategy and explores its factor loadings. Finally, Section 6 summarises the conclu-
+sions.
+
+2. Data and Trading Signals
+
+2.1. Future Contracts and Other Data
+   We collected data for 55 of the world’s most liquid exchange traded futures from
+January 1985 to March 2015. Such a dataset is similar to that used in TSM studies
+
+
+                                             6
+
+
+
+
+               Electronic copy available at: https://ssrn.com/abstract=2971875
+by Moskowitz et al. (2012), and also in other trend-following studies, e.g., Hutchin-
+son and O’Brien (2015), Kim et al. (2016), and Baltas and Kosowski (2013). The
+pool consists of 24 commodity futures, nine foreign exchange futures, nine equity
+indexes of developed countries, and 13 government bonds of various maturities for
+six developed countries. The data were sourced from Bloomberg and DataStream;
+see Section A in the Online Appendix for more details.
+    The futures prices of the nearest contracts are concatenated to form long time
+series for reasons of tractability. For robustness, we also splice the futures prices
+based on the trading volume. To mimic a real-life trading situation, once the trading
+volume of the second nearest contract exceeds that of the nearest one, we do not
+allow the nearest contract to be chosen again even if its trading volume subsequently
+rise higher. The results show that the descriptive statistics for our spliced data do
+not vary greatly from those obtained using the nearest contract data.
+    As in Moskowitz et al. (2012) and Papailias et al. (2021), we compute the daily
+excess returns for each instrument and calculate its cumulative returns. This allows
+us to proxy for prices and compute our periodic returns. In this paper, we focus on
+monthly returns, which are calculated from the previously mentioned daily excess
+cumulative return series. This allows us to directly compare our results with the
+literature.
+    In Table 1, we summarise the descriptive statistics of the original series. The table
+presents the date of the first available data point for each series, and the annualised
+arithmetic mean, standard deviation, skewness, and kurtosis of the monthly excess
+returns of each individual instrument. The last available month for all series is
+March 2015. Most futures have positive long-term annualised means, while some of
+the currency futures show slightly negative values. We found that volatility varies
+across different asset classes. The volatilities of commodities and equities are much
+higher than those of currencies and bonds. To illustrate, Natural Gas futures have
+a volatility of 54.39%, whereas the 2-year maturity US bond (US2) offers the lowest
+volatility at 2.84%.
+    For the factor regression analysis which follows, we used Bloomberg to collect the
+monthly returns of four major financial asset class indices: the MSCI World Index
+
+                                             7
+
+
+
+
+               Electronic copy available at: https://ssrn.com/abstract=2971875
+(MSCI), S&P GSCI, Barclays Aggregate Bond Index (BOND), and US Dollar Index
+(USDI). The percentage changes of Fama and French (1993) three factors (SMB,
+HML), Fama and French (2015) five factors (RMW, CMA) as well as the risk free
+rate were downloaded from Kenneth French’s website.5 Finally, the Value (VAL)
+and Momentum (MOM) Everywhere factors of Asness et al. (2013) are available
+from the AQR website.6 Data for all the above are available from January 1985 to
+March 2015.
+
+2.2. Trading Signals of Trend-Following Strategies
+    Two types of trend-following strategies are employed in this study, TSM and
+RSM.7 Previous studies suggest that 12 months is the optimal look-back period (j) for
+trend-following strategies, and holding period (h) usually ranges from 1-12 months,
+see, among others, Moskowitz et al. (2012), Zhou and Zhu (2013) and Papailias et al.
+(2021). Hence, in this study we adopt a 12-month value of j for all the benchmark
+strategies.8
+    The TSM signals are generated in the same way as in Moskowitz et al. (2012),
+where a long position is indicated if the period return is positive, i.e., the annual
+return using j = 12; otherwise, the investor opens a short position on security s.
+The TSM returns are given as follows:
+                                           (
+                                                           s
+                                               +rts ,   P Rt−12,t−1 >0
+                      Rts |P Rt−12,t−1
+                              s
+                                       =                   s
+                                                                        ,                     (1)
+                                               −rts ,   P Rt−12,t−1 < 0
+
+          s
+where P Rt−12,t−1 is the period return of instrument s during time t − 12 to t − 1, as
+suggested by our look-back period j = 12.
+   The RSM signals are generated when the empirical probability of the positive
+
+   5
+     http://mba.tuck.dartmouth.edu/pages/faculty/ken.french/data_library.html
+   6
+     https://www.aqr.com/
+   7
+     We also examine the properties of time series reversal based on a simple moving average (SMA)
+trading rule, which is one of the most fundamental trend-following strategies. The results of SMA
+are very similar to those of TSM and RSM, and are discussed in Section B of the Online Appendix.
+   8
+     We also have additional results based on look-back periods other than 12 months which are
+available upon request.
+
+
+                                                  8
+
+
+
+
+                Electronic copy available at: https://ssrn.com/abstract=2971875
+returns in the past 12 months exceeds a certain threshold value. Following Papailias
+et al. (2021), we calculate the RSM returns using the following equation:
+                                            (
+                                                +rts ,     s
+                                                         Pt−12,t−1 >q
+                     Rts |Pt−12,t−1
+                            s
+                                    ,q =                   s
+                                                                       ,             (2)
+                                                −rts ,   Pt−12,t−1 < q
+
+          s
+where Pt−12,t−1   denotes the probability of positive returns of the past 12-month pe-
+riod, and q is the threshold value. For simplicity, we select the most intuitive thresh-
+old value, q = 0.5, indicating that a long position is established when the empirical
+                s
+probability Pt−12,t−1  is greater than 0.5, whereas a short position is established when
+this probability is smaller than 0.5.
+    In line with Moskowitz et al. (2012), when investigating the profitability of the
+trend-following reversal strategies, we implement a volatility scaling approach to
+weight the portfolio. This approach calculates the portfolio weights, or the position
+sizes for individual instruments, in a time-varying way. Specifically, we control the
+position size of each instrument to be inversely proportional to its ex-ante realised
+volatility σt , which is calculated as follows:
+                                      ∞
+                                      X
+                          σt2 = 261     (1 − δ)δ i (rt−1−i − r̄t )2 ,                (3)
+                                      i=0
+
+where the parameter δ is defined when the centre of mass is equal to 60 days. The
+benefit of controlling for volatility is that it can lead to more profitable investment
+strategies, because it takes a crucial role in adjusting the position size of momentum
+strategies (Barroso and Santa-Clara, 2015; Kim et al., 2016; Papailias et al., 2021).
+    To form a portfolio of various instruments, we calculate the trend-following posi-
+tion signals in the same way as in Equations 1 and 2, and allow the portfolio weight
+for each instrument to be given as a function of its ex-ante realised volatility σt2 . We
+use a target value for the annual volatility of 40% as in Moskowitz et al. (2012). This
+aligns our results with the current literature and also mimics a real-world trading
+scenario with a capital margin of about 5–20%. Then, the TSM and RSM position
+returns for an asset s are given by:
+
+
+                                                  9
+
+
+
+
+               Electronic copy available at: https://ssrn.com/abstract=2971875
+                                           
+                                            +rs 40%
+                                                  s  ,              s
+                                                                 P Rt−12,t−1 ⩾0
+                              s                   t σt−1
+                      Rts |P Rt−12,t−1 =                                              ,   (4)
+                                            −rts σ40%
+                                                    s  ,            s
+                                                                 P Rt−12,t−1 <0
+                                                      t−1
+                                             
+                                              +rs 40%
+                                                    s  ,            s
+                                                                  Pt−12,t−1 >q
+                                                     t σt−1
+                       Rts |Pt−12,t−1
+                              s
+                                      ,q =                                        .       (5)
+                                              −rts σ40%
+                                                      s  ,           s
+                                                                   Pt−12,t−1 <q
+                                                       t−1
+
+
+      Finally, for a universe of S assets, the portfolio return is calculated as:
+
+                                                 S
+                                             1   X
+                                       Rtp =                s
+                                                     Rts |Pt−12,t−1 , q,                  (6)
+                                             S s=1
+
+where Rts is the risk-adjusted return of each trend-following strategy for each indi-
+vidual instrument, using the above volatility scaling method, and Rtp is the mean of
+all the Rts .
+
+3. Time Series Reversal
+
+    According to the results of the OLS pooled regressions in Moskowitz et al. (2012)9 ,
+time series reversal pattern is statistically insignificant. However, they have only
+used single month return and return sign as the explanatory variables, which are
+not exactly equivalent to the blocks that form time series momentum signals. Time
+series momentum considers the past month returns as a whole, for instance, period
+return over the past 12 months. By contrast, Papailias et al. (2021) examined the
+predictive power of RSM strategies by using a lagged average of return signs P . P
+covers all the return signs in the look-back period and can directly form the RSM
+signal. Their results suggest that a significant reversal pattern exists following the
+short-term momentum effect.
+    In this section, we extend the above studies by adding more explanatory variables
+to investigate the predictive power of TSM and RSM signals. First, as in Moskowitz
+et al. (2012), we regress the volatility-scaled return rts /σt−1
+                                                             s
+                                                                 on the lagged signal
+
+  9
+      See Figure (1) in their paper.
+
+
+                                                     10
+
+
+
+
+                   Electronic copy available at: https://ssrn.com/abstract=2971875
+                 s    s                                     s
+month return rt−h  /σt−h−1 and lagged sign of return, sign(rt−h ). The equations are
+specified as follows:
+
+                                   s
+                             rts /σt−1           s
+                                       = α + βh rt−h   s
+                                                     /σt−h−1 + st ,                            (7)
+
+
+                                    s
+                              rts /σt−1                s
+                                        = α + βh sign(rt−h ) + st ,                            (8)
+
+where rts is the excess return of asset s in month t adjusted by its available ex ante
+             s          s                            s                 s
+volatility σt−1 . sign(rt−h ) takes the value +1 if rt−h ⩾ 0 or −1 if rt−h < 0. h is the
+number of lags used in the regressions which ranges from 1 to 60. Finally, st denotes
+the error term, which has zero mean and finite variance.
+    Second, we repeat the above regressions by employing two alternative regressors:
+(i) the 12-month period return P Rt−h−11,t−h , and (ii) the 12-month mean return sign
+Pt−h−11,t−h . These two variables are directly related to the formation of TSM and
+                                                              T SM            RSM
+RSM signals. Finally, the TSM and RSM signals, namely St−h−11,t−h        and St−h−11,t−h ,
+are used as the third set of regressors. TSM and RSM signals take the value of +1
+when P Rt−h−11,t−h and Pt−h−11,t−h indicates a buy signal, and the value of −1 for a
+sell signal.
+    In order to avoid the return co-movement across different futures contracts and
+keep the regression results adjusted for time series dependence, we calculate the t-
+statistics based on the robust standard error method proposed by Thompson (2011).
+This approach addresses the problem that the residuals are correlated across both
+firms (in our case, different futures contracts) and time.10 Therefore, it generates
+consistent asymptotic efficiency standard errors and perform relatively well in small
+sample situations.
+    Figure 2 shows the time series predictability of the previously mentioned three
+sets of explanatory variables on future returns. In Panel A, we can see that it is not
+
+  10
+     Moskowitz et al. (2012) claimed that their OLS pooled regression using volatility scaled return
+is equivalent to a GLS approach. This means that they did use standard errors that cluster by both
+futures contract and time effect. However, they did not adjust for simultaneous correlation across
+both futures contract and time.
+
+
+                                                11
+
+
+
+
+                 Electronic copy available at: https://ssrn.com/abstract=2971875
+easy to capture a persistent reversal pattern following the first 12 months of return
+continuation. The results are consistent with Moskowitz et al. (2012). However, if
+we use an alternative set of regressors which covers all the information over the look-
+back period, the time series reversal is more observable. As shown in Panel B, the 12
+months period return and mean return sign lead to a strong reversal after the short-
+term momentum effect. Between month 12 and 24, the t-statistics of beta coefficients
+are lower than -3 for most months, indicating statistical significance at the 1% level.
+Interestingly, time series reversal is “double-humped”, with t-statistics also being
+significant during months 36–60. Although the average t-statistics for months 36–60
+are only slightly lower than those during months 12–24, they do not produce an
+obvious contrarian profit.11 Therefore, we conclude that this 36–60 month reversal
+is weak and decide not to cover it in the paper.
+    The results shown in Panel C of Figure 2 further validate the existence of time
+series reversal. Both TSM and RSM signals are positively correlated with the future
+returns in the short-run. In the medium-run, they experience a statistically signifi-
+cant reversal. The next two subsections inspect the timing and profitability of time
+series reversal.
+
+3.1. Return Decays of Multiple Holding Periods Strategies
+    In an attempt to evaluate trend-following strategies with multiple holding peri-
+ods (i.e., holding the underlying assets for more than 1 month), we find that these
+strategies never outperform the same strategy using a 1-month holding period. A
+similar result was also found in Moskowitz et al. (2012). The authors tested the
+alphas of different TSM strategies with various holding periods demonstrating that
+the 1-month holding period strategy specification outperforms all other specifica-
+tions with holding periods of more than 1 month. The longer the holding period, the
+lower the alpha, indicating that trend-following profits are gradually offset by the
+subsequent reversals.12
+
+ 11
+      This is discussed in the next subsection and reflected in return decays shown in Figure 3.
+ 12
+      See Table 2 in Moskowitz et al. (2012).
+
+
+
+                                                 12
+
+
+
+
+                  Electronic copy available at: https://ssrn.com/abstract=2971875
+    To thoroughly investigate the phenomenon of return decays, we examine two
+trend-following trading strategies—TSM and RSM—based on a look-back period of
+j = 12. Figure 3 illustrates the decay in trend-following strategies as the holding
+period h increases. We report the annualised returns of the above strategies under
+different holding periods, for h = {1, 2, 3, 6, 9, 12, 18, 24, 30, 36, 48, 60} months. From
+the figure, we can see that returns gradually decrease when moving from h = 1 to
+h = 24, indicating that the benefit of return continuation is largely offset by the
+subsequent time series reversal. The average returns remain stable after a holding
+period of more than 24 months, meaning that the reversal pattern stops after the
+end of the second year. The effect of the long-term reversal (36–60 month) uncovered
+in the previous section is weak, since it does not further reduce the mean returns.
+These results are consistent across the two strategies.
+
+3.2. Timing of Time Series Reversal
+    If time series reversal ensues after the formation of trend-following signals, when
+does it begin and end? To answer this question, we implement TSM and RSM
+contrarian trend-following strategies using different time lags. This means that we
+take the opposite positions to those suggested by the trend-following strategy signals
+but using different lags from 2 to 36 months. Therefore, a total of 70 (35 × 2) lagged
+contrarian strategies are implemented using the trading signals with a holding period
+of h = 1.
+    Figure 4 shows a plot of the annualised mean returns of the aforementioned
+contrarian strategies, revealing the timing of the time series reversal. In the short
+term, contrarian strategies produce negative returns (2–10 months for TSM and
+2–12 months for RSM). The negative short-term returns are followed by an inter-
+mediate reversal, which usually lasts for more than a year (12–26 months for TSM
+and 13–25 months for RSM). The portfolio returns become negative again after the
+intermediate-term reversal. None of these contrarian strategies produce statistically
+significant returns that outperform a naı̈ve 1/N buy-and-hold strategy. Hence, simple
+contrarian trend-following strategies do not outperform the market.
+    Yao (2012) argues that January seasonality is one of the main reasons for contrar-
+
+
+                                             13
+
+
+
+
+               Electronic copy available at: https://ssrn.com/abstract=2971875
+ian returns. According to her study, the classic cross-sectional contrarian strategy
+results could be overturned in the US stock market when controlling for January
+seasonality. In that sense, we also examine the impact of January seasonality on
+time series reversal (TSM and RSM) reporting in Section C of the Online Appendix.
+We find that the profitability of time series reversal is not centralised in January,
+but is shown in the other 11 months as well. This can be explained by the fact that
+our universe includes different types of futures contracts whereas the January effect
+is more commonly found in equity markets.
+    Since these contrarian strategies are performed using the volatility scaling method,
+low volatile instruments, e.g., bond futures, may dominate the portfolio. As shown in
+Table 1, the volatilities of bond futures are mostly below 10%, which are much lower
+than the volatilities of the three remaining asset classes. Therefore, we also apply
+contrarian strategies the same as in Figure 4 using the sample portfolio but excluding
+all bond futures. We note that time series reversal still holds after controlling for
+bond futures. These results are presented in Section D of the Online Appendix.
+    In summary, time series reversal is a pervasive but not economically significant
+phenomenon across the two strategies and time horizons. Normally, it occurs between
+the end of the first year and the end of the second year, after the trend-following
+signal is generated. The results differ from those in the existing literature, where
+the long-term reversals, cross-sectional or time series, usually last for much longer.13
+Time series reversal vanishes after the end of the second year.
+
+4. Linkage Between Time Series Momentum and Reversal
+
+   In this section, two approaches are adopted to investigate the linkage between
+time series momentum and reversal: the sub-portfolio sign analysis and the perfor-
+mance evaluation. These two analyses further track the decomposed trend-following
+
+  13
+    For example, cross-sectional reversals require a long-term ranking period of 2–5 years in stock
+markets (De Bondt and Thaler, 1985) and 1.5–3 years in commodity markets (Bianchi et al., 2015).
+Bhojraj and Swaminathan (2006) find that the reversals of country indices occur from 2 to 3 years
+after the 1-year momentum effect. Moskowitz et al. (2012) document a statistically insignificant
+long-term (2–5 years) TSM reversal.
+
+
+                                                14
+
+
+
+
+                 Electronic copy available at: https://ssrn.com/abstract=2971875
+portfolio beyond the conventional holding period of 1–12 months. This helps us
+to understand the behaviour of the four sub-portfolios and illustrates which one
+contributes most to the time series reversal. The performance evaluation period is
+extended to a post-holding period of 13–60 months after the signal.14
+    The time horizon is divided into three parts: (i) the 12-month look-back period j
+prior to month 1 (see ranking period 1 in Figure 1); (ii) the holding period h ranging
+from month 1–12 (see ranking period 2 in Figure 1);15 , and (iii) the 13–60 month
+post holding period. As before, the same two trend-following strategies—TSM and
+RSM—are performed. A rolling method is employed to generate and renew the
+trading signals every month.
+    Analogous to Conrad and Yavuz (2017), we decompose the trend-following port-
+folio into four subgroups: realised winner, realised loser, contrarian winner, and
+contrarian loser. First, based on each instrument’s signals formed in ranking pe-
+riod 1 (j = 12), we divide the entire portfolio into winners and losers. We then
+classify the winner and loser portfolios into the above-mentioned four subgroups
+by evaluating whether or not their profits are realised during ranking period 2
+(h = {1, 2, 3, 6, 12}).16
+    More specifically, the realised winner represents a sub-portfolio with instruments
+that were past winners during period j and continue to generate positive returns
+during period h. The realised loser represents a sub-portfolio that consists of past
+losers during period j that continue to generate negative returns during period h. By
+contrast, the contrarian winner represents a sub-portfolio comprising past winners
+during period j, which then fail to generate positive returns during period h. The
+contrarian loser represents a sub-portfolio with past losers that go on to generate
+positive returns during period h. These four subgroups cover all the assets in the
+
+  14
+     Post-holding period study of momentum strategies was also seen in Jegadeesh and Titman
+(2001), who tracked cross-sectional momentum performance up to 60 months after the formation
+of momentum signals.
+  15
+     We leave h = {1, 2, 3, 6, 12} as this is usual in calculating momentum profits, see, e.g., Moskowitz
+et al. (2012).
+  16
+     Figure 1 illustrates how these four sub-portfolios are constructed.
+
+
+
+                                                   15
+
+
+
+
+                  Electronic copy available at: https://ssrn.com/abstract=2971875
+trend-following portfolio, as either a positive (winner) or a negative (loser) signal is
+assigned to each instrument at each point in time.
+
+4.1. Sub-portfolio Sign Analysis
+    Sign analysis allows us to see which sub-portfolios exhibit strong time series rever-
+sal. Here, we calculate the frequency of positive signs for sub-portfolio components
+during the post trend-following holding period (13–60 months). We divide the post
+holding period into four separate periods, each lasting for one year. These are 13–24
+months, 25–36 months, 37–48 months, and 49–60 months after portfolio formation.
+    Based on the above-mentioned settings, (j, h) sub-portfolios are established for
+analysis. For instance, in a (12, 12) scheme, the trend-following signal (winner/loser)
+at time t is based on the returns during months t − 11 to t for each individual
+instrument. Then, we determine whether the profits of these winners and losers
+are realised or not during the next h = 12 periods, i.e., t + 1 to t + 12. Finally,
+we calculate how many instruments in each subgroup generate positive returns over
+months t + 13 to t + 60 and report the rate of positive returns. The same process is
+followed for each month from January 1985 to March 2015.
+    Our primary focus is on the results during months 13–24 of the post holding
+period, when time series reversal occurs. Figure 5 shows these results as a plot of the
+aggregated probability of positive signs for all the instruments classified as one of the
+four sub-portfolios.17 The loser subgroups, i.e., the realised losers and the contrarian
+losers, exhibit positive rates of around 65–66% and 63%, respectively, during this
+period. These success rates are much higher than the unconditional positive rate of
+58.7%, which was calculated using all the 55 individual instruments from January
+1985 to March 2015. We also employ a proportion test developed by Newcombe
+(1998a,b) to examine whether the success rates of these subgroups are statistically
+different from those for the unconditional rate. The results suggest that the rates of
+both the realised loser and contrarian loser sub-portfolios are significantly different
+
+  17
+    We also show results of sign analysis for the rest of the post holding period (25–60 months)
+using different (j, h) settings. These results are reported in Section E of the Online Appendix.
+
+
+
+                                              16
+
+
+
+
+                Electronic copy available at: https://ssrn.com/abstract=2971875
+at the 1% level. Moreover, the differences persist across different (j, h) schemes and
+strategies.
+    By contrast, the winners, i.e. the realised winners and the contrarian winners,
+show positive rates lower than the unconditional rate, at about 55–56% and 57%,
+respectively. The positive rates of the realised winner subgroups are significantly
+lower than the average at the 1% level, while those of the contrarian winner are not.
+To summarise, both of the loser sub-portfolios exhibit strong time series reversal. In
+the winner group, only the realised winners show statistically significant reversal.
+    Our findings indicate that the instruments which contribute to trend-following
+profits, or the instruments that fall into the realised winner and realised loser sub-
+groups, do experience a strong reversal during the time series reversal period (13–24
+months). The two remaining portfolios, i.e., the contrarian winners and contrar-
+ian losers, which do not generate trend-following profits, behave differently to each
+other. The contrarian losers still produce significant reversals, whereas the contrarian
+winners do not.
+    After the 13–24-month period, time series reversal ceases to occur. The superior
+positive rates of the realised loser and contrarian loser subgroups are discontinued
+during the subsequent holding periods of 25–36 months and 37–48 months. Finally,
+during the 49–60-month period, the rates increase slightly again, to around 62% and
+61%, respectively. Similarly, the rates for the realised winners rebound to the un-
+conditional rate during the 25–36-month and 37–48-month periods, after which they
+fall back to approximately 57–58% in the 49–60-month period. Finally, the positive
+rates of the contrarian winner are not statistically significant over the majority of
+the sample. Details of the above results are available in Section E of the Online
+Appendix.
+
+4.2. Sub-Portfolio Performance
+   To further investigate how each sub-portfolio evolves during the 4-year post-
+holding period (13–60 months), we evaluate the strategy performance with the un-
+derlying instruments of the four subgroups for 12 months. Four sets of strategies,
+with holding periods of 13–24 months, 25–36 months, 37–48 months, and 49–60
+
+
+                                             17
+
+
+
+
+               Electronic copy available at: https://ssrn.com/abstract=2971875
+months after the formation of TSM and RSM signals, are run to match the previous
+analysis. The realised winner, realised loser, contrarian winner, and contrarian loser
+groups are determined using the previously described (j, h) schemes.
+    Table 2 summarises the performance of TSM and RSM strategies in subgroups
+categorised using the (12, 12) scheme from January 1985 to March 2015.18 Trading
+signals for four different 12-month holding periods are generated, covering the 13–60
+months after the formation of the original TSM and RSM signals. Following the
+methodology in Jegadeesh and Titman (1993), we compute the 12-month holding
+period returns by averaging the returns of overlapping portfolios. We use equally
+weighted method to construct each sub-portfolio. For each strategy, the annualised
+mean return, annualised volatility, Sharpe ratio, and maximum drawdown are re-
+ported.19 Throughout the strategy evaluation part of this paper, we compute the
+t-statistics to check whether the returns are significant or not, using the Newey–West
+standard error of lag(4)(Newey and West, 1986).
+    As shown in Table 2, the contrarian loser portfolio generates the highest returns
+and Sharpe ratio across the four subgroups during the first year of the post trend-
+following holding period (13–24 months).20 The Newey–West t-statistics suggest
+that all the trend-following contrarian loser sub-portfolios produce positive returns
+at a 1% level of significance. The realised losers also display strong reversals during
+both the 13–24-month and the 25–36-month periods. However, the reversal pattern
+is much stronger during the 25–36-month period, when all the returns of the three
+strategies are significant at the 1% level. Both of the loser groups, which one would
+expect to perform poorly (short signals) during the trend-following holding period,
+exhibit strong reversal during the 13–24- and 13–36-month periods. These results
+are consistent with the previous sign analysis.
+
+  18
+     Similar tables using the (12, 1), (12, 3), and (12, 6) schemes are available in Section F of the
+Online Appendix. The results are robust across different trend-following holding periods h.
+  19
+     Details of the strategy evaluation criteria are listed in Section G of the Online Appendix.
+  20
+     For robustness check, in Section H of the Online Appendix, we perform the same analysis by
+assigning the same weight (25%) for each asset class and find the consistent results. The contrarian
+loser show the strongest reversal effect which is statistically significant at the 1% level.
+
+
+
+                                                 18
+
+
+
+
+                 Electronic copy available at: https://ssrn.com/abstract=2971875
+    Next, we move on to the winner subgroups. The realised winner generally does
+not exhibit strong returns except in the TSM case, where it barely produces an
+annualised return of 4.4% (significant at the 10% level). The contrarian winner sub-
+portfolio, which does not produce any significant returns during the 13–24-month
+period, produces strong positive returns during the 25–36-month period. After the
+first and second year of the post trend-following holding period, neither time series
+continuation nor reversal exists.
+    Conrad and Yavuz (2017) conclude that the realised portfolio, namely realised
+winners minus realised losers, which contributes to the momentum profits, does not
+contribute to the 13–24-month reversal. According to our results, this is because
+the difference between realised winner and realised loser during this period is very
+small (0.002 for TSM and 0.001 for RSM). Therefore, their returns are offset when
+one is subtracted one from the other. Conrad and Yavuz (2017) also claim that the
+contrarian portfolio, namely contrarian winners minus contrarian losers in our case,
+generates significant returns. Our empirical finding suggests that in our sample this
+is solely because of the contrarian losers.
+    If we consider the realised portfolio (realised winner minus realised loser)and the
+contrarian portfolio (contrarian winner minus contrarian loser), we find that our
+results are consistent with those of Conrad and Yavuz (2017). The assets that show
+momentum effect do not display strong long-term reversal, whereas the assets that
+exhibit reversal do not experience short-term momentum. Therefore, we conclude
+that time series momentum and reversal are not linked. Our conclusion challenges the
+unified theory of Hong and Stein (1999) which used a single asset model to illustrate
+both momentum and reversal. It may indicate that momentum and reversal are two
+separate phenomena.
+    To sum up, during the first year of the post trend-following holding period (13–
+24 months), time series reversal is statistically significant when sub-portfolios are
+considered. These patterns cease to hold beyond the end of Month 24. The realised
+winners and the contrarian winners, which are supposed to produce high returns, i.e.,
+with buy signals, no longer earn significant profits after the trend-following holding
+period. On the other hand, the realised losers and the contrarian losers generate
+
+                                             19
+
+
+
+
+               Electronic copy available at: https://ssrn.com/abstract=2971875
+high returns, indicating strong reversal. Among the four subgroups, the contrarian
+loser subgroup shows the strongest reversal during the 13–24-month period.
+
+5. Trend-Following Reversal Strategies
+
+    In this section, we introduce a new type of strategy that combines time series
+continuation and reversal, called the trend-following reversal strategy. Then, the
+risk exposure of trend-following reversal strategy is studied by employing multi-factor
+models.
+
+5.1. A Decomposition of Trend-Following Strategies
+    To construct such a strategy, we use the same decomposition as in Section 4,
+namely realised winner, realised loser, contrarian winner, and contrarian loser sub-
+groups, using a (j, h) scheme, where j = 12 and h = {1, 3, 6, 12}. The investment
+decision is made in the following month to avoid look-ahead bias. Trading signals
+are generated every month, so that the position sizes are rebalanced every month.
+To mimic a real world situation, we use a time-varying volatility scaling method to
+adjust the portfolio weights, following the work of Moskowitz et al. (2012). In this
+method, the weight for each individual instrument is inversely proportional to its
+realised ex-ante volatility.
+    The trend-following reversal strategy is a type of double-sorted strategy in which
+the trend-following ranking (j) is the first sort and the realised/unrealised profit (h)
+is the second sort.21 The trend-following reversal strategy maintains its tractability
+and requires no external information other than the price returns. It also makes
+more sense, as the first ranking period is the conventional trend-following look-back
+period, and the second ranking period is the trend-following holding period.
+
+  21
+    There are numerous studies which employ and evaluate double-sorted momentum strategies.
+Lee and Swaminathan (2000), Sagi and Seasholes (2007), Fuertes et al. (2010), and Conrad and
+Yavuz (2017) combine momentum signals with other external variables such as term structure, firm-
+specific attributes, trading volume, and value/book-to-market ratios as the second criterion, while
+Bianchi et al. (2015) combine a long-term momentum ranking with a medium-term momentum
+ranking and find superior abnormal returns.
+
+
+
+                                                20
+
+
+
+
+                 Electronic copy available at: https://ssrn.com/abstract=2971875
+    Table 3 summarises the performance of the 12 decomposed sub-portfolios un-
+der three trend-following categories using (j, h) = {(12, 1), (12, 3), (12, 6), (12, 12)}
+double-sorting periods. As suggested by the Newey–West t-statistics, the realised
+winner and the contrarian loser sub-portfolios produce statistically significant re-
+turns at a 1% level in all cases, regardless of the trend-following strategies and the
+ranking scheme chosen. The annualised mean returns of the realised winners range
+from 14.4% to 26.6%, and the returns of the contrarian losers range from 9.8% to
+24.4%. The contrarian winner subgroup shows significant profits only when the
+(12, 1) and (12, 6) schemes are used. Finally the contrarian winner group produces
+hardly any statistically significant returns. The profitability of the realised winner
+declines as h increases. Conversely, the contrarian loser performance improves as the
+value of h increases.
+    If investors go long in realised winners and contrarian winners and go short in
+realised losers and contrarian losers, their positions are equivalent to a trend-following
+strategy (TSM or RSM) holding for 13–24 months. However, trend-following reversal
+strategies suggest that investors only take a long position in the realised winner and
+contrarian loser sub-portfolios. This means that the past trend-following winners
+(j = 12), which continue to generate profits (h = 1 − 12), will maintain the upward
+trend, while the past losers, which earn positive returns later, will also increase in
+the future.
+    In an optimum case, we can combine two specific sub-portfolios, realised winner
+(12, 1) and contrarian loser (12, 12), into a larger portfolio. This yields an annu-
+alised portfolio return between 21.4% and 24.4%, while the volatility is reduced as
+more instruments are included in the portfolio. In this study, we align the (j, h)
+sub-portfolios for reasons of comparability. However, practitioners can choose any
+combinations of different (j, h) settings to achieve portfolio diversification or profit
+maximisation.
+    Figure 6 plots the cumulative returns of the realised winner and the contrarian
+loser under the TSM and RSM (12, 12) frameworks. These two sub-portfolios perform
+
+
+
+
+                                             21
+
+
+
+
+               Electronic copy available at: https://ssrn.com/abstract=2971875
+better than the original TSM and RSM strategies as benchmarks.22 A $1 investment
+in TSM, TSM realised winner, and TSM contrarian loser strategies would be worth
+$16.63, $143.82, and $209.07, respectively at the end of the sample period.23 When
+the RSM frameworks is used, the realised winners and the contrarian losers also show
+substantially higher performance than the original RSM strategy.
+    We contend that our trend-following reversal strategies can be applied by prac-
+titioners. Based on our dataset, which consists of 55 instruments, each subgroup
+has sufficient assets allocated to it across time. Therefore, trend-following reversal
+strategies are liquid and tradable, as each sub-portfolio has at least five instruments
+in most cases. Figure 7 illustrates the proportions of individual instruments falling
+into the four sub-portfolios under a TSM trading strategy using a (12, 12) scheme.24
+Generally, the four subgroups are allocated evenly across different instruments, ex-
+cept that the realised winner subgroup accounts for a slightly larger proportion and
+the realised losers account for a smaller proportion. This reflects the asset diversifi-
+cation of trend-following reversal strategies.
+
+5.2. Risk Exposure Analysis
+   To understand the dynamics of the trend-following reversal strategies, we regress
+the returns of these sub-portfolios for each of the TSM and RSM strategies (12, 12)
+on four classes of market risk factors. First, Table 4 shows the results of the Fama–
+French three-factor and five-factor models as in Fama and French (1993) and Fama
+and French (2015), respectively. Second, in Table 5 Panel A, we detail the global
+asset class factors consisting of the MSCI World Index, S&P GSCI, Barclays US
+
+  22
+      The outperformance of the realised winner and the contrarian loser holds when we use a similar
+sample by excluding all the bond futures. These results are available in Section D of the Online
+Appendix.
+   23
+      The transaction costs are not considered here as we use the nearest futures contracts which
+are required to roll each month. Therefore, the transaction costs will be indifferent across all the
+strategies including the buy-and-hold strategy. For example, if the average rolling cost for the
+portfolio is 10 basis points each month, then approximately 1.2% transaction cost is subtracted
+from the annual return of each strategy.
+   24
+      Similar results, obtained under the RSM trading strategies and using different (12, k) schemes,
+are also available on request.
+
+
+                                                 22
+
+
+
+
+                 Electronic copy available at: https://ssrn.com/abstract=2971875
+Aggregate Bond Index, and US-Dollar Index. In Panel B, The Value and Momen-
+tum Everywhere (Asness et al., 2013) factor regressions are run to examine the risk
+exposure of the four decomposed strategies.
+     In general, we observe approximately 30–40% changes in most of these trend-
+following reversal strategies, owing to changes in the stock market as proxied by
+MSCI. One special case is that the contrarian loser strategies reduce this change to
+approximately 20% or even less. In both Fama–French three-factor and five-factor
+models, the remaining factors (SMB, HML RMW and CMA) explain very little
+of the changes in these sub-portfolio returns. Overall, the realised winners and the
+contrarian losers still generate statistically significant alphas which are not explained
+by the model.
+     Next, as shown in Table 5 Panel A, the global asset class factor models allow us to
+examine the sensitivity of these sub-portfolios to changes in the international major
+asset class indices. It is clear that the model explains the realised winner returns
+better than the others, with R2 values being above 30%. With the exception of USDI,
+most coefficients of the factors are statistically significant at the 5% and 1% levels.
+It can be argued that this is due to the fact that bond futures play a prominent
+role in the time series reversal portfolios and, therefore, are over-explained by the
+bond index. The addition of more market factors results in a better goodness-of-fit
+but a lower alpha for the realised winner. This is because the realised portfolios are
+somewhat explained by the market factors whereas the contrarian portfolios -which
+go against the momentum- are not. Despite of its lower alpha, the contrarian loser
+still displays statistically significant alpha for TSM (t=1.73), but this is not the case
+for RSM.
+     Finally, in Table 5 Panel B, we regress the four sub-portfolio returns on the
+Value and Momentum Everywhere factors. Unsurprisingly, these sub-strategies are
+closely correlated to the movement of the market factor, and both the VAL and MOM
+factors. The realised winner and the contrarian loser show stronger abnormal returns
+compared to the other two subgroups, with alphas being statistically significant at
+the 1% level across all the three strategies.
+     To conclude, we see that trend-following reversal returns are closely related to the
+
+                                             23
+
+
+
+
+               Electronic copy available at: https://ssrn.com/abstract=2971875
+market factors, but has less exposure to the other factors. Some of the trend-following
+reversal returns is not explained by the known factors and generates significant al-
+phas. This is particularly true for the contrarian loser strategy, as it has the lowest
+correlation with the market and also with trend-following factors. Owing to its rel-
+atively low co-movement with the existing factors, it might be particularly useful
+for investors who wish to avoid momentum risks25 and still obtain persistent high
+returns.
+
+6. Concluding Remarks
+
+    This paper studies the time horizon and magnitude of time series reversal as
+well as its relationship with time series continuation in an asset pool consisting of
+various global commodity and financial futures across a time horizon of 30 years.
+By performing multiple trend-following strategies, we observe a pervasive but not
+statistically significant reversal between 12 and 24 months after the trend-following
+signals are generated. The time series reversal period is much shorter than that of
+conventional cross-sectional reversal recorded in the literature.
+    We show that the time series reversal effect varies across different subgroups when
+we decompose the trend-following portfolio into four sub-portfolios, namely realised
+winners, realised losers, contrarian winners, and contrarian losers. Our results show
+that time series momentum and reversal are not linked. Our results are consistent
+with a small but growing body of literature suggesting that momentum and reversal
+are separate phenomena, see, e.g., Cooper et al. (2004), Conrad and Yavuz (2017),
+and Li and Galvani (2018). They contradict the conventional behavioral theories
+such as Barberis et al. (1998), Daniel et al. (1998) and Hong and Stein (1999) which
+focus on explaining the linkage between momentum and reversal.
+    Our findings also suggest that the loser components of the trend-following strate-
+gies (whether realised or not) generate significant post trend-following reversal. The
+sub-portfolio with instruments which are past losers and later generate positive re-
+turns, the contrarian loser subgroup, contributes the most to time series reversal.
+
+ 25
+      See, e.g., Barroso and Santa-Clara (2015) and Daniel and Moskowitz (2016).
+
+                                                24
+
+
+
+
+                  Electronic copy available at: https://ssrn.com/abstract=2971875
+By contrast, the winner sub-portfolios do not show statistically significant reversal
+patterns. Moreover, the contrarian loser strategy also displays a lower volatility and
+lower maximum drawdown than the other three, indicating that it potentially forms
+the basis of an efficient trading strategy.
+    Based on these results, a new type of double-sorted trading strategy is introduced,
+called a trend-following reversal strategy. It removes the part of the traditional trend-
+following strategy that does not produce strong price return continuation/reversal in
+the time series. The realised winners and contrarian losers are the two most signif-
+icant sub-portfolios within trend-following reversal strategies. Moreover, compared
+with the other three sub-portfolios, the contrarian losers show the lowest correlation
+with momentum factors. Future research could focus on the potential of this ap-
+proach to reduce the risk of momentum strategies by partially mitigating the impact
+of momentum crashes.
+
+
+
+
+                                             25
+
+
+
+
+               Electronic copy available at: https://ssrn.com/abstract=2971875
+References
+
+Daniel Andrei and Julien Cujean. Information percolation, momentum and reversal.
+ Journal of Financial Economics, 123(3):617–645, 2017.
+
+Clifford S Asness, Tobias J Moskowitz, and Lasse Heje Pedersen. Value and momen-
+  tum everywhere. The Journal of Finance, 68(3):929–985, 2013.
+
+Nick Baltas and Robert Kosowski. Momentum strategies in futures markets and
+  trend-following funds. Working Paper, Imperial College Business School, 2013.
+
+Nicholas Barberis, Andrei Shleifer, and Robert Vishny. A model of investor senti-
+  ment. Journal of Financial Economics, 49(3):307–343, 1998.
+
+Pedro Barroso and Pedro Santa-Clara. Momentum has its moments. Journal of
+  Financial Economics, 116(1):111–120, 2015.
+
+Sanjeev Bhojraj and Bhaskaran Swaminathan. Macromomentum: returns pre-
+  dictability in international equity indices. The Journal of Business, 79(1):429–451,
+  2006.
+
+Robert J Bianchi, Michael E Drew, and John Hua Fan. Combining momentum with
+  reversal in commodity futures. Journal of Banking & Finance, 59:423–444, 2015.
+
+Jennifer Conrad and M Deniz Yavuz. Momentum and reversal: Does what goes up
+  always come down? Review of Finance, 21(2):555–581, 2017.
+
+Michael J Cooper, Roberto C Gutierrez Jr, and Allaudeen Hameed. Market states
+ and momentum. The Journal of Finance, 59(3):1345–1365, 2004.
+
+Kent Daniel and Tobias J Moskowitz. Momentum crashes. Journal of Financial
+  Economics, 122(2):221–247, 2016.
+
+Kent Daniel, David Hirshleifer, and Avanidhar Subrahmanyam. Investor psychology
+  and security market under-and overreactions. The Journal of Finance, 53(6):1839–
+  1885, 1998.
+
+                                            26
+
+
+
+
+              Electronic copy available at: https://ssrn.com/abstract=2971875
+Werner FM De Bondt and Richard Thaler. Does the stock market overreact? The
+ Journal of Finance, 40(3):793–805, 1985.
+
+Victor DeMiguel, Francisco J Nogales, and Raman Uppal. Stock return serial de-
+  pendence and out-of-sample portfolio performance. Review of Financial Studies,
+  27(4):1031–1073, 2014.
+
+Eugene F Fama. Market efficiency, long-term returns, and behavioral finance. Journal
+  of Financial Economics, 49(3):283–306, 1998.
+
+Eugene F Fama and Kenneth R French. Permanent and temporary components of
+  stock prices. Journal of Political Economy, 96(2):246–273, 1988.
+
+Eugene F Fama and Kenneth R French. Common risk factors in the returns on
+  stocks and bonds. Journal of Financial Economics, 33(1):3–56, 1993.
+
+Eugene F Fama and Kenneth R French. Value versus growth: The international
+  evidence. The Journal of Finance, 53(6):1975–1999, 1998.
+
+Eugene F Fama and Kenneth R French. A five-factor asset pricing model. Journal
+  of Financial Economics, 116(1):1–22, 2015.
+
+Ana-Maria Fuertes, Joëlle Miffre, and Georgios Rallis. Tactical allocation in commod-
+ ity futures markets: Combining momentum and term structure signals. Journal
+ of Banking & Finance, 34(10):2530–2548, 2010.
+
+Thomas J George and Chuan-Yang Hwang. The 52-week high and momentum in-
+ vesting. The Journal of Finance, 59(5):2145–2176, 2004.
+
+Thomas J George and Chuan-yang Hwang. Long-term return reversals: overreaction
+ or taxes? The Journal of Finance, 62(6):2865–2896, 2007.
+
+Athina Georgopoulou and Jiaguo Wang. The trend is your friend: Time-series mo-
+  mentum strategies across equity and commodity markets. Review of Finance, 21
+  (4):1557–1592, 2016.
+
+
+                                            27
+
+
+
+
+              Electronic copy available at: https://ssrn.com/abstract=2971875
+Gary B Gorton, Fumio Hayashi, and K Geert Rouwenhorst. The fundamentals of
+ commodity futures returns. Review of Finance, 17(1):35–105, 2013.
+
+Harrison Hong and Jeremy C Stein. A unified theory of underreaction, momentum
+  trading, and overreaction in asset markets. The Journal of Finance, 54(6):2143–
+  2184, 1999.
+
+Mark C Hutchinson and John J O’Brien.           Time series momentum and
+ macroeconomic risk. Available at SSRN: https://ssrn.com/abstract=2550718 or
+ http://dx.doi.org/10.2139/ssrn.2550718, 2015.
+
+Narasimhan Jegadeesh and Sheridan Titman. Returns to buying winners and selling
+  losers: Implications for stock market efficiency. The Journal of Finance, 48(1):
+  65–91, 1993.
+
+Narasimhan Jegadeesh and Sheridan Titman. Profitability of momentum strategies:
+  An evaluation of alternative explanations. The Journal of Finance, 56(2):699–720,
+  2001.
+
+Bryan T Kelly, Tobias J Moskowitz, and Seth Pruitt. Understanding momentum
+  and reversal. Journal of Financial Economics, 140(3):726–743, 2021.
+
+Abby Y Kim, Yiuman Tse, and John K Wald. Time series momentum and volatility
+ scaling. Journal of Financial Markets, 2016.
+
+Charles Lee and Bhaskaran Swaminathan. Price momentum and trading volume.
+ The Journal of Finance, 55(5):2017–2069, 2000.
+
+Jonathan Lewellen. Momentum and autocorrelation in stock returns. Review of
+  Financial Studies, 15(2):533–564, 2002.
+
+Lifang Li and Valentina Galvani. Market states, sentiment, and momentum in the
+  corporate bond market. Journal of Banking & Finance, 89:249–265, 2018.
+
+
+
+
+                                            28
+
+
+
+
+              Electronic copy available at: https://ssrn.com/abstract=2971875
+Andrew W Lo and A Craig MacKinlay. Stock market prices do not follow random
+ walks: Evidence from a simple specification test. Review of Financial Studies, 1
+ (1):41–66, 1988.
+
+Andrew W Lo and A Craig MacKinlay. When are contrarian profits due to stock
+ market overreaction? Review of Financial Studies, 3(2):175–205, 1990.
+
+Lukas Menkhoff, Lucio Sarno, Maik Schmeling, and Andreas Schrimpf. Currency
+  momentum strategies. Journal of Financial Economics, 106(3):660–684, 2012.
+
+Joëlle Miffre and Georgios Rallis. Momentum strategies in commodity futures mar-
+  kets. Journal of Banking & Finance, 31(6):1863–1886, 2007.
+
+Tobias J Moskowitz, Yao Hua Ooi, and Lasse Heje Pedersen. Time series momentum.
+  Journal of Financial Economics, 104(2):228–250, 2012.
+
+Robert G Newcombe. Interval estimation for the difference between independent
+  proportions: comparison of eleven methods. Statistics in Medicine, 17(8):873–890,
+  1998a.
+
+Robert G Newcombe. Two-sided confidence intervals for the single proportion: com-
+  parison of seven methods. Statistics in Medicine, 17(8):857–872, 1998b.
+
+Whitney K Newey and Kenneth D West. A simple, positive semi-definite, het-
+ eroskedasticity and autocorrelationconsistent covariance matrix. Econometrica,
+ 55:703–708, 1986.
+
+Marco Ottaviani and Peter Norman Sørensen. Price reaction to information with
+ heterogeneous beliefs and wealth effects: Underreaction, momentum, and reversal.
+ American Economic Review, 105(1):1–34, 2015.
+
+Fotis Papailias, Jiadong Liu, and Dimitrios D Thomakos. Return signal momentum.
+  Journal of Banking & Finance, 124:106063, 2021.
+
+K Geert Rouwenhorst. International momentum strategies. The Journal of Finance,
+  53(1):267–284, 1998.
+
+                                            29
+
+
+
+
+              Electronic copy available at: https://ssrn.com/abstract=2971875
+Jacob S Sagi and Mark S Seasholes. Firm-specific attributes and the cross-section of
+  momentum. Journal of Financial Economics, 84(2):389–434, 2007.
+
+Samuel B Thompson. Simple formulas for standard errors that cluster by both firm
+  and time. Journal of Financial Economics, 99(1):1–10, 2011.
+
+Yaqiong Yao. Momentum, contrarian, and the january seasonality. Journal of Bank-
+  ing & Finance, 36(10):2757–2769, 2012.
+
+Guofu Zhou and Yingzi Zhu. An equilibrium model of moving-average predictability
+ and time-series momentum. Unpublished Working Paper, Washington University
+ in St. Louis, 2013.
+
+
+
+
+                                            30
+
+
+
+
+              Electronic copy available at: https://ssrn.com/abstract=2971875
+                                         Table 1: Summary statistics.
+
+
+This table reports the start date, mean, volatility/standard deviation, skewness and kurtosis for the 55 instruments
+from their earliest availability. The arithmetic monthly mean returns and standard deviation are both annualised.
+The detailed data sources are described in Section A of the Online Appendix. As seen in the table, the average
+monthly returns and volatilities vary quite dramatically across different asset classes.
+
+                   Asset         Start Date   Annual Mean      Annual Volatility   Skewness   Kurtosis
+
+                   Commodity futures
+                   Aluminum      1987-06-02      0.026              0.206           0.132       3.867
+                   Brent         1988-06-24      0.100              0.322            0.454      6.156
+                   Cocoa         1970-01-06      0.081              0.327            0.517      3.975
+                   Coffee        1972-08-17      0.091              0.387            1.090      6.338
+                   Copper        1986-04-02      0.082              0.254            0.110      6.607
+                   Corn          1970-01-06      0.064              0.279            0.410      6.213
+                   Cotton        1970-01-06      0.067              0.297           -0.402      7.419
+                   Gas Oil       1989-07-04      0.104              0.331           0.327       4.867
+                   Gold          1975-01-03      0.066              0.196            0.528      6.707
+                   Heating Oil   1980-01-03      0.084              0.356           0.739       8.227
+                   Lean Hogs     1986-04-02      0.073              0.343            0.191      4.519
+                   Live Cattle   1970-01-06      0.057              0.197            0.037      4.078
+                   Natural Gas   1990-04-04      0.165              0.544            0.494      4.044
+                   Nickel        1987-01-06      0.135              0.418            2.531     20.747
+                   Platinum      1984-01-27      0.039              0.229            0.024      7.909
+                   RBOB          1986-08-22      0.130              0.401            0.707      6.006
+                   Silver        1970-01-06      0.104              0.342           1.353      14.729
+                   Soy Meal      1970-01-06      0.088              0.349            1.913     18.949
+                   Soy Oil       1970-01-06      0.074              0.316            0.897      7.382
+                   Soybeans      1970-01-06      0.071              0.291           0.776       9.254
+                   Sugar         1970-01-06      0.123              0.459            1.659      9.671
+                   Wheat         1970-01-06      0.069              0.291            0.592      5.091
+                   WTI           1983-03-31      0.068              0.329            0.422      5.980
+                   Zinc          1989-01-05      0.035              0.244           -0.053      4.887
+                   Currency futures
+                   AUD           1971-01-06      -0.002             0.110           -0.725       7.182
+                   CAD           1971-01-06      -0.003             0.065           -0.289       8.058
+                   EUR           1971-01-06      -0.002             0.111           -0.183       3.821
+                   JPY           1971-01-06       0.022             0.114            0.480       5.175
+                   NZD           1971-01-06      -0.002             0.120           -0.403       9.870
+                   NOK           1971-01-06       0.009             0.104            0.081       4.571
+                   SEK           1971-01-06       0.025             0.110            0.927       7.294
+                   CHF           1971-01-06       0.016             0.124            0.076       4.301
+                   GBP           1971-01-06      -0.005             0.101           -0.078       5.153
+                   Equity index futures
+                   SPI           1970-01-06      0.075              0.193           -0.670     10.241
+                   CAC           1970-01-06      0.079              0.203           -0.114      3.911
+                   DAX           1970-01-06      0.087              0.197           -0.506      5.119
+                   FTSE/MIB      1970-01-06      0.074              0.238            0.409      4.169
+                   TOPIX         1970-01-06      0.066              0.187           -0.172      4.279
+                   AEX           1970-01-06      0.074              0.192           -0.556      5.474
+                   IBEX          1970-01-06      0.070              0.209           -0.092      4.544
+                   FTSE          1970-01-06      0.086              0.197            1.172     17.689
+                   S&P 500       1970-01-06      0.080              0.154           -0.463      4.773
+                   Bond futures
+                   AUS3          1986-01-02      0.011              0.063           -3.391     37.454
+                   AUS10         1986-01-02      0.009              0.048           -4.970     85.085
+                   EURO2         1986-01-02      0.018              0.081            0.213      8.129
+                   EURO5         1986-01-02      0.023              0.073           -0.002      9.478
+                   EURO10        1986-01-02      0.037              0.078            0.235      5.771
+                   EURO30        1986-01-02      0.037              0.124           -0.672     10.224
+                   CA10          1986-01-02      0.023              0.074           -1.347     13.016
+                   JP10          1985-10-22      0.016              0.054           -0.323      8.357
+                   UK10          1982-11-19      0.010              0.091           -1.687     16.211
+                   US2           1986-01-02      0.004              0.028           -0.053      8.363
+                   US5           1986-01-02      0.008              0.047           -0.668      8.046
+                   US10          1982-05-04      0.020              0.074           -0.305      6.311
+                   US30          1977-08-23      0.019              0.118           -0.048      6.306
+
+
+
+
+                                                          31
+
+
+
+
+                    Electronic copy available at: https://ssrn.com/abstract=2971875
+                                                                                                           Table 2: Post TSM and RSM holding period performance (12, 12).
+
+
+                                                                       Reported is the performance of 12 months holding period post trend-following strategies for the 4 sub-portfolios during 13-60 months after the formation
+                                                                       of the signals, i.e. 13-24 months, 25-36 months, 37-48 months and 49-60 months. Decomposition method of the 4 sub-portfolios can be seen in Figure
+                                                                       1. Each subgroup is constructed by evaluating whether the underlying trend-following profit is realised or not under a (j, h) scheme, where j = 12, is
+                                                                       the trend-following look-back period and h = 12 is the trend-following holding period. The post trend-following holding period is equally divided into
+                                                                       4 sub-periods which are shown in different panels. We compute the annualised mean, Newey-West t-statistics (*** p < 0.01; ** p < 0.05; * p < 0.1),
+                                                                       annualised volatility/standard error, Sharpe Ratio and maximum drawdown for each strategy which are detailed in Section G of the Online Appendix.
+                                                                       The performance is evaluated based on a dataset spanning January, 1985 to March 2015.
+
+
+                                                                                                                                      TSM                                                 RSM
+
+                                                                                                               Realised    Realised   Contrarian     Contrarian    Realised    Realised    Contrarian    Contrarian
+                                                                                                               Winner       Loser      Winner          Loser       Winner       Loser       Winner         Loser
+
+                                                                                 Panel A: 13-24 months
+                                                                                 Annualised Mean                0.044        0.042       0.007          0.084        0.040      0.039        -0.002         0.087
+                                                                                 Newey-West t-statistics        1.906*      1.680*       0.163        3.964***       1.612      1.338        0.019        3.702***
+                                                                  32             Annualised Volatility           0.028      0.031        0.042          0.027        0.030      0.030         0.034         0.030
+                                                                                 Sharpe Ratio                   1.535       1.352        0.177          3.139        1.324      1.285        -0.049         2.880
+                                                                                 Maximum Drawdown               0.160        0.150       0.420          0.129        0.188      0.163        0.413          0.118
+                                                                                 Panel B: 25-36 months
+                                                                                 Annualised Mean                 0.009      0.076        0.056          0.057        0.014       0.063       0.052          0.051
+                                                                                 Newey-West t-statistics         0.259     2.511**      2.469**         0.854        0.334     3.463***     2.023**         0.655
+                                                                                 Annualised Volatility           0.030      0.034        0.030          0.041        0.033       0.026       0.032          0.038
+                                                                                 Sharpe Ratio                    0.310      2.235        1.871          1.387        0.430       2.389       1.640          1.328
+                                                                                 Maximum Drawdown                0.265      0.111        0.152          0.301        0.332       0.080       0.163          0.286
+                                                                                 Panel C: 37-48 months
+                                                                                 Annualised Mean                 0.019      0.057        0.055          0.043        0.029      0.037         0.056         0.030
+                                                                                 Newey-West t-statistics         0.585      1.374        0.899          1.254        0.833      0.979         0.911         0.858
+                                                                                 Annualised Volatility           0.030      0.034        0.037          0.033        0.031      0.029         0.041         0.032
+                                                                                 Sharpe Ratio                    0.637      1.686        1.482          1.310        0.947      1.297         1.390         0.939
+                                                                                 Maximum Drawdown                0.255      0.165        0.134          0.203        0.243      0.172         0.178         0.197
+Electronic copy available at: https://ssrn.com/abstract=2971875
+
+
+
+
+                                                                                 Panel D: 49-60 months
+                                                                                 Annualised Mean                 0.036      0.059        0.040          0.041        0.042      0.057        0.043          0.035
+                                                                                 Newey-West t-statistics         0.601      1.375        1.298          1.516        0.673      1.802*       1.840*        1.915*
+                                                                                 Annualised Volatility           0.038      0.033        0.031          0.027        0.038       0.029       0.029         0.026
+                                                                                 Sharpe Ratio                    0.944      1.763        1.296          1.499        1.110       1.937       1.474         1.336
+                                                                                 Maximum Drawdown                0.236      0.112        0.249          0.148        0.215      0.086        0.122          0.154
+                                                                                                               Table 3: Performance of trend-following reversal strategies.
+
+
+                                                                       Reported is the performance of 4 sub-portfolios sorted by both time series continuation and reversal using volatility scaling to determine the weight.
+                                                                       Decomposition method of the 4 sub-portfolios can be seen in Figure 1. The strategy signals are renewed every month and the holding period is 1 month.
+                                                                       Each subgroup is constructed by evaluating whether the underlying trend-following profit is realised or not under a (j, h) scheme, where j = 12, is the
+                                                                       trend-following look-back period and h = 1, 3, 6, 12 denotes the trend-following holding periods shown in different panels. We compute the annualised
+                                                                       mean, Newey-West t-statistics (*** p < 0.01; ** p < 0.05; * p < 0.1), annualised volatility/standard error, Sharpe Ratio and maximum drawdown for
+                                                                       each strategy. The performance is evaluated based on a dataset spanning from January, 1985 to March 2015. The realised winner and contrarian loser
+                                                                       exhibit strong performance with the t-statistics being significant at the 1% level across different (j, h) schemes.
+
+
+                                                                                                                                    TSM                                                 RSM
+
+                                                                                                             Realised    Realised    Contrarian    Contrarian    Realised    Realised    Contrarian    Contrarian
+                                                                                                             Winner       Loser       Winner         Loser       Winner       Loser       Winner         Loser
+
+                                                                                  Panel A: (12,1)
+                                                                                  Annualised Mean              0.218       0.044        0.151         0.098        0.220       0.041        0.141         0.105
+                                                                                  Newey-West t-statistics    5.842***      0.899      4.061***      2.944***     5.510***      0.883      3.709***      2.584***
+                                                                  33              Annualised Volatility        0.200       0.224        0.200         0.211        0.204       0.233        0.209         0.235
+                                                                                  Sharpe Ratio                 1.087       0.195        0.754         0.465        1.080       0.176        0.678         0.444
+                                                                                  Maximum Drawdown             0.294       0.770        0.515         0.458        0.297       0.755        0.528         0.673
+                                                                                  Panel B: (12,3)
+                                                                                  Annualised Mean              0.265      0.074         0.036         0.165        0.262      0.085         0.054         0.155
+                                                                                  Newey-West t-statistics    7.454***     1.780*        1.008       4.019***     7.216***    2.000**        1.344       3.571***
+                                                                                  Annualised Volatility        0.209       0.219        0.190         0.221        0.213      0.227         0.199         0.224
+                                                                                  Sharpe Ratio                 1.269      0.338         0.187         0.749        1.231      0.376         0.272         0.693
+                                                                                  Maximum Drawdown             0.213      0.517         0.614         0.472        0.267      0.530         0.492         0.548
+                                                                                  Panel C: (12,6)
+                                                                                  Annualised Mean              0.177       0.060        0.092         0.150        0.204       0.028        0.104         0.088
+                                                                                  Newey-West t-statistics    4.027***      1.532      2.705***      4.283***     4.781***      0.678      2.632***       2.103**
+                                                                                  Annualised Volatility        0.217       0.221        0.195         0.207        0.225       0.223        0.217         0.216
+                                                                                  Sharpe Ratio                 0.815       0.273        0.473         0.726        0.907       0.124        0.477         0.406
+                                                                                  Maximum Drawdown             0.363       0.558        0.432         0.378        0.448       0.661        0.409         0.527
+Electronic copy available at: https://ssrn.com/abstract=2971875
+
+
+
+
+                                                                                  Panel D: (12,12)
+                                                                                  Annualised Mean              0.193       0.031        0.007         0.207        0.189       0.049       -0.002         0.183
+                                                                                  Newey-West t-statistics    4.969***      0.738        0.151       5.313***     5.063***      1.157       -0.053       4.462***
+                                                                                  Annualised Volatility        0.212       0.230        0.221         0.216        0.211       0.225       0.228          0.229
+                                                                                  Sharpe Ratio                 0.911       0.137        0.034         0.958        0.899       0.220       -0.010         0.799
+                                                                                  Maximum Drawdown             0.365       0.705        0.776         0.332        0.349       0.596        0.791         0.486
+                                                                                                       Table 4: Factor exposure of trend-following reversal strategies (12, 12) I.
+
+
+                                                                       This table reports the factor exposure of different sub-portfolios decomposed from TSM and RSM strategies, namely realised winner, realised loser,
+                                                                       contrarian winner and contrarian loser. Decomposition method of the 4 sub-portfolios can be seen in Figure 1. The regression coefficients are reported
+                                                                       in the first row and t-statistics (*** p < 0.01; ** p < 0.05; * p < 0.1) in the row below. Panel A and B summarise the results of Fama-French three and
+                                                                       five factor models, respectively. Small Minus Big (SMB), High Minus Low (HML), Robust Minus Weak (RMW) and Conservative Minus Aggressive
+                                                                       (CMA) represent size, value, profitability and investment factors, respectively. The regressions are conducted with the monthly returns that span the
+                                                                       period from January, 1985 to March 2015. The alphas of realised winner and contrarian loser are statistically significant at the 1% level in both factor
+                                                                       models.
+
+                                                                                                                             TSM                                                  RSM
+
+                                                                                                     Realised     Realised    Contrarian    Contrarian     Realised    Realised    Contrarian     Contrarian
+                                                                                                     Winner        Loser       Winner         Loser        Winner       Loser       Winner          Loser
+
+                                                                                        Panel A: Fama and French three factors
+                                                                                        Intercept    0.014   -0.001     -0.002                 0.016         0.013       0.001       -0.003          0.014
+                                                                                                  4.514***   -0.303     -0.736               4.676***     4.400***       0.227       -0.868        3.859***
+                                                                                        MSCI         0.485    0.482      0.429                 0.260         0.536       0.414        0.422          0.232
+                                                                  34                              7.008***  6.219***  5.718***               3.447***     7.912***     5.423***     5.425***       2.891***
+                                                                                        SMB         -0.238    0.082     -0.004                 0.002        -0.247       0.161       -0.122          0.013
+                                                                                                   -2.375**   0.731     -0.037                 0.018       -2.527**      1.454       -1.081          0.116
+                                                                                        HML         -0.298    0.230      0.146                -0.012        -0.286       0.256        0.093          0.012
+                                                                                                  -2.781***  1.916*      1.257                -0.100      -2.728***     2.161**       0.769          0.098
+                                                                                        R2           0.156    0.105      0.087                 0.035         0.184       0.089        0.080          0.024
+
+                                                                                        Panel B: Fama and French five factors
+                                                                                        Intercept    0.014   -0.001      -0.001                 0.012         0.013      0.001        -0.001         0.011
+                                                                                                  4.338***   -0.417      -0.170              3.496***      4.164***       0.191       -0.154       2.934***
+                                                                                        MSCI         0.489   0.493        0.368                 0.380         0.546       0.418        0.340         0.329
+                                                                                                  6.598*** 5.962***    4.585***              4.796***      7.525***    5.159***     4.100***       3.860***
+                                                                                        SMB         -0.207    0.014      -0.106                 0.134        -0.203      0.030        -0.195         0.095
+                                                                                                   -1.854*    0.109      -0.874                 1.117       -1.855*       0.248       -1.558         0.739
+                                                                                        HML         -0.279    0.101       0.320                -0.496        -0.275      0.105         0.381        -0.400
+Electronic copy available at: https://ssrn.com/abstract=2971875
+
+
+
+
+                                                                                                   -1.909*    0.620     2.022**              -3.182***      -1.924*      0.660       2.339**       -2.386**
+                                                                                        RMW          0.091   -0.163      -0.232                 0.439         0.131      -0.292       -0.211         0.310
+                                                                                                     0.635   -1.019      -1.490              2.864***         0.931     -1.864*       -1.314        1.881*
+                                                                                        CMA         -0.114   0.418       -0.292                 0.731        -0.108      0.518        -0.549         0.658
+                                                                                                    -0.559  1.837*       -1.320               3.350***       -0.541    2.321**      -2.408**       2.807***
+                                                                                        R2           0.163    0.120       0.096                 0.083         0.192      0.116         0.097         0.053
+                                                                                                      Table 5: Factor exposure of trend-following reversal strategies (12, 12) II.
+
+
+                                                                       This table reports the factor exposure of the four sub-portfolios decomposed from TSM and RSM strategies, namely realised winner, realised loser,
+                                                                       contrarian winner and contrarian loser. Decomposition method of the 4 sub-portfolios can be seen in Figure 1. The regression coefficients are reported
+                                                                       in the first row and t-statistics (*** p < 0.01; ** p < 0.05; * p < 0.1) in the row below. Panel A and B summarise the results of global asset class
+                                                                       factor model and value and Momentum Everywhere factor model, respectively. The regressions are conducted with the monthly returns that span the
+                                                                       period from January, 1985 to March 2015. The alphas of the realised winner and contrarian loser are strongly significant in the Value and Momentum
+                                                                       Everywhere model, whereas they are mostly insignificant in the global asset class model.
+
+
+                                                                                                                            TSM                                                   RSM
+
+                                                                                                    Realised     Realised    Contrarian    Contrarian     Realised    Realised     Contrarian    Contrarian
+                                                                                                    Winner        Loser       Winner         Loser        Winner       Loser        Winner         Loser
+
+                                                                                       Panel A: Global asset class factors
+                                                                                       Intercept   0.002      -0.005       -0.007             0.006         0.001      -0.003        -0.010         0.004
+                                                                                                   0.562      -1.452     -2.087**            1.729*         0.429      -0.676       -2.605**        1.147
+                                                                                       MSCI        0.359      0.385         0.293             0.141         0.412       0.354         0.283         0.139
+                                                                  35                             5.405***   4.807***     3.825***            1.892*       6.332***    4.412***      3.575***       1.715*
+                                                                                       GSCI        0.208       0.234        0.224             0.142         0.188       0.182         0.227         0.093
+                                                                                                 4.122***   3.842***     3.859***           2.503**       3.803***    2.990***      3.780***        1.509
+                                                                                       BOND        1.962      0.817        0.922              1.711         1.942       0.645         1.170         1.694
+                                                                                                 7.971***   2.753***     3.255***           6.180***      8.055***    2.173**       4.000***      5.656***
+                                                                                       USDI       -0.131       0.065       -0.146            -0.172        -0.141       0.126        -0.100        -0.111
+                                                                                                  -1.083       0.446       -1.051            -1.266        -1.190       0.865        -0.700        -0.754
+                                                                                       R2          0.306       0.147        0.155             0.159         0.328       0.106         0.153         0.120
+
+                                                                                       Panel B: Value and Momentum Everywhere factors
+                                                                                       Intercept    0.012     0.001    0.004     0.010                      0.011        0.002         0.003        0.008
+                                                                                                  3.950***    0.276     1.123  3.092***                   3.810***       0.705         0.796       2.270**
+                                                                                       MSCI         0.478     0.480     0.393    0.279                      0.527        0.415         0.382        0.253
+                                                                                                  7.505***  6.638*** 5.639***  3.966***                   8.526***     5.693***      5.235***     3.361***
+Electronic copy available at: https://ssrn.com/abstract=2971875
+
+
+
+
+                                                                                       VAL         -0.882     0.792    -0.763    0.703                     -0.876        0.707        -0.735        0.886
+                                                                                                 -3.484***  2.758*** -2.757*** 2.515***                  -3.566***     2.443***     -2.535***     2.958***
+                                                                                       MOM          0.948    -0.957    -1.633    1.573                      1.000       -0.745        -1.574        1.584
+                                                                                                 4.273***  -3.805*** -6.733*** 6.423***                  4.650***     -2.937***     -6.201***     6.039***
+                                                                                       R2           0.263     0.199     0.190    0.139                      0.301        0.148         0.167        0.117
+                                                                  36
+
+
+
+
+                                                                                                             Figure 1: Decomposition of trend-following strategies.
+
+                                                                       This figure illustrates how the four sub-portfolios of trend-following strategies: realised winner, realised loser, contrarian winner
+                                                                       and contrarian loser are constructed. Ranking period 1 refers to the conventional trend-following look-back period j. Ranking
+Electronic copy available at: https://ssrn.com/abstract=2971875
+
+
+
+
+                                                                       period 2 is the trend-following holding period, which examines whether these winner/loser signals generated from ranking period
+                                                                       1 are realised or not.
+                   Panel A                       Single Month Return                                                                        Single Month Return Sign
+
+                                                                                                                   3
+
+                   4
+                                                                                                                   2
+
+                   2                                                                                               1
+
+
+
+
+     t−Statistic                                                                                     t−Statistic
+                   0                                                                                               0
+
+
+                   −2                                                                                              −1
+
+
+                                                                                                                   −2
+                   −4
+
+                                                                                                                   −3
+                   −6
+
+
+                        1   4   7 10   14   18   22    26   30   34   38   42   46   50   54   58                       1   4   7 10   14   18   22   26   30   34   38   42   46   50   54   58
+
+                                                        Month lag                                                                                      Month lag
+
+
+
+                   Panel B                            Period Return                                                                              Period Mean sign
+
+
+                   2                                                                                               1
+
+                   1
+                                                                                                                   0
+                   0
+
+
+
+     t−Statistic                                                                                     t−Statistic
+                                                                                                                   −1
+                   −1
+
+
+                   −2
+                                                                                                                   −2
+
+                   −3
+                                                                                                                   −3
+                   −4
+
+
+
+                        1   4   7 10   14   18   22    26   30   34   38   42   46   50   54   58                       1   4   7 10   14   18   22   26   30   34   38   42   46   50   54   58
+
+                                                        Month lag                                                                                      Month lag
+
+
+
+                    Panel C                            TSM Signal                                                                                     RSM Signal
+
+                                                                                                                   2
+                   1
+
+                                                                                                                   1
+                   0
+
+
+                                                                                                                   0
+
+     t−Statistic                                                                                     t−Statistic
+                   −1
+
+
+                   −2                                                                                              −1
+
+
+                   −3
+                                                                                                                   −2
+
+                   −4
+                                                                                                                   −3
+
+                        1   4   7 10   14   18   22    26   30   34   38   42   46   50   54   58                       1   4   7 10   14   18   22   26   30   34   38   42   46   50   54   58
+
+                                                        Month lag                                                                                      Month lag
+
+
+
+
+                            Figure 2: Time series predictability of 12 months TSM and RSM signals.
+
+Reporting the t-statistics of βh for lags from h = 1 to h = 60 based on three sets of panel regressions across all
+assets. In Panel A, we regress the volatility-scaled return rts /σt−1
+                                                                  s                                   s
+                                                                      on lagged signal month return rt−h     s
+                                                                                                          /σt−h−1   and
+                              s
+lagged sign of return, sign(rt−h ), as seen in Equation 7 and 8, respectively. Panel B reports the regression results by
+using i) 12 months period return P Rt−h−11,t−h and ii) 12 months mean return sign Pt−h−11,t−h as the explanatory
+                                                              T SM
+variables. In Panel C, the TSM and RSM signals, namely St−h−11,t−h              RSM
+                                                                           and St−h−11,t−h , are used as the regressors.
+The t-statistics are calculated based on the robust standard errors of Thompson (2011).
+
+
+
+                                                                                                    37
+
+
+
+
+                                       Electronic copy available at: https://ssrn.com/abstract=2971875
+                                                                  TSM
+
+                         0.12
+
+
+                         0.10
+
+
+                         0.08
+
+
+
+          Mean Returns
+                         0.06
+
+
+                         0.04
+
+
+                         0.02
+
+
+                         0.00
+
+                                     1    2    3    6    9      12    18       24   30   36   48   60
+
+                                                             Holding Periods
+
+
+
+                                                                 RSM
+
+                         0.12
+
+
+                         0.10
+
+
+                         0.08
+
+
+
+          Mean Returns
+                         0.06
+
+
+                         0.04
+
+
+                         0.02
+
+
+                         0.00
+
+                                     1    2    3    6    9      12    18       24   30   36   48   60
+
+                                                             Holding Periods
+
+
+                                     Figure 3: Return decays of trend-following strategies.
+
+Reported are the annualised mean returns of TSM and RSM strategies with different holding periods
+h(1,2,3,6,9,12,18,24,30,36,48,60 months). The strategies are performed using an asset pool with 55
+futures from January, 1985 to March, 2015. The trend-following profit declines as the holding period
+increases. The decays stop at about holding period of 24 months and keep constant afterwards.
+
+
+
+
+                                                                38
+
+
+
+
+                                Electronic copy available at: https://ssrn.com/abstract=2971875
+                                                                         TSM
+
+
+
+                      0.04
+
+
+
+
+       Mean Returns
+                      0.00
+
+
+
+
+                      −0.04
+
+
+
+
+                      −0.08
+                                         2   4   6    8   10   13   16    19    22    25   28    31   34
+
+                                                                    Lagged Months
+
+
+
+                                                                         RSM
+
+
+
+
+                      0.00 0.02 0.04
+
+
+
+
+       Mean Returns
+                      −0.04
+
+
+
+
+                      −0.08
+                                         2   4   6    8   10   13   16    19    22    25   28    31   34
+
+                                                                    Lagged Months
+
+
+                                                     Figure 4: Timing of time series reversal.
+
+Reported are the annualised mean returns of the contrarian TSM and RSM strategies, which is
+short the assets that have a buy signal and long the assets that have a sell signal. Each contrarian
+portfolio is hold for one month with different time lags from h = 2 to h = 36. The strategies are
+performed using an asset pool with 55 futures from January, 1985 to March, 2015. The contrarian
+profit mainly appears during 12-24 months after the trend-folling signal is formed.
+
+
+
+                                                                         39
+
+
+
+
+                                       Electronic copy available at: https://ssrn.com/abstract=2971875
+                                                                                                                                                             (12,1)            Realised Winner     Realised Loser                                     Contrarian Winner     Contrarian Loser            (12,3)
+
+
+                                                                                                                  0.70                                                                                                                              0.70
+
+
+                                                                                                                  0.65                                                                                                                              0.65
+
+
+                                                                                                                  0.60                                                                                                                              0.60
+
+
+                                                                                                                  0.55                                                                                                                              0.55
+                                                                                  Probability of Positive signs                                                                                                     Probability of Positive signs
+
+
+
+                                                                                                                  0.50                                                                                                                              0.50
+
+
+                                                                                                                         TSM.RW   TSM.RL   TSM.CW   TSM.CL            RSM.RW    RSM.RL    RSM.CW   RSM.CL                                                        TSM.RW   TSM.RL     TSM.CW    TSM.CL             RSM.RW   RSM.RL   RSM.CW   RSM.CL
+
+
+
+                                                                                                                                                             (12,6)                                                                                                                                     (12,12)
+
+
+                                                                                                                  0.70                                                                                                                              0.70
+
+                                                                  40                                              0.65                                                                                                                              0.65
+
+
+                                                                                                                  0.60                                                                                                                              0.60
+
+
+                                                                                                                  0.55                                                                                                                              0.55
+                                                                                  Probability of Positive signs                                                                                                     Probability of Positive signs
+
+
+
+                                                                                                                  0.50                                                                                                                              0.50
+
+
+                                                                                                                         TSM.RW   TSM.RL   TSM.CW   TSM.CL            RSM.RW    RSM.RL    RSM.CW   RSM.CL                                                        TSM.RW   TSM.RL     TSM.CW    TSM.CL             RSM.RW   RSM.RL   RSM.CW   RSM.CL
+
+
+
+
+                                                                                                                         Figure 5: Sign analysis of post TSM and RSM holding period performance (month 13-24).
+Electronic copy available at: https://ssrn.com/abstract=2971875
+
+
+
+
+                                                                       Reported figure shows the probability of positive signs of the realised winner (RW), realised loser (RL), contrarian winner (CW), and contrarian loser
+                                                                       (CL) sub-portfolios during the post holding period (month 13-24). Decomposition method of the 4 sub-portfolios can be seen in Figure 1. The baseline,
+                                                                       TSM and RSM strategies, are performed using an asset pool with 55 futures from January, 1985 to March, 2015. Different panels represent different
+                                                                       (j, h) schemes in constructing trend-following strategies, where j is the 12-month look-back period and h is the holding period ranging from month
+                                                                       1–12. The horizontal line denotes the unconditional average of the entire sample.
+                                                  TSM
+                                                  TSM Realised Winner
+                                     100
+
+
+
+
+           Growth of $1 log scaled
+                                                  TSM Contrarian Loser
+
+
+
+
+                                     10
+
+
+
+
+                                     1
+
+                                           1985   1990       1995         2000       2005   2010   2015
+
+                                                                              Date
+                                                  RSM
+                                                  RSM Realised Winner
+                                     100
+
+
+
+
+           Growth of $1 log scaled
+                                                  RSM Contrarian Loser
+
+
+
+
+                                     10
+
+
+
+
+                                     1
+
+                                           1985   1990       1995         2000       2005   2010   2015
+
+                                                                              Date
+
+       Figure 6: Cumulative returns of different (12, 12) trend-following reversal strategies.
+
+Plotted are the cumulative returns of trend-following reversal realised winner and contrarian loser
+strategies compared to their corresponding trend-following strategies (TSM and RSM) using (12, 12)
+scheme. The cumulative returns are calculated as shown in Section G of the Online Appendix. The
+strategies are performed using an asset pool with 55 futures from January, 1985 to March, 2015.
+Logarithmic scaling is applied to the y-axes, i.e. growth of $1. As shown in both panels, the realised
+winner and contrarian loser substantially outperform their baseline strategies.
+
+
+
+
+                                                                         41
+
+
+
+
+                                      Electronic copy available at: https://ssrn.com/abstract=2971875
+                                                                                                             Realised Winner   Realised Loser   Contrarian Winner   Contrarian Loser
+                                                                              1.0
+
+
+
+
+                                                                              0.8
+
+
+
+
+                                                                              0.6
+
+
+
+
+                                                                              0.4
+
+
+
+                                                                  42
+                                                                              0.2
+
+
+
+
+                                                                              0.0
+                                                                                         Aluminum
+                                                                                              Brent
+                                                                                            Cocoa
+                                                                                            Coffee
+                                                                                           Copper
+                                                                                              Corn
+                                                                                            Cotton
+                                                                                           Gas.Oil
+                                                                                               Gold
+                                                                                        Heating.Oil
+                                                                                        Lean.Hogs
+                                                                                        Live.Cattle
+                                                                                       Natural.Gas
+                                                                                             Nickel
+                                                                                          Platinum
+                                                                                             RBOB
+                                                                                             Silver
+                                                                                         Soy.Meal
+                                                                                            Soy.Oil
+                                                                                         Soybeans
+                                                                                             Sugar
+                                                                                            Wheat
+                                                                                               WTI
+                                                                                               Zinc
+                                                                                               AUD
+                                                                                               CAD
+                                                                                               EUR
+                                                                                               JPY
+                                                                                               NZD
+                                                                                              NOK
+                                                                                               SEK
+                                                                                               CHF
+                                                                                               GBP
+                                                                                                SPI
+                                                                                               CAC
+                                                                                               DAX
+                                                                                        FTSE.MIB
+                                                                                            TOPIX
+                                                                                               AEX
+                                                                                              IBEX
+                                                                                             FTSE
+                                                                                                S.P
+                                                                                             AUS3
+                                                                                            AUS10
+                                                                                           EURO2
+                                                                                           EURO5
+                                                                                          EURO10
+                                                                                          EURO30
+                                                                                             CA10
+                                                                                              JP10
+                                                                                             UK10
+                                                                                               US2
+                                                                                               US5
+                                                                                             US10
+                                                                                             US30
+
+
+                                                                                     Figure 7: Proportions of TSM trend-following reversal signals for individual instruments (12, 12).
+Electronic copy available at: https://ssrn.com/abstract=2971875
+
+
+
+
+                                                                       This bar chart reports the aggregated frequency for each of the individual instruments to be assigned to the 4 sub-portfolios
+                                                                       under a TSM strategy using (12, 12) scheme. Decomposition method of the 4 sub-portfolios can be seen in Figure 1. The
+                                                                       frequency is aggregated across the entire sample period ranging from January, 1985 to March, 2015, based on the portfolio
+                                                                       comprised of a total of 55 futures.
+
