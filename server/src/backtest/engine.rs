@@ -11,7 +11,9 @@ use crate::{
     strategies::{
         StrategyEnvironment,
         idk::{
-            night_drift::NightDrift, night_drift_2::NightDrift2, noise_momentum::NoiseMomentum,
+            hourly_delta_reversal_es::HourlyDeltaReversalEs,
+            hourly_delta_reversal_nq::HourlyDeltaReversalNq, night_drift::NightDrift,
+            night_drift_2::NightDrift2, noise_momentum::NoiseMomentum,
             noise_momentum_2::NoiseMomentum2,
         },
     },
@@ -39,6 +41,12 @@ fn execute_with_sizing(
     let mut engine = prepared.engine.clone();
     engine.sizing = sizing;
     let result = match (request.strategy_environment, request.strategy.as_str()) {
+        (StrategyEnvironment::Idk, "Hourly Delta Reversal NQ") => {
+            run_engine(&prepared.bars, HourlyDeltaReversalNq::default(), engine)
+        }
+        (StrategyEnvironment::Idk, "Hourly Delta Reversal ES") => {
+            run_engine(&prepared.bars, HourlyDeltaReversalEs::default(), engine)
+        }
         (StrategyEnvironment::Idk, "Night Drift") => {
             run_engine(&prepared.bars, NightDrift::default(), engine)
         }
@@ -506,6 +514,8 @@ mod tests {
             low: close,
             close,
             volume: 1.0,
+            volume_delta: 0.0,
+            depth_events: 0,
             vix: 0.0,
         }
     }

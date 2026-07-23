@@ -27,6 +27,16 @@ pub struct StrategyDefinition {
 
 const IDK_STRATEGIES: &[StrategyDefinition] = &[
     StrategyDefinition {
+        id: "hourly_delta_reversal_nq",
+        name: "Hourly Delta Reversal NQ",
+        preferred_data: PreferredData::OrderFlow,
+    },
+    StrategyDefinition {
+        id: "hourly_delta_reversal_es",
+        name: "Hourly Delta Reversal ES",
+        preferred_data: PreferredData::OrderFlow,
+    },
+    StrategyDefinition {
         id: "night_drift",
         name: "Night Drift",
         preferred_data: PreferredData::Ohlcv,
@@ -74,11 +84,14 @@ mod tests {
     #[test]
     fn idk_exposes_registered_strategies() {
         let strategies = for_environment("idk");
-        assert_eq!(strategies.len(), 4);
-        assert_eq!(strategies[0].id, "night_drift");
-        assert_eq!(strategies[0].name, "Night Drift");
-        assert_eq!(strategies[1].id, "night_drift_2");
-        assert_eq!(strategies[2].id, "noise_momentum");
-        assert_eq!(strategies[3].id, "noise_momentum_2");
+        assert_eq!(strategies.len(), 6);
+        assert_eq!(strategies[0].id, "hourly_delta_reversal_nq");
+        assert_eq!(strategies[0].name, "Hourly Delta Reversal NQ");
+        assert_eq!(strategies[1].id, "hourly_delta_reversal_es");
+        assert_eq!(strategies[1].name, "Hourly Delta Reversal ES");
+        assert_eq!(strategies[2].id, "night_drift");
+        assert_eq!(strategies[3].id, "night_drift_2");
+        assert_eq!(strategies[4].id, "noise_momentum");
+        assert_eq!(strategies[5].id, "noise_momentum_2");
     }
 }

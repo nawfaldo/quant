@@ -305,7 +305,13 @@ fn source_table(source: &crate::database::CombineSource) -> Option<String> {
         _ => return None,
     };
     let timeframe = match source.strategy.as_str() {
-        "NIGHT_DRIFT" | "NIGHT_DRIFT_2" | "EU_OPEN" | "NOISE_MOMENTUM" | "NOISE_MOMENTUM_2" => "1m",
+        "HOURLY_DELTA_REVERSAL_NQ"
+        | "HOURLY_DELTA_REVERSAL_ES"
+        | "NIGHT_DRIFT"
+        | "NIGHT_DRIFT_2"
+        | "EU_OPEN"
+        | "NOISE_MOMENTUM"
+        | "NOISE_MOMENTUM_2" => "1m",
         "INTRADAY_MOM" | "ZARA_MOMENTUM" => "30m",
         "BUY_HOLD" => "1d",
         _ => return None,

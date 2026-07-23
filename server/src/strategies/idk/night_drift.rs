@@ -233,6 +233,8 @@ mod tests {
             low,
             close,
             volume,
+            volume_delta: 0.0,
+            depth_events: 0,
             vix: 20.0,
         }
     }

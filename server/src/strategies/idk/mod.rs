@@ -1,3 +1,5 @@
+pub mod hourly_delta_reversal_es;
+pub mod hourly_delta_reversal_nq;
 pub mod night_drift;
 pub mod night_drift_2;
 pub mod noise_momentum;
@@ -14,6 +16,7 @@ pub enum PreferredData {
     Ohlcv,
     Bookmap,
     Combined,
+    OrderFlow,
 }
 
 /// Returns the preferred source for an IDK strategy's historical backtest
@@ -24,6 +27,7 @@ pub fn preferred_data(strategy: &str) -> Option<PreferredData> {
         "Night Drift 2" => Some(PreferredData::Ohlcv),
         "Noise Momentum" => Some(PreferredData::Ohlcv),
         "Noise Momentum 2" => Some(PreferredData::Ohlcv),
+        "Hourly Delta Reversal NQ" | "Hourly Delta Reversal ES" => Some(PreferredData::OrderFlow),
         _ => None,
     }
 }

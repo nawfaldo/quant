@@ -32,14 +32,30 @@ pub async fn prepare(
     costs: EnvironmentCosts,
 ) -> Result<PreparedRun, ApiError> {
     let symbol = request.symbol.to_ascii_lowercase();
-    if symbol != "nq" {
+    if !matches!(symbol.as_str(), "nq" | "es") {
         return Err(ApiError::BadRequest("unknown symbol".into()));
     }
     if !matches!(
         request.strategy.as_str(),
-        "Night Drift" | "Night Drift 2" | "Noise Momentum" | "Noise Momentum 2"
+        "Hourly Delta Reversal NQ"
+            | "Hourly Delta Reversal ES"
+            | "Night Drift"
+            | "Night Drift 2"
+            | "Noise Momentum"
+            | "Noise Momentum 2"
     ) {
         return Err(ApiError::BadRequest("unknown strategy".into()));
+    }
+    let expected_symbol = match request.strategy.as_str() {
+        "Hourly Delta Reversal ES" => "es",
+        _ => "nq",
+    };
+    if symbol != expected_symbol {
+        return Err(ApiError::BadRequest(format!(
+            "{} only supports {}",
+            request.strategy,
+            expected_symbol.to_ascii_uppercase()
+        )));
     }
     if !valid_date(&request.from_date) || !valid_date(&request.to_date) {
         return Err(ApiError::BadRequest("invalid date range".into()));
@@ -119,7 +135,137 @@ async fn load_bars(
             }
             Ok(merged.into_values().collect())
         }
+        PreferredData::OrderFlow => {
+            let mut bars = load_order_flow_bars(questdb, symbol, from, to).await?;
+            attach_hourly_vix(questdb, to, &mut bars).await?;
+            Ok(bars)
+        }
     }
+}
+
+async fn load_order_flow_bars(
+    questdb: &QuestDb,
+    symbol: &str,
+    from: &str,
+    to: &str,
+) -> Result<Vec<Bar>, ApiError> {
+    let tick_sql = format!(
+        concat!(
+            "SELECT cast(timestamp as long) ts,first(price) open,max(price) high,",
+            "min(price) low,last(price) close,sum(size) volume,",
+            "sum(CASE WHEN side = 'BUY' THEN size WHEN side = 'SELL' THEN -size ELSE 0 END) volume_delta ",
+            "FROM bm_{symbol}_ticks WHERE size > 0 ",
+            "AND timestamp >= '{from}' AND timestamp < dateadd('d',1,'{to}') ",
+            "SAMPLE BY 1m FILL(NONE) ALIGN TO CALENDAR",
+        ),
+        symbol = symbol,
+        from = from,
+        to = to,
+    );
+    let depth_sql = format!(
+        concat!(
+            "SELECT cast(timestamp as long) ts,count() depth_events ",
+            "FROM bm_{symbol}_depth WHERE timestamp >= '{from}' ",
+            "AND timestamp < dateadd('d',1,'{to}') ",
+            "SAMPLE BY 1m FILL(NONE) ALIGN TO CALENDAR",
+        ),
+        symbol = symbol,
+        from = from,
+        to = to,
+    );
+
+    let depth = questdb
+        .csv(&depth_sql)
+        .await?
+        .into_iter()
+        .map(|row| {
+            let timestamp = row
+                .get(0)
+                .ok_or_else(|| ApiError::QuestDb("missing Bookmap depth timestamp".into()))?
+                .parse::<i64>()
+                .map_err(|_| ApiError::QuestDb("invalid Bookmap depth timestamp".into()))?
+                / 1_000_000_000;
+            let count = row
+                .get(1)
+                .ok_or_else(|| ApiError::QuestDb("missing Bookmap depth count".into()))?
+                .parse::<u64>()
+                .map_err(|_| ApiError::QuestDb("invalid Bookmap depth count".into()))?;
+            Ok((timestamp, count))
+        })
+        .collect::<Result<BTreeMap<_, _>, ApiError>>()?;
+
+    questdb
+        .csv(&tick_sql)
+        .await?
+        .into_iter()
+        .map(|row| order_flow_bar_from_csv(&row, &depth))
+        .collect()
+}
+
+fn order_flow_bar_from_csv(
+    row: &csv::StringRecord,
+    depth: &BTreeMap<i64, u64>,
+) -> Result<Bar, ApiError> {
+    let field = |index: usize| {
+        row.get(index)
+            .ok_or_else(|| ApiError::QuestDb("missing Bookmap order-flow column".into()))
+    };
+    let number = |index: usize| -> Result<f64, ApiError> {
+        field(index)?
+            .parse()
+            .map_err(|_| ApiError::QuestDb(format!("invalid order-flow value in column {index}")))
+    };
+    let ts = field(0)?
+        .parse::<i64>()
+        .map_err(|_| ApiError::QuestDb("invalid Bookmap order-flow timestamp".into()))?
+        / 1_000_000_000;
+    Ok(Bar {
+        ts,
+        open: number(1)?,
+        high: number(2)?,
+        low: number(3)?,
+        close: number(4)?,
+        volume: number(5)?,
+        volume_delta: number(6)?,
+        depth_events: depth.get(&ts).copied().unwrap_or(0),
+        vix: 0.0,
+    })
+}
+
+async fn attach_hourly_vix(questdb: &QuestDb, to: &str, bars: &mut [Bar]) -> Result<(), ApiError> {
+    let sql = format!(
+        "SELECT cast(timestamp as long) ts,close FROM vix_1h \
+         WHERE timestamp < dateadd('d',1,'{to}') ORDER BY timestamp"
+    );
+    let rows = questdb.csv(&sql).await?;
+    let mut values = Vec::with_capacity(rows.len());
+    for row in rows {
+        let timestamp = row
+            .get(0)
+            .ok_or_else(|| ApiError::QuestDb("missing hourly VIX timestamp".into()))?
+            .parse::<i64>()
+            .map_err(|_| ApiError::QuestDb("invalid hourly VIX timestamp".into()))?
+            / 1_000_000;
+        let close = row
+            .get(1)
+            .ok_or_else(|| ApiError::QuestDb("missing hourly VIX close".into()))?
+            .parse::<f64>()
+            .map_err(|_| ApiError::QuestDb("invalid hourly VIX close".into()))?;
+        values.push((timestamp, close));
+    }
+
+    let mut value_index = 0;
+    for bar in bars {
+        while value_index + 1 < values.len() && values[value_index + 1].0 <= bar.ts {
+            value_index += 1;
+        }
+        bar.vix = values
+            .get(value_index)
+            .filter(|(timestamp, _)| *timestamp <= bar.ts)
+            .map(|(_, close)| *close)
+            .unwrap_or(0.0);
+    }
+    Ok(())
 }
 
 async fn load_ohlcv_bars(
@@ -247,6 +393,8 @@ fn bookmap_bar_from_csv(row: &csv::StringRecord) -> Result<Bar, ApiError> {
         low: number(3)?,
         close: number(4)?,
         volume: number(5)?,
+        volume_delta: 0.0,
+        depth_events: 0,
         vix: 0.0,
     })
 }
@@ -272,6 +420,8 @@ pub(crate) fn backtest_bar_from_csv(row: &csv::StringRecord) -> Result<Bar, ApiE
         low: number(4)?,
         close: number(5)?,
         volume: number(6)?,
+        volume_delta: 0.0,
+        depth_events: 0,
         vix: number(7)?,
     })
 }

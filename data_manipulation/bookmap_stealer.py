@@ -11,14 +11,19 @@ Author: Auto-generated for quant/steal project
 """
 
 import bookmap as bm
+import json
 import os
+import queue
 import re
+import tempfile
 import time
 import traceback
 import threading
-from datetime import datetime, timezone, timedelta
+import uuid
+from datetime import datetime, timezone
+from pathlib import Path
 from zoneinfo import ZoneInfo
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 from collections import defaultdict
 from questdb.ingress import Sender, TimestampNanos
 
@@ -31,33 +36,53 @@ except ImportError:
 
 def get_ny_timestamp_ns() -> int:
     try:
-        # Get current time in New York
-        ny_dt = datetime.now(ZoneInfo("America/New_York"))
-        # Convert to a naive datetime representing the wall-clock time in New York
-        naive_ny = ny_dt.replace(tzinfo=None)
-        # Convert that naive datetime to a timestamp as if it were in UTC
-        return int(naive_ny.replace(tzinfo=timezone.utc).timestamp() * 1_000_000_000)
+        # Preserve the repository's New York wall-clock-as-UTC convention while
+        # retaining the nanoseconds from time.time_ns(). datetime.timestamp()
+        # converts through a float and loses precision at current epoch values.
+        utc_ns = time.time_ns()
+        offset = datetime.now(ZoneInfo("America/New_York")).utcoffset()
+        if offset is None:
+            raise RuntimeError("New York UTC offset is unavailable")
+        return utc_ns + int(offset.total_seconds()) * 1_000_000_000
     except Exception:
-        # Fallback to manual offset calculation if ZoneInfo is not available
+        # Windows Python installations may not include the IANA timezone
+        # database. Apply the current US DST transition rules in UTC without
+        # converting the nanosecond clock through a float.
         utc_now = datetime.now(timezone.utc)
-        is_dst = 3 < utc_now.month < 11
-        if utc_now.month == 3:
-            dst_start = 8 + (6 - datetime(utc_now.year, 3, 1).weekday()) % 7
-            is_dst = utc_now.day >= dst_start
-        elif utc_now.month == 11:
-            dst_end = 1 + (6 - datetime(utc_now.year, 11, 1).weekday()) % 7
-            is_dst = utc_now.day < dst_end
-            
+        march_first = datetime(utc_now.year, 3, 1, tzinfo=timezone.utc)
+        november_first = datetime(utc_now.year, 11, 1, tzinfo=timezone.utc)
+        second_sunday_march = 8 + (6 - march_first.weekday()) % 7
+        first_sunday_november = 1 + (6 - november_first.weekday()) % 7
+        dst_start = datetime(
+            utc_now.year, 3, second_sunday_march, 7, tzinfo=timezone.utc
+        )
+        dst_end = datetime(
+            utc_now.year, 11, first_sunday_november, 6, tzinfo=timezone.utc
+        )
+        is_dst = dst_start <= utc_now < dst_end
         offset_hours = -4 if is_dst else -5
-        ny_dt = utc_now + timedelta(hours=offset_hours)
-        return int(ny_dt.replace(tzinfo=timezone.utc).timestamp() * 1_000_000_000)
+        return time.time_ns() + offset_hours * 3_600_000_000_000
 
 # ============================================================================
 # CONFIGURATION
 # ============================================================================
 
 # QuestDB connection string (ILP over HTTP)
-QUESTDB_CONF = "http::addr=localhost:9000;"
+QUESTDB_CONF = os.getenv("QUESTDB_CONF", "http::addr=localhost:9000;")
+COLLECTOR_RUN_ID = uuid.uuid4().hex
+SCHEMA_VERSION = 2
+STORE_ORDER_IDS = os.getenv("BOOKMAP_STORE_ORDER_IDS", "0") == "1"
+ROW_QUEUE_SIZE = max(1, int(os.getenv("BOOKMAP_ROW_QUEUE_SIZE", "250000")))
+SPOOL_PATH = Path(
+    os.getenv(
+        "BOOKMAP_SPOOL_PATH",
+        str(
+            Path(os.getenv("LOCALAPPDATA", tempfile.gettempdir()))
+            / "quant"
+            / "bookmap_spool.jsonl"
+        ),
+    )
+)
 
 # Global state
 instruments: Dict[str, Dict[str, Any]] = {}
@@ -65,8 +90,14 @@ volume_delta: Dict[str, Dict[str, float]] = defaultdict(lambda: {"buy_vol": 0.0,
 alias_to_symbol: Dict[str, str] = {}
 event_counts: Dict[str, int] = defaultdict(int)
 depth_sequence: Dict[str, int] = defaultdict(int)
-bids_book: Dict[str, Dict[float, float]] = defaultdict(dict)
-asks_book: Dict[str, Dict[float, float]] = defaultdict(dict)
+trade_sequence: Dict[str, int] = defaultdict(int)
+subscription_generation: Dict[str, int] = defaultdict(int)
+stream_ids: Dict[str, str] = {}
+bids_book: Dict[str, Dict[int, float]] = defaultdict(dict)
+asks_book: Dict[str, Dict[int, float]] = defaultdict(dict)
+best_bid_level: Dict[str, int] = {}
+best_ask_level: Dict[str, int] = {}
+book_locks: Dict[str, threading.Lock] = defaultdict(threading.Lock)
 
 # Ingestion caches (speeds up on_trade callback by avoiding dict/string operations)
 pips_cache: Dict[str, float] = {}
@@ -78,7 +109,11 @@ depth_table_name_cache: Dict[str, str] = {}
 sender: Optional[Sender] = None
 pending_rows = 0
 sender_lock = threading.Lock()
+spool_lock = threading.Lock()
 running = True
+Row = Tuple[str, Dict[str, str], Dict[str, Any], int]
+row_queue: "queue.Queue[Row]" = queue.Queue(maxsize=ROW_QUEUE_SIZE)
+health_counts: Dict[str, int] = defaultdict(int)
 
 # ============================================================================
 # QUESTDB SENDER METHODS
@@ -107,37 +142,156 @@ def clear_sender() -> None:
         sender = None
         pending_rows = 0
 
-def send_row_safe(table_name: str, symbols: dict, columns: dict, at: TimestampNanos) -> None:
-    """Thread-safe row insertion into QuestDB."""
+def spool_rows(rows: list[Row], reason: str) -> None:
+    """Durably preserve rows that could not be queued or flushed.
+
+    The spool is intentionally append-only. It is never automatically deleted
+    or replayed, avoiding accidental duplication in QuestDB after an uncertain
+    network acknowledgement.
+    """
+    if not rows:
+        return
+    try:
+        with spool_lock:
+            SPOOL_PATH.parent.mkdir(parents=True, exist_ok=True)
+            with SPOOL_PATH.open("a", encoding="utf-8") as spool:
+                for table_name, symbols, columns, timestamp_ns in rows:
+                    record = {
+                        "table": table_name,
+                        "symbols": symbols,
+                        "columns": columns,
+                        "timestamp_ns": timestamp_ns,
+                        "reason": reason,
+                        "collector_run_id": COLLECTOR_RUN_ID,
+                    }
+                    spool.write(json.dumps(record, separators=(",", ":")) + "\n")
+                spool.flush()
+        health_counts["rows_spooled"] += len(rows)
+    except Exception as exc:
+        health_counts["spool_errors"] += len(rows)
+        print(
+            f"[COLLECTOR] CRITICAL: unable to spool {len(rows)} failed rows: {exc}",
+            flush=True,
+        )
+
+def spool_row(row: Row, reason: str) -> None:
+    spool_rows([row], reason)
+
+def send_row_safe(
+    table_name: str, symbols: Dict[str, str], columns: Dict[str, Any], at_ns: int
+) -> None:
+    """Quickly hand an immutable row to the single QuestDB writer thread."""
+    row = (table_name, dict(symbols), dict(columns), at_ns)
+    try:
+        row_queue.put_nowait(row)
+        health_counts["rows_queued"] += 1
+    except queue.Full:
+        # Do not freeze Bookmap's event callback during a prolonged database
+        # outage. The append-only local spool preserves the event for recovery.
+        health_counts["queue_overflows"] += 1
+        spool_row(row, "queue_full")
+
+def write_row(row: Row) -> bool:
+    """Buffer one queued row in the QuestDB sender."""
     global pending_rows
+    table_name, symbols, columns, at_ns = row
     with sender_lock:
-        for attempt in range(2):
-            try:
-                get_sender().row(table_name, symbols=symbols, columns=columns, at=at)
-                pending_rows += 1
+        try:
+            get_sender().row(
+                table_name,
+                symbols=symbols,
+                columns=columns,
+                at=TimestampNanos(at_ns),
+            )
+            pending_rows += 1
+            health_counts["rows_buffered"] += 1
+            return True
+        except Exception as e:
+            health_counts["row_errors"] += 1
+            print(f"[COLLECTOR] ROW ERROR: {e}", flush=True)
+            clear_sender()
+            return False
+
+def writer_loop() -> None:
+    """Own QuestDB writes, periodic flushing, and collector health reporting."""
+    global pending_rows, sender, running
+    next_flush = time.monotonic() + 0.1
+    next_health = time.monotonic() + 60.0
+    unflushed_rows: list[Row] = []
+
+    def flush_unflushed() -> None:
+        global pending_rows
+        if not unflushed_rows:
+            return
+        with sender_lock:
+            if sender is None:
+                spool_rows(unflushed_rows, "sender_unavailable")
+                unflushed_rows.clear()
+                pending_rows = 0
                 return
+            try:
+                sender.flush()
+                health_counts["flushes"] += 1
+                health_counts["rows_persisted"] += len(unflushed_rows)
+                unflushed_rows.clear()
+                pending_rows = 0
             except Exception as e:
-                print(f"[COLLECTOR] ROW ERROR (attempt {attempt+1}): {e}", flush=True)
+                health_counts["flush_errors"] += 1
+                print(f"[COLLECTOR] Background Flush Error: {e}", flush=True)
+                # A failed HTTP flush has an uncertain acknowledgement. Preserve
+                # the complete batch for explicit recovery instead of assuming
+                # that any buffered row reached QuestDB.
+                spool_rows(unflushed_rows, "questdb_flush_failed")
+                unflushed_rows.clear()
                 clear_sender()
 
-def flush_loop() -> None:
-    """Background thread to flush pending ticks to QuestDB periodically (low latency, high throughput)."""
-    global pending_rows, sender, running
-    while running:
-        time.sleep(0.1)  # Flush buffer every 100ms
-        if pending_rows > 0:
-            with sender_lock:
-                if sender is not None:
-                    try:
-                        sender.flush()
-                        pending_rows = 0
-                    except Exception as e:
-                        print(f"[COLLECTOR] Background Flush Error: {e}", flush=True)
-                        clear_sender()
+    while running or not row_queue.empty():
+        row: Optional[Row] = None
+        try:
+            row = row_queue.get(timeout=0.05)
+            if write_row(row):
+                unflushed_rows.append(row)
+            else:
+                # Opening/resetting a sender can discard its prior buffer.
+                # Preserve both the old batch and the rejected current row.
+                spool_rows(unflushed_rows + [row], "questdb_write_failed")
+                unflushed_rows.clear()
+        except queue.Empty:
+            pass
+        finally:
+            if row is not None:
+                row_queue.task_done()
+
+        now = time.monotonic()
+        if now >= next_flush:
+            flush_unflushed()
+            next_flush = now + 0.1
+
+        if now >= next_health:
+            print(
+                "[COLLECTOR] HEALTH | "
+                f"queue={row_queue.qsize()}/{ROW_QUEUE_SIZE} "
+                f"persisted={health_counts['rows_persisted']} "
+                f"row_errors={health_counts['row_errors']} "
+                f"spooled={health_counts['rows_spooled']} "
+                f"flush_errors={health_counts['flush_errors']}",
+                flush=True,
+            )
+            next_health = now + 60.0
+    flush_unflushed()
 
 def close_sender() -> None:
     """Flush and close the sender on shutdown."""
-    clear_sender()
+    global pending_rows
+    with sender_lock:
+        if sender is not None and pending_rows > 0:
+            try:
+                sender.flush()
+                pending_rows = 0
+            except Exception as exc:
+                health_counts["flush_errors"] += 1
+                print(f"[COLLECTOR] Final flush error: {exc}", flush=True)
+        clear_sender()
 
 # ============================================================================
 # WEBSOCKET LIVE PUSH (sub-100ms path to the browser, bypasses QuestDB)
@@ -148,7 +302,9 @@ def close_sender() -> None:
 # arrives in on_trade. Browsers receive ticks in ~1-10ms; QuestDB stays the
 # source of truth for historical backfill on page load.
 
-WS_PORT = 8765
+WS_HOST = os.getenv("BOOKMAP_WS_HOST", "127.0.0.1")
+WS_PORT = int(os.getenv("BOOKMAP_WS_PORT", "8765"))
+WS_QUEUE_SIZE = max(1, int(os.getenv("BOOKMAP_WS_QUEUE_SIZE", "50000")))
 ws_loop: Optional[asyncio.AbstractEventLoop] = None
 ws_queue: Optional["asyncio.Queue"] = None
 ws_clients: set = set()
@@ -173,7 +329,7 @@ async def _ws_consumer() -> None:
     (immediate when idle, naturally batched under load). Same JSON shape as
     /api/march/ticks so the frontend handles both paths identically."""
     global ws_queue
-    ws_queue = asyncio.Queue()
+    ws_queue = asyncio.Queue(maxsize=WS_QUEUE_SIZE)
     while True:
         first = await ws_queue.get()
         batch = [first]
@@ -187,8 +343,8 @@ async def _ws_consumer() -> None:
             )
 
 async def _ws_main() -> None:
-    async with websockets.serve(_ws_handler, "0.0.0.0", WS_PORT, ping_interval=20):
-        print(f"[WS] live-push server listening on :{WS_PORT}", flush=True)
+    async with websockets.serve(_ws_handler, WS_HOST, WS_PORT, ping_interval=20):
+        print(f"[WS] live-push server listening on {WS_HOST}:{WS_PORT}", flush=True)
         await _ws_consumer()
 
 def start_ws_server() -> None:
@@ -214,7 +370,12 @@ def ws_push(sym: str, t_ns: int, price: float, size: float, side: str, bid: floa
         return
     row = f'{{"sym":"{sym}","ts":{t_ns},"price":{price},"size":{size},"side":"{side}","best_bid":{bid},"best_ask":{ask}}}'
     try:
-        ws_loop.call_soon_threadsafe(ws_queue.put_nowait, row)
+        def _enqueue() -> None:
+            try:
+                ws_queue.put_nowait(row)
+            except asyncio.QueueFull:
+                health_counts["ws_dropped"] += 1
+        ws_loop.call_soon_threadsafe(_enqueue)
     except RuntimeError:
         pass
 
@@ -272,8 +433,21 @@ def handle_subscribe_instrument(
         table_name_cache[alias] = f"bm_{symbol.lower()}_ticks"
         depth_table_name_cache[alias] = f"bm_{symbol.lower()}_depth"
 
-        # Reset volume state
+        # Every subscription starts a new, independently replayable stream.
+        # Resetting the in-memory book prevents stale levels from contaminating
+        # BBO values while Bookmap emits the new initial snapshot.
+        subscription_generation[alias] += 1
+        stream_ids[alias] = (
+            f"{COLLECTOR_RUN_ID}:{alias}:{subscription_generation[alias]}"
+        )
         volume_delta[alias] = {"buy_vol": 0.0, "sell_vol": 0.0}
+        depth_sequence[alias] = 0
+        trade_sequence[alias] = 0
+        with book_locks[alias]:
+            bids_book[alias].clear()
+            asks_book[alias].clear()
+            best_bid_level.pop(alias, None)
+            best_ask_level.pop(alias, None)
 
         # Keep trades, and subscribe to every market-by-price L2/DOM update.
         # A depth subscription begins with Bookmap's current book snapshot,
@@ -302,14 +476,6 @@ def handle_unsubscribe_instrument(addon: Any, alias: str) -> None:
         print(f"[COLLECTOR] Total trade events received: {event_counts.get(f'{alias}_trades', 0)}", flush=True)
         print(f"[COLLECTOR] Total L2 DOM events received: {event_counts.get(f'{alias}_depth', 0)}", flush=True)
         
-        # Flush pending buffers
-        with sender_lock:
-            if sender is not None:
-                try:
-                    sender.flush()
-                except Exception:
-                    pass
-
         # Cleanup caches
         instruments.pop(alias, None)
         volume_delta.pop(alias, None)
@@ -318,6 +484,13 @@ def handle_unsubscribe_instrument(addon: Any, alias: str) -> None:
         table_name_cache.pop(alias, None)
         depth_table_name_cache.pop(alias, None)
         depth_sequence.pop(alias, None)
+        trade_sequence.pop(alias, None)
+        stream_ids.pop(alias, None)
+        with book_locks[alias]:
+            bids_book.pop(alias, None)
+            asks_book.pop(alias, None)
+            best_bid_level.pop(alias, None)
+            best_ask_level.pop(alias, None)
     except Exception as e:
         print(f"[COLLECTOR] ERROR in unsubscribe: {e}", flush=True)
 
@@ -338,6 +511,8 @@ def on_trade(
         # Count events for debugging
         event_counts[f"{alias}_trades"] += 1
         count = event_counts[f"{alias}_trades"]
+        trade_sequence[alias] += 1
+        sequence = trade_sequence[alias]
 
         if count <= 5 or count % 10000 == 0:
             print(f"[COLLECTOR] TRADE #{count} | {alias} | {side} | price={price} size={size}", flush=True)
@@ -351,34 +526,54 @@ def on_trade(
         delta = v_delta["buy_vol"] - v_delta["sell_vol"]
 
         # Cache lookup for table name
-        table_name = table_name_cache.get(alias)
+        table_name = table_name_cache[alias]
         
         t_ns = get_ny_timestamp_ns()
 
         # Resolve BBO for trade record
-        best_bid = max(bids_book[alias].keys()) if bids_book[alias] else price
-        best_ask = min(asks_book[alias].keys()) if asks_book[alias] else price
+        with book_locks[alias]:
+            bid_level = best_bid_level.get(alias)
+            ask_level = best_ask_level.get(alias)
+        pip = pips_cache.get(alias, 1.0)
+        best_bid = bid_level * pip if bid_level is not None else price
+        best_ask = ask_level * pip if ask_level is not None else price
 
         # Live path first: push to browsers immediately (lowest latency, ~1-10ms).
         ws_push(alias_to_symbol.get(alias, ""), t_ns, price, size, side, best_bid, best_ask)
 
         # Persistence path: buffered ILP write to QuestDB (historical backfill).
+        columns: Dict[str, Any] = {
+            "price": price,
+            "size": size,
+            "is_otc": is_otc,
+            "is_exec_start": is_execution_start,
+            "is_exec_end": is_execution_end,
+            "buy_vol": v_delta["buy_vol"],
+            "sell_vol": v_delta["sell_vol"],
+            "delta": delta,
+            "best_bid": best_bid,
+            "best_ask": best_ask,
+            "trade_sequence": sequence,
+            "schema_version": SCHEMA_VERSION,
+        }
+        # Order IDs are regular STRING columns, never SYMBOL columns, because
+        # their cardinality can be extremely high. Disabled by default to keep
+        # the existing storage profile unchanged.
+        if STORE_ORDER_IDS:
+            if aggressor_order_id is not None:
+                columns["aggressor_order_id"] = aggressor_order_id
+            if passive_order_id is not None:
+                columns["passive_order_id"] = passive_order_id
+
         send_row_safe(
             table_name,
-            symbols={"side": side},
-            columns={
-                "price":         price,
-                "size":          size,
-                "is_otc":        is_otc,
-                "is_exec_start": is_execution_start,
-                "is_exec_end":   is_execution_end,
-                "buy_vol":       v_delta["buy_vol"],
-                "sell_vol":      v_delta["sell_vol"],
-                "delta":         delta,
-                "best_bid":      best_bid,
-                "best_ask":      best_ask,
+            symbols={
+                "side": side,
+                "alias": alias,
+                "stream_id": stream_ids.get(alias, COLLECTOR_RUN_ID),
             },
-            at=TimestampNanos(t_ns),
+            columns=columns,
+            at_ns=t_ns,
         )
 
     except Exception as e:
@@ -404,12 +599,35 @@ def on_depth(
         size = size_level / size_multiplier if size_multiplier != 0.0 else float(size_level)
         side = "BID" if is_bid else "ASK"
 
-        # Maintain bids/asks books locally
-        book = bids_book[alias] if is_bid else asks_book[alias]
-        if size == 0.0:
-            book.pop(price, None)
-        else:
-            book[price] = size
+        # Maintain the book using exact integer price levels. Cached BBO values
+        # avoid scanning the complete book on every trade; a scan is needed only
+        # when the current best level is removed.
+        raw_level = int(price_level)
+        with book_locks[alias]:
+            book = bids_book[alias] if is_bid else asks_book[alias]
+            if size == 0.0:
+                book.pop(raw_level, None)
+            else:
+                book[raw_level] = size
+
+            if is_bid:
+                current_best = best_bid_level.get(alias)
+                if size > 0.0 and (current_best is None or raw_level > current_best):
+                    best_bid_level[alias] = raw_level
+                elif size == 0.0 and current_best == raw_level:
+                    if book:
+                        best_bid_level[alias] = max(book)
+                    else:
+                        best_bid_level.pop(alias, None)
+            else:
+                current_best = best_ask_level.get(alias)
+                if size > 0.0 and (current_best is None or raw_level < current_best):
+                    best_ask_level[alias] = raw_level
+                elif size == 0.0 and current_best == raw_level:
+                    if book:
+                        best_ask_level[alias] = min(book)
+                    else:
+                        best_ask_level.pop(alias, None)
 
         event_counts[f"{alias}_depth"] += 1
         count = event_counts[f"{alias}_depth"]
@@ -425,7 +643,11 @@ def on_depth(
 
         send_row_safe(
             depth_table_name_cache[alias],
-            symbols={"side": side},
+            symbols={
+                "side": side,
+                "alias": alias,
+                "stream_id": stream_ids.get(alias, COLLECTOR_RUN_ID),
+            },
             columns={
                 # Normalized values are convenient for SQL research.
                 "price": price,
@@ -435,8 +657,9 @@ def on_depth(
                 "size_level": int(size_level),
                 # Disambiguates receive order if two events share a timestamp.
                 "sequence": sequence,
+                "schema_version": SCHEMA_VERSION,
             },
-            at=TimestampNanos(get_ny_timestamp_ns()),
+            at_ns=get_ny_timestamp_ns(),
         )
 
     except Exception as e:
@@ -452,16 +675,36 @@ if __name__ == "__main__":
     print("=" * 60, flush=True)
     print("[COLLECTOR] Bookmap Trades + L2 DOM Collector - Optimized (QuestDB)", flush=True)
     print(f"[COLLECTOR] QuestDB: {QUESTDB_CONF}", flush=True)
+    print(f"[COLLECTOR] Run ID: {COLLECTOR_RUN_ID}", flush=True)
+    print(f"[COLLECTOR] Failure spool: {SPOOL_PATH}", flush=True)
+    print(f"[COLLECTOR] Store order IDs: {STORE_ORDER_IDS}", flush=True)
     print(f"[COLLECTOR] Mode: ASYNC REAL-TIME TRADES + L2 DOM", flush=True)
     print("=" * 60, flush=True)
 
-    # Warm up the sender connection
-    get_sender()
+    # Warm up when available, but still start the addon during a QuestDB outage:
+    # failed rows will be retained in the append-only local spool.
+    try:
+        get_sender()
+    except Exception as exc:
+        print(
+            f"[COLLECTOR] QuestDB unavailable at startup; rows will spool: {exc}",
+            flush=True,
+        )
+        clear_sender()
+    if SPOOL_PATH.exists() and SPOOL_PATH.stat().st_size > 0:
+        print(
+            f"[COLLECTOR] WARNING: recovery spool contains "
+            f"{SPOOL_PATH.stat().st_size} bytes and is never auto-deleted",
+            flush=True,
+        )
 
-    # Start background flush loop thread
+    # Start the single background writer. Bookmap callbacks only enqueue rows,
+    # keeping database latency away from the market-data callback path.
     running = True
-    flush_thread = threading.Thread(target=flush_loop, daemon=True)
-    flush_thread.start()
+    writer_thread = threading.Thread(
+        target=writer_loop, daemon=True, name="questdb-writer"
+    )
+    writer_thread.start()
 
     # Start the WebSocket live-push server (realtime path to the browser).
     start_ws_server()
@@ -480,14 +723,29 @@ if __name__ == "__main__":
     bm.start_addon(addon, handle_subscribe_instrument, handle_unsubscribe_instrument)
     bm.wait_until_addon_is_turned_off(addon)
 
-    # Shutdown background thread and close sender
+    # Stop accepting Bookmap events, drain queued persistence work, then flush.
     running = False
-    flush_thread.join(timeout=1.0)
+    writer_thread.join(timeout=30.0)
+    if writer_thread.is_alive():
+        print(
+            f"[COLLECTOR] Writer did not drain within 30s; "
+            f"{row_queue.qsize()} rows remain queued",
+            flush=True,
+        )
     close_sender()
 
     # Summary
     print("[COLLECTOR] === FINAL SUMMARY ===", flush=True)
     for key, cnt in event_counts.items():
         print(f"[COLLECTOR]   {key}: {cnt} events", flush=True)
+    print(
+        "[COLLECTOR]   persistence: "
+        f"persisted={health_counts['rows_persisted']} "
+        f"spooled={health_counts['rows_spooled']} "
+        f"queue_overflows={health_counts['queue_overflows']} "
+        f"spool_errors={health_counts['spool_errors']} "
+        f"ws_dropped={health_counts['ws_dropped']}",
+        flush=True,
+    )
 
     print("[COLLECTOR] Done.", flush=True)

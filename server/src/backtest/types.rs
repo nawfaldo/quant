@@ -8,6 +8,8 @@ pub(crate) struct Bar {
     pub(crate) low: f64,
     pub(crate) close: f64,
     pub(crate) volume: f64,
+    pub(crate) volume_delta: f64,
+    pub(crate) depth_events: u64,
     pub(crate) vix: f64,
 }
 #[derive(Clone, Copy, PartialEq, Serialize)]

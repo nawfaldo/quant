@@ -355,10 +355,13 @@ export default function TestPage() {
     const usesFixedMarket = [
       "Night Drift",
       "Night Drift 2",
+      "Hourly Delta Reversal NQ",
+      "Hourly Delta Reversal ES",
       "Noise Momentum",
       "Noise Momentum 2",
     ].includes(selectedStrategy);
-    const expectedSymbol = "NQ";
+    const expectedSymbol =
+      selectedStrategy === "Hourly Delta Reversal ES" ? "ES" : "NQ";
     const expectedInstrument = "Forex";
     if (
       !isRun ||
@@ -391,11 +394,19 @@ export default function TestPage() {
 
   const isNoiseMomentum = ["Noise Momentum", "Noise Momentum 2"].includes(selectedStrategy);
   const fixedSymbol = "NQ";
+  const strategySymbol =
+    selectedStrategy === "Hourly Delta Reversal ES" ? "ES" : fixedSymbol;
   const fixedInstrument = "Forex";
   const isNoiseConfigurationFilled =
     !isNoiseMomentum || (exitStrategy === "Ladder #2" && sizing === "Equity");
   const isInternallySized =
-    isNoiseMomentum || ["Night Drift", "Night Drift 2"].includes(selectedStrategy);
+    isNoiseMomentum ||
+    [
+      "Night Drift",
+      "Night Drift 2",
+      "Hourly Delta Reversal NQ",
+      "Hourly Delta Reversal ES",
+    ].includes(selectedStrategy);
   const quantityFilled = isInternallySized || baseLot.trim() !== "";
   const showEnvironment = isCommandFilled;
   // Ask for the strategy, then keep Noise Momentum's exit, sizing, symbol,
@@ -409,7 +420,7 @@ export default function TestPage() {
     isEnvironmentFilled &&
     strategies.some((strategy) => strategy.name === selectedStrategy) &&
     isNoiseConfigurationFilled &&
-    selectedSymbol === fixedSymbol &&
+    selectedSymbol === strategySymbol &&
     selectedInstrument === fixedInstrument;
 
   const showDate =
@@ -1167,9 +1178,12 @@ export default function TestPage() {
                           const usesFixedMarket =
                             stratVal === "Night Drift" ||
                             stratVal === "Night Drift 2" ||
+                            stratVal === "Hourly Delta Reversal NQ" ||
+                            stratVal === "Hourly Delta Reversal ES" ||
                             stratVal === "Noise Momentum" ||
                             stratVal === "Noise Momentum 2";
-                          const symbol = "NQ";
+                          const symbol =
+                            stratVal === "Hourly Delta Reversal ES" ? "ES" : "NQ";
                           const instrument = "Forex";
                           updateActiveTab({
                             selectedStrategy: stratVal,
