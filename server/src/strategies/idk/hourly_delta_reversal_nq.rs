@@ -1,35 +1,28 @@
 use crate::backtest::types::{Action, Bar, Side, Strategy};
 
-// Minute-resolution grid-search defaults from the locally available NQ
-// Bookmap history (2026-07-17 through 2026-07-22), including 0.2 spread.
-const VIX_MIN: f64 = 17.0;
-const VIX_MAX: f64 = 19.0;
-const ENTRY_RISK_FRACTION: f64 = 0.02;
+// Minute-resolution RTH grid-search defaults from the locally available NQ
+// history (2026-05-27 through 2026-07-23), including 0.2 spread.
+const ENTRY_RISK_FRACTION: f64 = 0.005;
 const LONG_MARGIN_REQUIREMENT: f64 = 0.25;
 const QUANTITY_STEP: f64 = 0.01;
+const MARKET_OPEN_MINUTE: usize = 9 * 60 + 30;
+const MARKET_CLOSE_MINUTE: usize = 16 * 60;
+const THURSDAY: i64 = 3;
+const BUY_MIN_DELTA: f64 = 50.0;
+const BUY_STOP: f64 = 40.0;
+const BUY_TARGET: f64 = 50.0;
+const SELL_MIN_DELTA: f64 = 150.0;
+const SELL_STOP: f64 = 40.0;
+const SELL_TARGET: f64 = 50.0;
 
 #[derive(Clone, Copy)]
-struct SessionConfig {
-    min_delta: f64,
+struct OpenPosition {
+    id: u64,
+    side: Side,
+    entry: f64,
     stop: f64,
     target: f64,
 }
-
-const OVERNIGHT: SessionConfig = SessionConfig {
-    min_delta: 75.0,
-    stop: 100.0,
-    target: 250.0,
-};
-const US_MORNING: SessionConfig = SessionConfig {
-    min_delta: 100.0,
-    stop: 125.0,
-    target: 200.0,
-};
-const US_AFTERNOON: SessionConfig = SessionConfig {
-    min_delta: 100.0,
-    stop: 25.0,
-    target: 50.0,
-};
 
 /// Buys the open of a new hour when the completed one-hour candle was red
 /// despite positive aggressor volume delta. Minute bars retain sensible
@@ -39,11 +32,9 @@ pub(crate) struct HourlyDeltaReversalNq {
     hour_open: f64,
     hour_close: f64,
     hour_delta: f64,
-    hour_vix: f64,
     hour_depth_events: u64,
-    position_entry: Option<f64>,
-    position_stop: f64,
-    position_target: f64,
+    next_position_id: u64,
+    positions: Vec<OpenPosition>,
 }
 
 impl Default for HourlyDeltaReversalNq {
@@ -53,33 +44,33 @@ impl Default for HourlyDeltaReversalNq {
             hour_open: 0.0,
             hour_close: 0.0,
             hour_delta: 0.0,
-            hour_vix: 0.0,
             hour_depth_events: 0,
-            position_entry: None,
-            position_stop: 0.0,
-            position_target: 0.0,
+            next_position_id: 1,
+            positions: Vec::new(),
         }
     }
 }
 
 impl HourlyDeltaReversalNq {
-    fn session_config(hour: i64) -> Option<SessionConfig> {
-        match hour.rem_euclid(24) {
-            18..=23 | 0..=8 => Some(OVERNIGHT),
-            9..=11 => Some(US_MORNING),
-            12..=15 => Some(US_AFTERNOON),
-            _ => None,
+    fn completed_signal(&self, next_hour: i64, entry_minute: usize) -> Option<Side> {
+        let Some(_) = self.hour.filter(|hour| *hour + 1 == next_hour) else {
+            return None;
+        };
+        let day = next_hour.div_euclid(24);
+        let weekday = (day + 3).rem_euclid(7);
+        if !(MARKET_OPEN_MINUTE..MARKET_CLOSE_MINUTE).contains(&entry_minute)
+            || weekday == THURSDAY
+            || self.hour_depth_events == 0
+        {
+            return None;
         }
-    }
-
-    fn completed_hour_config(&self, next_hour: i64) -> Option<SessionConfig> {
-        let hour = self.hour.filter(|hour| *hour + 1 == next_hour)?;
-        let config = Self::session_config(hour)?;
-        (self.hour_close < self.hour_open
-            && self.hour_delta >= config.min_delta
-            && (VIX_MIN..=VIX_MAX).contains(&self.hour_vix)
-            && self.hour_depth_events > 0)
-            .then_some(config)
+        if self.hour_close < self.hour_open && self.hour_delta >= BUY_MIN_DELTA {
+            Some(Side::Long)
+        } else if self.hour_close > self.hour_open && self.hour_delta <= -SELL_MIN_DELTA {
+            Some(Side::Short)
+        } else {
+            None
+        }
     }
 
     fn entry_quantity(equity: f64, price: f64, stop: f64) -> Option<f64> {
@@ -98,76 +89,105 @@ impl HourlyDeltaReversalNq {
         self.hour_open = bar.open;
         self.hour_close = bar.close;
         self.hour_delta = bar.volume_delta;
-        self.hour_vix = bar.vix;
         self.hour_depth_events = bar.depth_events;
     }
 
     fn accumulate(&mut self, bar: Bar) {
         self.hour_close = bar.close;
         self.hour_delta += bar.volume_delta;
-        self.hour_vix = bar.vix;
         self.hour_depth_events = self.hour_depth_events.saturating_add(bar.depth_events);
+    }
+
+    fn actions(&mut self, bar: Bar, equity: f64) -> Vec<Action> {
+        let hour = bar.ts.div_euclid(3_600);
+        let minute = bar.ts.rem_euclid(86_400) as usize / 60;
+        if minute >= MARKET_CLOSE_MINUTE || minute < MARKET_OPEN_MINUTE {
+            self.positions.clear();
+        }
+        let entry_side = if self.hour == Some(hour) {
+            self.accumulate(bar);
+            None
+        } else {
+            let signal = self.completed_signal(hour, minute);
+            self.start_hour(hour, bar);
+            signal
+        };
+
+        let mut actions = Vec::new();
+        self.positions.retain(|position| {
+            let exit = match position.side {
+                Side::Long if bar.low <= position.entry - position.stop => {
+                    Some(bar.open.min(position.entry - position.stop))
+                }
+                Side::Long if bar.high >= position.entry + position.target => {
+                    Some(bar.open.max(position.entry + position.target))
+                }
+                Side::Short if bar.high >= position.entry + position.stop => {
+                    Some(bar.open.max(position.entry + position.stop))
+                }
+                Side::Short if bar.low <= position.entry - position.target => {
+                    Some(bar.open.min(position.entry - position.target))
+                }
+                _ => None,
+            };
+            if let Some(price) = exit {
+                actions.push(Action::ClosePosition {
+                    id: position.id,
+                    price,
+                });
+                false
+            } else {
+                true
+            }
+        });
+
+        if let Some(side) = entry_side {
+            let (stop, target) = match side {
+                Side::Long => (BUY_STOP, BUY_TARGET),
+                Side::Short => (SELL_STOP, SELL_TARGET),
+            };
+            if let Some(quantity) = Self::entry_quantity(equity, bar.open, stop) {
+                let id = self.next_position_id;
+                self.next_position_id += 1;
+                self.positions.push(OpenPosition {
+                    id,
+                    side,
+                    entry: bar.open,
+                    stop,
+                    target,
+                });
+                actions.push(Action::EnterPosition {
+                    id,
+                    side,
+                    price: bar.open,
+                    quantity,
+                });
+            }
+        }
+        actions
     }
 }
 
 impl Strategy for HourlyDeltaReversalNq {
     fn update(&mut self, bar: Bar, equity: f64) -> Action {
-        let hour = bar.ts.div_euclid(3_600);
-        let entry_config = if self.hour == Some(hour) {
-            self.accumulate(bar);
-            None
-        } else {
-            let config = self
-                .position_entry
-                .is_none()
-                .then(|| self.completed_hour_config(hour))
-                .flatten();
-            self.start_hour(hour, bar);
-            config
-        };
+        self.actions(bar, equity)
+            .into_iter()
+            .next()
+            .unwrap_or(Action::Hold)
+    }
 
-        if let Some(entry) = self.position_entry {
-            let stop = entry - self.position_stop;
-            if bar.low <= stop {
-                self.position_entry = None;
-                return Action::Close {
-                    price: bar.open.min(stop),
-                    fraction: 1.0,
-                };
-            }
-
-            let target = entry + self.position_target;
-            if bar.high >= target {
-                self.position_entry = None;
-                return Action::Close {
-                    price: bar.open.max(target),
-                    fraction: 1.0,
-                };
-            }
-        }
-        if let Some(config) = entry_config {
-            let Some(quantity) = Self::entry_quantity(equity, bar.open, config.stop) else {
-                return Action::Hold;
-            };
-            self.position_entry = Some(bar.open);
-            self.position_stop = config.stop;
-            self.position_target = config.target;
-            Action::Enter {
-                side: Side::Long,
-                price: bar.open,
-                quantity,
-            }
-        } else {
-            Action::Hold
-        }
+    fn update_all(&mut self, bar: Bar, equity: f64) -> Vec<Action> {
+        self.actions(bar, equity)
     }
 
     fn discard(&mut self, action: Action) {
-        if matches!(action, Action::Enter { .. }) {
-            self.position_entry = None;
-            self.position_stop = 0.0;
-            self.position_target = 0.0;
+        if let Action::EnterPosition { id, .. } = action {
+            self.positions.retain(|position| position.id != id);
         }
+    }
+
+    fn session_end_minute(&self) -> Option<usize> {
+        Some(MARKET_CLOSE_MINUTE)
     }
 }
 
@@ -177,7 +197,8 @@ mod tests {
 
     fn bar(minute: i64, open: f64, high: f64, low: f64, close: f64, delta: f64) -> Bar {
         Bar {
-            ts: minute * 60,
+            // 1970-01-05 was a Monday.
+            ts: (4 * 24 * 60 + minute) * 60,
             open,
             high,
             low,
@@ -186,6 +207,7 @@ mod tests {
             volume_delta: delta,
             depth_events: 1,
             vix: 18.0,
+            order_flow: Default::default(),
         }
     }
 
@@ -193,52 +215,81 @@ mod tests {
     fn buys_next_hour_after_red_candle_with_positive_delta() {
         let mut strategy = HourlyDeltaReversalNq::default();
         assert!(matches!(
-            strategy.update(bar(60, 100.0, 101.0, 98.0, 99.0, 50.0), 1_000.0),
+            strategy.update(bar(9 * 60, 100.0, 101.0, 98.0, 99.0, 100.0), 1_000.0),
             Action::Hold
         ));
         assert!(matches!(
-            strategy.update(bar(61, 99.0, 100.0, 97.0, 98.0, 25.0), 1_000.0),
+            strategy.update(bar(9 * 60 + 1, 99.0, 100.0, 97.0, 98.0, 50.0), 1_000.0),
             Action::Hold
         ));
         assert!(matches!(
-            strategy.update(bar(120, 98.0, 99.0, 97.0, 98.5, 0.0), 1_000.0),
-            Action::Enter {
+            strategy.update(bar(10 * 60, 98.0, 99.0, 97.0, 98.5, 0.0), 1_000.0),
+            Action::EnterPosition {
+                id: 1,
                 side: Side::Long,
                 price: 98.0,
-                quantity: 0.2
+                quantity: 0.12
             }
         ));
     }
 
     #[test]
+    fn sells_next_hour_after_green_candle_with_negative_delta() {
+        let mut strategy = HourlyDeltaReversalNq::default();
+        strategy.update(bar(9 * 60, 100.0, 103.0, 99.0, 102.0, -200.0), 10_000.0);
+        assert!(matches!(
+            strategy.update(bar(10 * 60, 102.0, 103.0, 101.0, 101.5, 0.0), 10_000.0),
+            Action::EnterPosition {
+                id: 1,
+                side: Side::Short,
+                price: 102.0,
+                quantity: 1.25
+            }
+        ));
+    }
+
+    #[test]
+    fn permits_overlapping_hourly_positions() {
+        let mut strategy = HourlyDeltaReversalNq::default();
+        strategy.update(bar(9 * 60, 100.0, 103.0, 99.0, 102.0, -200.0), 10_000.0);
+        assert_eq!(
+            strategy
+                .update_all(bar(10 * 60, 102.0, 103.0, 101.0, 102.5, -200.0), 10_000.0)
+                .len(),
+            1
+        );
+        let actions = strategy.update_all(bar(11 * 60, 102.5, 103.0, 102.0, 102.4, 0.0), 10_000.0);
+        assert!(actions.iter().any(|action| matches!(
+            action,
+            Action::EnterPosition {
+                id: 2,
+                side: Side::Short,
+                ..
+            }
+        )));
+        assert_eq!(strategy.positions.len(), 2);
+    }
+
+    #[test]
     fn requires_depth_coverage_and_contiguous_hours() {
         let mut strategy = HourlyDeltaReversalNq::default();
-        let mut signal = bar(60, 100.0, 101.0, 98.0, 99.0, 100.0);
+        let mut signal = bar(9 * 60, 100.0, 101.0, 98.0, 99.0, 100.0);
         signal.depth_events = 0;
         strategy.update(signal, 1_000.0);
         assert!(matches!(
-            strategy.update(bar(120, 99.0, 100.0, 98.0, 99.5, 0.0), 1_000.0),
+            strategy.update(bar(10 * 60, 99.0, 100.0, 98.0, 99.5, 0.0), 1_000.0),
             Action::Hold
         ));
 
-        strategy.update(bar(180, 100.0, 101.0, 98.0, 99.0, 100.0), 1_000.0);
+        strategy.update(bar(11 * 60, 100.0, 101.0, 98.0, 99.0, 200.0), 1_000.0);
         assert!(matches!(
-            strategy.update(bar(300, 99.0, 100.0, 98.0, 99.5, 0.0), 1_000.0),
+            strategy.update(bar(13 * 60, 99.0, 100.0, 98.0, 99.5, 0.0), 1_000.0),
             Action::Hold
         ));
     }
 
     #[test]
-    fn rejects_out_of_band_vix_and_closed_session_signals() {
-        let mut high_vix = HourlyDeltaReversalNq::default();
-        let mut signal = bar(60, 100.0, 101.0, 98.0, 99.0, 200.0);
-        signal.vix = 20.0;
-        high_vix.update(signal, 1_000.0);
-        assert!(matches!(
-            high_vix.update(bar(120, 99.0, 100.0, 98.0, 99.5, 0.0), 1_000.0),
-            Action::Hold
-        ));
-
+    fn rejects_closed_session_signals() {
         let mut closed = HourlyDeltaReversalNq::default();
         closed.update(bar(16 * 60, 100.0, 101.0, 98.0, 99.0, 200.0), 1_000.0);
         assert!(matches!(
@@ -248,19 +299,34 @@ mod tests {
     }
 
     #[test]
+    fn rejects_thursday_signals() {
+        let mut strategy = HourlyDeltaReversalNq::default();
+        let mut thursday_signal = bar(9 * 60, 100.0, 101.0, 98.0, 99.0, 100.0);
+        thursday_signal.ts = 9 * 60 * 60;
+        strategy.update(thursday_signal, 1_000.0);
+        let mut thursday_entry = bar(10 * 60, 99.0, 100.0, 98.0, 99.5, 0.0);
+        thursday_entry.ts = 10 * 60 * 60;
+        assert!(matches!(
+            strategy.update(thursday_entry, 1_000.0),
+            Action::Hold
+        ));
+    }
+
+    #[test]
     fn stop_is_checked_before_target_for_conservative_ambiguous_bars() {
         let mut strategy = HourlyDeltaReversalNq {
-            position_entry: Some(100.0),
-            position_stop: 100.0,
-            position_target: 200.0,
+            positions: vec![OpenPosition {
+                id: 1,
+                side: Side::Long,
+                entry: 100.0,
+                stop: 100.0,
+                target: 200.0,
+            }],
             ..HourlyDeltaReversalNq::default()
         };
         assert!(matches!(
-            strategy.update(bar(60, 100.0, 310.0, -10.0, 100.0, 0.0), 1_000.0),
-            Action::Close {
-                price: 0.0,
-                fraction: 1.0
-            }
+            strategy.update(bar(10 * 60, 100.0, 310.0, -10.0, 100.0, 0.0), 1_000.0),
+            Action::ClosePosition { id: 1, price: 0.0 }
         ));
     }
 
@@ -268,7 +334,7 @@ mod tests {
     fn equity_sizing_uses_the_tighter_of_risk_and_margin_limits() {
         assert_eq!(
             HourlyDeltaReversalNq::entry_quantity(10_000.0, 29_000.0, 100.0),
-            Some(1.37)
+            Some(0.5)
         );
         assert_eq!(
             HourlyDeltaReversalNq::entry_quantity(10_000.0, 7_500.0, 2.0),

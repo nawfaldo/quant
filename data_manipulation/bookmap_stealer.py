@@ -26,6 +26,7 @@ from zoneinfo import ZoneInfo
 from typing import Any, Dict, Optional, Tuple
 from collections import defaultdict
 from questdb.ingress import Sender, TimestampNanos
+from build_nq_l2_features_1s import Event as L2Event, FeatureAccumulator, FeatureRow
 
 import asyncio
 try:
@@ -98,6 +99,8 @@ asks_book: Dict[str, Dict[int, float]] = defaultdict(dict)
 best_bid_level: Dict[str, int] = {}
 best_ask_level: Dict[str, int] = {}
 book_locks: Dict[str, threading.Lock] = defaultdict(threading.Lock)
+feature_locks: Dict[str, threading.Lock] = defaultdict(threading.Lock)
+feature_accumulators: Dict[str, FeatureAccumulator] = {}
 
 # Ingestion caches (speeds up on_trade callback by avoiding dict/string operations)
 pips_cache: Dict[str, float] = {}
@@ -111,6 +114,7 @@ pending_rows = 0
 sender_lock = threading.Lock()
 spool_lock = threading.Lock()
 running = True
+feature_running = True
 Row = Tuple[str, Dict[str, str], Dict[str, Any], int]
 row_queue: "queue.Queue[Row]" = queue.Queue(maxsize=ROW_QUEUE_SIZE)
 health_counts: Dict[str, int] = defaultdict(int)
@@ -190,6 +194,53 @@ def send_row_safe(
         # outage. The append-only local spool preserves the event for recovery.
         health_counts["queue_overflows"] += 1
         spool_row(row, "queue_full")
+
+
+def queue_feature_row(alias: str, row: FeatureRow) -> None:
+    """Persist one completed NQ second using the normalized feature schema."""
+    symbol = alias_to_symbol.get(alias, "").lower()
+    if symbol != "nq":
+        return
+    send_row_safe(
+        "nq_l2_features_1s",
+        symbols={"source": "bm", "symbol": symbol},
+        columns=row.values,
+        at_ns=row.timestamp_ns,
+    )
+    health_counts["feature_rows_queued"] += 1
+
+
+def record_feature_event(alias: str, event: L2Event) -> None:
+    if alias_to_symbol.get(alias) != "NQ":
+        return
+    with feature_locks[alias]:
+        accumulator = feature_accumulators.get(alias)
+        if accumulator is None:
+            accumulator = FeatureAccumulator(0.25)
+            feature_accumulators[alias] = accumulator
+        for row in accumulator.on_event(event):
+            queue_feature_row(alias, row)
+
+
+def feature_flush_loop() -> None:
+    """Flush elapsed seconds even when the next market event is delayed."""
+    while feature_running:
+        # A short grace period prevents a callback captured just before the
+        # boundary from creating a second row after that bucket was flushed.
+        completed_before = (
+            get_ny_timestamp_ns() - 500_000_000
+        ) // 1_000_000_000
+        for alias in list(feature_accumulators):
+            with feature_locks[alias]:
+                accumulator = feature_accumulators.get(alias)
+                row = (
+                    accumulator.flush_completed(completed_before)
+                    if accumulator is not None
+                    else None
+                )
+                if row is not None:
+                    queue_feature_row(alias, row)
+        time.sleep(0.1)
 
 def write_row(row: Row) -> bool:
     """Buffer one queued row in the QuestDB sender."""
@@ -448,6 +499,11 @@ def handle_subscribe_instrument(
             asks_book[alias].clear()
             best_bid_level.pop(alias, None)
             best_ask_level.pop(alias, None)
+        with feature_locks[alias]:
+            if symbol == "NQ":
+                feature_accumulators[alias] = FeatureAccumulator(pips)
+            else:
+                feature_accumulators.pop(alias, None)
 
         # Keep trades, and subscribe to every market-by-price L2/DOM update.
         # A depth subscription begins with Bookmap's current book snapshot,
@@ -475,6 +531,15 @@ def handle_unsubscribe_instrument(addon: Any, alias: str) -> None:
         print(f"[COLLECTOR] Unsubscribing: {alias}", flush=True)
         print(f"[COLLECTOR] Total trade events received: {event_counts.get(f'{alias}_trades', 0)}", flush=True)
         print(f"[COLLECTOR] Total L2 DOM events received: {event_counts.get(f'{alias}_depth', 0)}", flush=True)
+
+        with feature_locks[alias]:
+            accumulator = feature_accumulators.pop(alias, None)
+            if accumulator is not None:
+                row = accumulator.flush_completed(
+                    get_ny_timestamp_ns() // 1_000_000_000
+                )
+                if row is not None:
+                    queue_feature_row(alias, row)
         
         # Cleanup caches
         instruments.pop(alias, None)
@@ -575,6 +640,21 @@ def on_trade(
             columns=columns,
             at_ns=t_ns,
         )
+        record_feature_event(
+            alias,
+            L2Event(
+                timestamp_ns=t_ns,
+                priority=1,
+                sequence=sequence,
+                kind="T",
+                side=side,
+                price=price,
+                size=size,
+                best_bid=best_bid,
+                best_ask=best_ask,
+                stream_id=stream_ids.get(alias, COLLECTOR_RUN_ID),
+            ),
+        )
 
     except Exception as e:
         print(f"[COLLECTOR] ERROR in on_trade: {e}", flush=True)
@@ -641,6 +721,7 @@ def on_depth(
                 flush=True,
             )
 
+        t_ns = get_ny_timestamp_ns()
         send_row_safe(
             depth_table_name_cache[alias],
             symbols={
@@ -659,7 +740,20 @@ def on_depth(
                 "sequence": sequence,
                 "schema_version": SCHEMA_VERSION,
             },
-            at_ns=get_ny_timestamp_ns(),
+            at_ns=t_ns,
+        )
+        record_feature_event(
+            alias,
+            L2Event(
+                timestamp_ns=t_ns,
+                priority=0,
+                sequence=sequence,
+                kind="D",
+                side=side,
+                price=price,
+                size=size,
+                stream_id=stream_ids.get(alias, COLLECTOR_RUN_ID),
+            ),
         )
 
     except Exception as e:
@@ -705,6 +799,11 @@ if __name__ == "__main__":
         target=writer_loop, daemon=True, name="questdb-writer"
     )
     writer_thread.start()
+    feature_running = True
+    feature_thread = threading.Thread(
+        target=feature_flush_loop, daemon=True, name="l2-feature-flusher"
+    )
+    feature_thread.start()
 
     # Start the WebSocket live-push server (realtime path to the browser).
     start_ws_server()
@@ -722,6 +821,10 @@ if __name__ == "__main__":
 
     bm.start_addon(addon, handle_subscribe_instrument, handle_unsubscribe_instrument)
     bm.wait_until_addon_is_turned_off(addon)
+
+    # Stop feature production before allowing the QuestDB writer to drain.
+    feature_running = False
+    feature_thread.join(timeout=2.0)
 
     # Stop accepting Bookmap events, drain queued persistence work, then flush.
     running = False
@@ -744,6 +847,7 @@ if __name__ == "__main__":
         f"spooled={health_counts['rows_spooled']} "
         f"queue_overflows={health_counts['queue_overflows']} "
         f"spool_errors={health_counts['spool_errors']} "
+        f"feature_rows={health_counts['feature_rows_queued']} "
         f"ws_dropped={health_counts['ws_dropped']}",
         flush=True,
     )

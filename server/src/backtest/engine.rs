@@ -95,6 +95,7 @@ pub(crate) struct PositionSizing {
     pub(crate) volatility: Option<VolTargetConfig>,
 }
 struct Position {
+    id: Option<u64>,
     side: Side,
     entry: f64,
     raw: f64,
@@ -109,6 +110,7 @@ pub struct RunResult {
 fn run_engine<S: Strategy>(bars: &[Bar], mut strategy: S, cfg: EngineConfig) -> RunResult {
     let mut trades = Vec::new();
     let mut position: Option<Position> = None;
+    let mut tagged_positions: Vec<Position> = Vec::new();
     let mut equity = cfg.initial;
     let max_drawdown_dollars = strategy.max_drawdown_dollars();
     let mut equity_peak = equity;
@@ -129,9 +131,9 @@ fn run_engine<S: Strategy>(bars: &[Bar], mut strategy: S, cfg: EngineConfig) -> 
         if let Some(target) = &mut volatility_target {
             target.on_bar(bar.close, day_changed);
         }
-        let mut action = strategy.update(*bar, equity);
+        let mut actions = strategy.update_all(*bar, equity);
         if day < cfg.start_day {
-            strategy.discard(action);
+            strategy.discard_all(actions);
             continue;
         }
         let flatten_after_bar = strategy.session_end_minute().is_some_and(|session_end| {
@@ -142,88 +144,126 @@ fn run_engine<S: Strategy>(bars: &[Bar], mut strategy: S, cfg: EngineConfig) -> 
                         || next.ts.rem_euclid(86_400) as usize / 60 >= session_end
                 })
         });
+        let action = actions.first().copied().unwrap_or(Action::Hold);
         let mut mtm = marked_equity(equity, position.as_ref(), action, *bar, &cfg);
+        for tagged in &tagged_positions {
+            mtm += marked_equity(0.0, Some(tagged), Action::Hold, *bar, &cfg);
+        }
         if let (Some(limit), Some(open)) = (max_drawdown_dollars, position.as_ref()) {
             let floor = equity_peak - limit;
             if mtm < floor {
-                action = Action::Close {
+                actions = vec![Action::Close {
                     price: exit_raw_for_equity(open, equity, floor, &cfg),
                     fraction: 1.0,
-                };
+                }];
                 mtm = floor;
             }
         }
         equity_peak = equity_peak.max(mtm);
         drawdowns.observe(mtm, day);
-        match action {
-            Action::Hold => {}
-            Action::Enter {
-                side,
-                price,
-                quantity,
-            } => {
-                if !position.as_ref().is_some_and(|p| p.side == side) {
-                    if let Some(old) = position.take() {
+        for action in actions {
+            match action {
+                Action::Hold => {}
+                Action::Enter {
+                    side,
+                    price,
+                    quantity,
+                } => {
+                    if !position.as_ref().is_some_and(|p| p.side == side) {
+                        if let Some(old) = position.take() {
+                            let exit = fill(price, old.side == Side::Short, &cfg);
+                            let gain =
+                                net_pnl(&old, exit, cfg.commission, cfg.instrument, &cfg.symbol);
+                            equity += gain;
+                            trades.push(to_trade(old, fill_timestamp, exit, price, gain));
+                        }
+                        equity_peak = equity_peak.max(equity);
+                        let sized_quantity = if let (Some(risk_fraction), Some(stop)) =
+                            (strategy.entry_risk_fraction(), strategy.entry_stop_price())
+                        {
+                            risk_limited_quantity(
+                                side,
+                                price,
+                                stop,
+                                equity,
+                                equity_peak,
+                                risk_fraction,
+                                max_drawdown_dollars,
+                                &cfg,
+                            )
+                        } else {
+                            let raw_qty = cfg
+                                .sizing
+                                .map(|sizing| {
+                                    let volatility_multiplier = volatility_target
+                                        .as_ref()
+                                        .map(VolTarget::multiplier)
+                                        .unwrap_or(1.0);
+                                    sizing.base_lot * sizing.leverage * volatility_multiplier
+                                })
+                                .unwrap_or(quantity);
+                            Some(cfg.instrument.size(raw_qty))
+                        };
+                        if let Some(quantity) = sized_quantity {
+                            position = Some(Position {
+                                id: None,
+                                side,
+                                entry: fill(price, side == Side::Long, &cfg),
+                                raw: price,
+                                ts: fill_timestamp,
+                                quantity,
+                            });
+                        }
+                    }
+                }
+                Action::Close { price, fraction } => {
+                    if let Some(mut old) = position.take() {
+                        let close_qty = closed_size(old.quantity, fraction, cfg.instrument);
+                        let exit = fill(price, old.side == Side::Short, &cfg);
+                        let partial = Position {
+                            id: old.id,
+                            side: old.side,
+                            entry: old.entry,
+                            raw: old.raw,
+                            ts: old.ts,
+                            quantity: close_qty,
+                        };
+                        let gain =
+                            net_pnl(&partial, exit, cfg.commission, cfg.instrument, &cfg.symbol);
+                        equity += gain;
+                        trades.push(to_trade(partial, fill_timestamp, exit, price, gain));
+                        old.quantity -= close_qty;
+                        if old.quantity > 1e-8 {
+                            position = Some(old);
+                        }
+                    }
+                }
+                Action::EnterPosition {
+                    id,
+                    side,
+                    price,
+                    quantity,
+                } => {
+                    let quantity = cfg.instrument.size(quantity);
+                    tagged_positions.push(Position {
+                        id: Some(id),
+                        side,
+                        entry: fill(price, side == Side::Long, &cfg),
+                        raw: price,
+                        ts: fill_timestamp,
+                        quantity,
+                    });
+                }
+                Action::ClosePosition { id, price } => {
+                    if let Some(index) = tagged_positions
+                        .iter()
+                        .position(|position| position.id == Some(id))
+                    {
+                        let old = tagged_positions.remove(index);
                         let exit = fill(price, old.side == Side::Short, &cfg);
                         let gain = net_pnl(&old, exit, cfg.commission, cfg.instrument, &cfg.symbol);
                         equity += gain;
                         trades.push(to_trade(old, fill_timestamp, exit, price, gain));
-                    }
-                    equity_peak = equity_peak.max(equity);
-                    let sized_quantity = if let (Some(risk_fraction), Some(stop)) =
-                        (strategy.entry_risk_fraction(), strategy.entry_stop_price())
-                    {
-                        risk_limited_quantity(
-                            side,
-                            price,
-                            stop,
-                            equity,
-                            equity_peak,
-                            risk_fraction,
-                            max_drawdown_dollars,
-                            &cfg,
-                        )
-                    } else {
-                        let raw_qty = cfg
-                            .sizing
-                            .map(|sizing| {
-                                let volatility_multiplier = volatility_target
-                                    .as_ref()
-                                    .map(VolTarget::multiplier)
-                                    .unwrap_or(1.0);
-                                sizing.base_lot * sizing.leverage * volatility_multiplier
-                            })
-                            .unwrap_or(quantity);
-                        Some(cfg.instrument.size(raw_qty))
-                    };
-                    if let Some(quantity) = sized_quantity {
-                        position = Some(Position {
-                            side,
-                            entry: fill(price, side == Side::Long, &cfg),
-                            raw: price,
-                            ts: fill_timestamp,
-                            quantity,
-                        });
-                    }
-                }
-            }
-            Action::Close { price, fraction } => {
-                if let Some(mut old) = position.take() {
-                    let close_qty = closed_size(old.quantity, fraction, cfg.instrument);
-                    let exit = fill(price, old.side == Side::Short, &cfg);
-                    let partial = Position {
-                        side: old.side,
-                        entry: old.entry,
-                        raw: old.raw,
-                        ts: old.ts,
-                        quantity: close_qty,
-                    };
-                    let gain = net_pnl(&partial, exit, cfg.commission, cfg.instrument, &cfg.symbol);
-                    equity += gain;
-                    trades.push(to_trade(partial, fill_timestamp, exit, price, gain));
-                    old.quantity -= close_qty;
-                    if old.quantity > 1e-8 {
-                        position = Some(old);
                     }
                 }
             }
@@ -246,6 +286,17 @@ fn run_engine<S: Strategy>(bars: &[Bar], mut strategy: S, cfg: EngineConfig) -> 
             equity_peak = equity_peak.max(equity);
             drawdowns.observe(equity, day);
         }
+        if flatten_after_bar {
+            for old in tagged_positions.drain(..) {
+                let raw_exit = bar.close;
+                let exit = fill(raw_exit, old.side == Side::Short, &cfg);
+                let gain = net_pnl(&old, exit, cfg.commission, cfg.instrument, &cfg.symbol);
+                equity += gain;
+                trades.push(to_trade(old, bar.ts, exit, raw_exit, gain));
+            }
+            equity_peak = equity_peak.max(equity);
+            drawdowns.observe(equity, day);
+        }
     }
     if let (Some(old), Some(last)) = (position.take(), bars.last()) {
         let mut raw_exit = last.close;
@@ -262,6 +313,16 @@ fn run_engine<S: Strategy>(bars: &[Bar], mut strategy: S, cfg: EngineConfig) -> 
         let gain = net_pnl(&old, exit, cfg.commission, cfg.instrument, &cfg.symbol);
         equity += gain;
         trades.push(to_trade(old, last.ts, exit, raw_exit, gain));
+        drawdowns.observe(equity, last.ts.div_euclid(86_400));
+    }
+    if let Some(last) = bars.last() {
+        for old in tagged_positions.drain(..) {
+            let raw_exit = last.close;
+            let exit = fill(raw_exit, old.side == Side::Short, &cfg);
+            let gain = net_pnl(&old, exit, cfg.commission, cfg.instrument, &cfg.symbol);
+            equity += gain;
+            trades.push(to_trade(old, last.ts, exit, raw_exit, gain));
+        }
         drawdowns.observe(equity, last.ts.div_euclid(86_400));
     }
     let first = bars
@@ -292,6 +353,10 @@ fn marked_equity(
     };
     match action {
         Action::Close { price, fraction } if fraction >= 1.0 => {
+            let exit = fill(price, position.side == Side::Short, cfg);
+            equity + net_pnl(position, exit, cfg.commission, cfg.instrument, &cfg.symbol)
+        }
+        Action::ClosePosition { id, price } if position.id == Some(id) => {
             let exit = fill(price, position.side == Side::Short, cfg);
             equity + net_pnl(position, exit, cfg.commission, cfg.instrument, &cfg.symbol)
         }
@@ -329,6 +394,7 @@ fn risk_limited_quantity(
         return None;
     }
     let unit = Position {
+        id: None,
         side,
         entry: fill(raw_entry, side == Side::Long, cfg),
         raw: raw_entry,
@@ -517,6 +583,7 @@ mod tests {
             volume_delta: 0.0,
             depth_events: 0,
             vix: 0.0,
+            order_flow: Default::default(),
         }
     }
 

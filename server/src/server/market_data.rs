@@ -577,15 +577,18 @@ async fn merged_march_candles(
         base_filter = base_filter,
     );
 
-    let direct_rows = optional_table_query(questdb, &direct_sql).await?;
-    if !direct_rows.is_empty() {
-        let parsed = parse_candles(direct_rows, 1_000)?;
-        if !parsed.is_empty() {
-            return Ok(parsed.into_values().collect());
+    if !matches!(symbol_lower.as_str(), "nq" | "es") {
+        let direct_rows = optional_table_query(questdb, &direct_sql).await?;
+        if !direct_rows.is_empty() {
+            let parsed = parse_candles(direct_rows, 1_000)?;
+            if !parsed.is_empty() {
+                return Ok(parsed.into_values().collect());
+            }
         }
     }
 
-    // 2. Fall back to 1m table + Bookmap tick aggregation
+    // 2. Merge 1m OHLCV, historical Databento, and live Bookmap. A more
+    // granular source replaces the same minute from the source before it.
     let ohlcv_sql = format!(
         concat!(
             "SELECT cast(timestamp as long) ts,open,high,low,close,volume ",
@@ -604,8 +607,23 @@ async fn merged_march_candles(
         symbol = symbol_lower,
         tick_filter = tick_filter,
     );
+    let databento_filter = databento_march_filter(from, to, lookback_days, true);
+    let databento_sql = format!(
+        concat!(
+            "SELECT cast(date_trunc('minute',timestamp) as long) ts,",
+            "first(price) open,max(price) high,min(price) low,last(price) close,sum(size) volume ",
+            "FROM dbento_{symbol}_ticks {databento_filter} GROUP BY ts ORDER BY ts",
+        ),
+        symbol = symbol_lower,
+        databento_filter = databento_filter,
+    );
 
     let mut minutes = parse_candles(optional_table_query(questdb, &ohlcv_sql).await?, 1_000)?;
+    for (timestamp, candle) in
+        parse_candles(optional_table_query(questdb, &databento_sql).await?, 1)?
+    {
+        minutes.insert(timestamp, candle);
+    }
     for (timestamp, candle) in parse_candles(optional_table_query(questdb, &bookmap_sql).await?, 1)?
     {
         minutes.insert(timestamp, candle);
@@ -645,6 +663,12 @@ fn march_filter(from: &str, to: &str, lookback_days: u32, require_trade: bool) -
         clauses.push(format!("timestamp >= dateadd('d',-{lookback_days},now())"));
     }
     format!("WHERE {}", clauses.join(" AND "))
+}
+
+/// Databento uses New York wall-clock values encoded as UTC in a nanosecond
+/// QuestDB timestamp, matching Bookmap and the application convention.
+fn databento_march_filter(from: &str, to: &str, lookback_days: u32, require_trade: bool) -> String {
+    march_filter(from, to, lookback_days, require_trade)
 }
 
 /// Enough one-minute history for the default latest-chart limit at each frame,
@@ -813,21 +837,63 @@ pub async fn ticks(
     limit: Option<i64>,
 ) -> Result<Vec<Tick>, ApiError> {
     validate_symbol(symbol)?;
-
-    // Page of the newest ticks matching the filters, returned in ascending
-    // order. `since` bounds below (live catch-up), `before` bounds above
-    // (lazy backfill of older history as the user scrolls left).
     let limit = limit.unwrap_or(10_000).clamp(1, 50_000);
-    let mut filter = String::new();
+    let mut ticks = query_databento_ticks(questdb, symbol, since, before, limit).await?;
+    ticks.extend(query_bookmap_ticks(questdb, symbol, since, before, limit).await?);
+    ticks.sort_by_key(|tick| tick.ts);
+    if ticks.len() > limit as usize {
+        ticks.drain(..ticks.len() - limit as usize);
+    }
+    Ok(ticks)
+}
+
+fn tick_filter(timestamp: &str, since: Option<i64>, before: Option<i64>) -> String {
+    let mut clauses = Vec::new();
     if let Some(since) = since {
-        filter.push_str(&format!("WHERE cast(timestamp as long) > {since} "));
+        clauses.push(format!("{timestamp} > {since}"));
     }
     if let Some(before) = before {
-        filter.push_str(if filter.is_empty() { "WHERE " } else { "AND " });
-        filter.push_str(&format!("cast(timestamp as long) < {before} "));
+        clauses.push(format!("{timestamp} < {before}"));
     }
+    if clauses.is_empty() {
+        String::new()
+    } else {
+        format!("WHERE {} ", clauses.join(" AND "))
+    }
+}
 
-    // Try to query with best_bid and best_ask columns first
+fn parse_tick_rows(rows: Vec<csv::StringRecord>, has_bbo: bool) -> Result<Vec<Tick>, ApiError> {
+    rows.into_iter()
+        .map(|row| {
+            let price: f64 = parse(&row, 1)?;
+            Ok(Tick {
+                ts: parse(&row, 0)?,
+                price,
+                size: parse(&row, 2)?,
+                side: field(&row, 3)?.into(),
+                best_bid: if has_bbo {
+                    parse(&row, 4).unwrap_or(price)
+                } else {
+                    price
+                },
+                best_ask: if has_bbo {
+                    parse(&row, 5).unwrap_or(price)
+                } else {
+                    price
+                },
+            })
+        })
+        .collect()
+}
+
+async fn query_bookmap_ticks(
+    questdb: &QuestDb,
+    symbol: &str,
+    since: Option<i64>,
+    before: Option<i64>,
+    limit: i64,
+) -> Result<Vec<Tick>, ApiError> {
+    let filter = tick_filter("cast(timestamp as long)", since, before);
     let sql_with_bbo = format!(
         concat!(
             "SELECT ts,price,size,side,best_bid,best_ask FROM (",
@@ -840,25 +906,9 @@ pub async fn ticks(
         filter = filter,
         limit = limit
     );
-
     match query(questdb, &sql_with_bbo).await {
-        Ok(rows) => {
-            rows.into_iter()
-                .map(|row| {
-                    let price: f64 = parse(&row, 1)?;
-                    Ok(Tick {
-                        ts: parse(&row, 0)?, // Stored as TIMESTAMP_NS directly
-                        price,
-                        size: parse(&row, 2)?,
-                        side: field(&row, 3)?.into(),
-                        best_bid: parse(&row, 4).unwrap_or(price),
-                        best_ask: parse(&row, 5).unwrap_or(price),
-                    })
-                })
-                .collect()
-        }
+        Ok(rows) => parse_tick_rows(rows, true),
         Err(_) => {
-            // Fallback for tables without best_bid/best_ask columns
             let sql_without_bbo = format!(
                 concat!(
                     "SELECT ts,price,size,side FROM (",
@@ -871,22 +921,36 @@ pub async fn ticks(
                 filter = filter,
                 limit = limit
             );
-            let rows = query(questdb, &sql_without_bbo).await?;
-            rows.into_iter()
-                .map(|row| {
-                    let price: f64 = parse(&row, 1)?;
-                    Ok(Tick {
-                        ts: parse(&row, 0)?,
-                        price,
-                        size: parse(&row, 2)?,
-                        side: field(&row, 3)?.into(),
-                        best_bid: price,
-                        best_ask: price,
-                    })
-                })
-                .collect()
+            match optional_table_query(questdb, &sql_without_bbo).await {
+                Ok(rows) => parse_tick_rows(rows, false),
+                Err(error) => Err(error),
+            }
         }
     }
+}
+
+async fn query_databento_ticks(
+    questdb: &QuestDb,
+    symbol: &str,
+    since: Option<i64>,
+    before: Option<i64>,
+    limit: i64,
+) -> Result<Vec<Tick>, ApiError> {
+    let timestamp = "cast(timestamp as long)";
+    let filter = tick_filter(timestamp, since, before);
+    let sql = format!(
+        concat!(
+            "SELECT ts,price,size,side FROM (",
+            "SELECT {timestamp} ts,price,size,side FROM dbento_{symbol}_ticks {filter}",
+            "ORDER BY timestamp DESC LIMIT {limit}",
+            ") ORDER BY ts ASC",
+        ),
+        timestamp = timestamp,
+        symbol = symbol,
+        filter = filter,
+        limit = limit,
+    );
+    parse_tick_rows(optional_table_query(questdb, &sql).await?, false)
 }
 
 #[derive(Serialize)]
@@ -934,31 +998,39 @@ pub async fn volume_profile_delta(
     to: &str,
 ) -> Result<Vec<VolumeProfileDeltaBin>, ApiError> {
     validate_symbol(symbol)?;
-    let filter = march_filter(from, to, 0, true);
-    let sql = format!(
+    let bookmap_filter = march_filter(from, to, 0, true);
+    let bookmap_sql = format!(
         concat!(
             "SELECT ",
             "cast(date_trunc('minute', timestamp) as long) ts_min, ",
             "round(price / {tick_size}) * {tick_size} price_bin, ",
             "side, ",
             "sum(size) total_vol ",
-            "FROM bm_{symbol}_ticks {filter} ",
+            "FROM bm_{symbol}_ticks {bookmap_filter} ",
             "GROUP BY ts_min, price_bin, side"
         ),
         symbol = symbol,
         tick_size = tick_size,
-        filter = filter
+        bookmap_filter = bookmap_filter,
     );
+    let databento_filter = databento_march_filter(from, to, 0, true);
+    let databento_sql = format!(
+        concat!(
+            "SELECT ",
+            "cast(date_trunc('minute',timestamp) as long) ts_min, ",
+            "round(price / {tick_size}) * {tick_size} price_bin,side,sum(size) total_vol ",
+            "FROM dbento_{symbol}_ticks {databento_filter} ",
+            "GROUP BY ts_min,price_bin,side"
+        ),
+        symbol = symbol,
+        tick_size = tick_size,
+        databento_filter = databento_filter,
+    );
+    let mut rows = optional_table_query(questdb, &databento_sql).await?;
+    rows.extend(optional_table_query(questdb, &bookmap_sql).await?);
 
-    let rows = match questdb.csv(&sql).await {
-        Ok(rows) => rows,
-        Err(ApiError::QuestDb(detail)) if detail.contains("table does not exist") => {
-            return Ok(Vec::new());
-        }
-        Err(error) => return Err(error),
-    };
-
-    let mut session_map: std::collections::BTreeMap<(i64, i64), f64> = std::collections::BTreeMap::new();
+    let mut session_map: std::collections::BTreeMap<(i64, i64), f64> =
+        std::collections::BTreeMap::new();
     for row in rows {
         let ts_nanos: i64 = parse(&row, 0)?;
         let ts_secs = ts_nanos / 1_000_000_000;
@@ -1010,7 +1082,8 @@ pub async fn volume_profile_delta(
     Ok(bins)
 }
 
-/// Returns sampled Bookmap resting-depth state changes. Each row is encoded as
+/// Returns sampled resting-depth state changes from historical Databento and
+/// live Bookmap. Each row is encoded as
 /// u32 fake-UTC seconds, f32 price, f32 current size. Sampling is deliberately
 /// finer than a candle while keeping the response bounded enough for canvas.
 pub async fn bookmap_heatmap(
@@ -1033,31 +1106,56 @@ pub async fn bookmap_heatmap(
         "1d" => "1h",
         _ => unreachable!(),
     };
-    let mut filter = march_filter(from, to, 2, false);
+    let mut bookmap_filter = march_filter(from, to, 2, false);
+    let mut databento_filter = databento_march_filter(from, to, 2, false);
     if let Some(since) = since {
         let since_nanos = since.saturating_mul(1_000_000_000);
-        filter.push_str(&format!(" AND cast(timestamp as long) > {since_nanos}"));
+        bookmap_filter.push_str(&format!(" AND cast(timestamp as long) > {since_nanos}"));
+        databento_filter.push_str(&format!(" AND cast(timestamp as long) > {since_nanos}"));
     }
-    let sql = format!(
+    let bookmap_sql = format!(
         concat!(
-            "SELECT cast(timestamp as long) ts,price_level,last(size_level) size ",
-            "FROM bm_{symbol}_depth {filter} ",
+            "SELECT cast(timestamp as long) ts,price,last(size) size ",
+            "FROM bm_{symbol}_depth {bookmap_filter} ",
             "SAMPLE BY {sample} FILL(NONE) ALIGN TO CALENDAR",
         ),
         symbol = symbol,
-        filter = filter,
+        bookmap_filter = bookmap_filter,
         sample = sample,
     );
-    let rows = optional_table_query(questdb, &sql).await?;
-    let mut output = Vec::with_capacity(8 + rows.len() * 12);
-    output.extend_from_slice(&HEATMAP_MAGIC.to_le_bytes());
-    output.extend_from_slice(&(rows.len() as u32).to_le_bytes());
-    for row in rows {
+    let databento_sql = format!(
+        concat!(
+            "SELECT cast(timestamp_floor('{sample}',timestamp) ",
+            "as long) ts,price,last(size) size ",
+            "FROM dbento_{symbol}_depth {databento_filter} GROUP BY ts,price",
+        ),
+        sample = sample,
+        symbol = symbol,
+        databento_filter = databento_filter,
+    );
+
+    // Databento fills historical coverage and Bookmap replaces an identical
+    // sampled timestamp/price if the sources ever overlap.
+    let mut points: BTreeMap<(i64, i64), (f64, f64)> = BTreeMap::new();
+    for row in optional_table_query(questdb, &databento_sql).await? {
         let nanos: i64 = parse(&row, 0)?;
-        let price_level: i64 = parse(&row, 1)?;
-        let size: i64 = parse(&row, 2)?;
+        let price: f64 = parse(&row, 1)?;
+        let size: f64 = parse(&row, 2)?;
+        points.insert((nanos, (price * 1_000_000.0).round() as i64), (price, size));
+    }
+    for row in optional_table_query(questdb, &bookmap_sql).await? {
+        let nanos: i64 = parse(&row, 0)?;
+        let price: f64 = parse(&row, 1)?;
+        let size: f64 = parse(&row, 2)?;
+        points.insert((nanos, (price * 1_000_000.0).round() as i64), (price, size));
+    }
+
+    let mut output = Vec::with_capacity(8 + points.len() * 12);
+    output.extend_from_slice(&HEATMAP_MAGIC.to_le_bytes());
+    output.extend_from_slice(&(points.len() as u32).to_le_bytes());
+    for ((nanos, _), (price, size)) in points {
         output.extend_from_slice(&((nanos / 1_000_000_000) as u32).to_le_bytes());
-        output.extend_from_slice(&((price_level as f32) / 4.0).to_le_bytes());
+        output.extend_from_slice(&(price as f32).to_le_bytes());
         output.extend_from_slice(&(size as f32).to_le_bytes());
     }
     Ok(output)

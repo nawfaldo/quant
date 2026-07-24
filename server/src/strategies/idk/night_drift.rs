@@ -236,6 +236,7 @@ mod tests {
             volume_delta: 0.0,
             depth_events: 0,
             vix: 20.0,
+            order_flow: Default::default(),
         }
     }
 

@@ -1,5 +1,35 @@
 use serde::Serialize;
 
+#[derive(Clone, Copy, Default)]
+pub(crate) struct OrderFlowFeatures {
+    pub(crate) midprice: f64,
+    pub(crate) spread: f64,
+    pub(crate) microprice: f64,
+    pub(crate) top1_imbalance: f64,
+    pub(crate) top5_imbalance: f64,
+    pub(crate) top10_imbalance: f64,
+    pub(crate) bid_add_volume: f64,
+    pub(crate) bid_cancel_volume: f64,
+    pub(crate) ask_add_volume: f64,
+    pub(crate) ask_cancel_volume: f64,
+    pub(crate) aggressive_buy_volume: f64,
+    pub(crate) aggressive_sell_volume: f64,
+    pub(crate) trade_delta: f64,
+    pub(crate) price_change: f64,
+    pub(crate) delta_per_tick: f64,
+    pub(crate) executed_at_bid: f64,
+    pub(crate) executed_at_ask: f64,
+    pub(crate) bid_replenishment: f64,
+    pub(crate) ask_replenishment: f64,
+    pub(crate) replenishment_score: f64,
+    pub(crate) bid_depth_distance: f64,
+    pub(crate) ask_depth_distance: f64,
+    pub(crate) depth_weighted_distance: f64,
+    pub(crate) trade_count: u64,
+    pub(crate) depth_event_count: u64,
+    pub(crate) book_valid: bool,
+}
+
 #[derive(Clone, Copy)]
 pub(crate) struct Bar {
     pub(crate) ts: i64,
@@ -11,6 +41,7 @@ pub(crate) struct Bar {
     pub(crate) volume_delta: f64,
     pub(crate) depth_events: u64,
     pub(crate) vix: f64,
+    pub(crate) order_flow: OrderFlowFeatures,
 }
 #[derive(Clone, Copy, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -128,11 +159,29 @@ pub(crate) enum Action {
         price: f64,
         fraction: f64,
     },
+    EnterPosition {
+        id: u64,
+        side: Side,
+        price: f64,
+        quantity: f64,
+    },
+    ClosePosition {
+        id: u64,
+        price: f64,
+    },
 }
 
 pub(crate) trait Strategy {
     fn update(&mut self, bar: Bar, equity: f64) -> Action;
+    fn update_all(&mut self, bar: Bar, equity: f64) -> Vec<Action> {
+        vec![self.update(bar, equity)]
+    }
     fn discard(&mut self, _action: Action) {}
+    fn discard_all(&mut self, actions: Vec<Action>) {
+        for action in actions {
+            self.discard(action);
+        }
+    }
     fn session_end_minute(&self) -> Option<usize> {
         None
     }

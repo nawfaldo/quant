@@ -2,7 +2,7 @@ use super::{
     data::{parse_iso_days, valid_date},
     engine::{EngineConfig, RunResult, execute},
     request::RunRequest,
-    types::{Bar, Instrument},
+    types::{Bar, Instrument, OrderFlowFeatures},
 };
 use crate::{
     database::EnvironmentCosts,
@@ -149,29 +149,187 @@ async fn load_order_flow_bars(
     from: &str,
     to: &str,
 ) -> Result<Vec<Bar>, ApiError> {
+    let mut merged = BTreeMap::new();
+    match load_order_flow_source(questdb, symbol, from, to, true).await {
+        Ok(databento) => {
+            for bar in databento {
+                merged.insert(bar.ts, bar);
+            }
+        }
+        Err(ApiError::QuestDb(detail)) if detail.contains("table does not exist") => {}
+        Err(error) => return Err(error),
+    }
+    match load_order_flow_source(questdb, symbol, from, to, false).await {
+        Ok(bookmap) => {
+            // Bookmap is the live source and wins if a minute ever overlaps.
+            for bar in bookmap {
+                merged.insert(bar.ts, bar);
+            }
+        }
+        Err(ApiError::QuestDb(detail)) if detail.contains("table does not exist") => {}
+        Err(error) => return Err(error),
+    }
+    let mut bars: Vec<_> = merged.into_values().collect();
+    attach_l2_features(questdb, symbol, from, to, &mut bars).await?;
+    Ok(bars)
+}
+
+async fn attach_l2_features(
+    questdb: &QuestDb,
+    symbol: &str,
+    from: &str,
+    to: &str,
+    bars: &mut [Bar],
+) -> Result<(), ApiError> {
+    let mut features = BTreeMap::new();
+    // Databento supplies the older history; Bookmap is loaded second and wins
+    // for any minute where both normalized sources are present.
+    for source in ["dbento", "bm"] {
+        let sql = format!(
+            concat!(
+                "SELECT cast(timestamp as long) ts,last(midprice),last(spread),last(microprice),",
+                "last(top1_imbalance),last(top5_imbalance),last(top10_imbalance),",
+                "sum(bid_add_volume),sum(bid_cancel_volume),sum(ask_add_volume),",
+                "sum(ask_cancel_volume),sum(aggressive_buy_volume),sum(aggressive_sell_volume),",
+                "sum(trade_delta),sum(price_change),sum(delta_per_tick),",
+                "sum(executed_at_bid),sum(executed_at_ask),sum(bid_replenishment),",
+                "sum(ask_replenishment),last(bid_depth_distance),last(ask_depth_distance),",
+                "last(depth_weighted_distance),sum(trade_count),sum(depth_event_count),",
+                "last(book_valid) FROM {symbol}_l2_features_1s ",
+                "WHERE source = '{source}' AND timestamp >= '{from}' ",
+                "AND timestamp < dateadd('d',1,'{to}') ",
+                "SAMPLE BY 1m FILL(NONE) ALIGN TO CALENDAR",
+            ),
+            symbol = symbol,
+            source = source,
+            from = from,
+            to = to,
+        );
+        let rows = match questdb.csv(&sql).await {
+            Ok(rows) => rows,
+            Err(ApiError::QuestDb(detail)) if detail.contains("table does not exist") => {
+                return Ok(());
+            }
+            Err(error) => return Err(error),
+        };
+        for row in rows {
+            let field = |index: usize| {
+                row.get(index)
+                    .ok_or_else(|| ApiError::QuestDb("missing L2 feature column".into()))
+            };
+            let number = |index: usize| -> Result<f64, ApiError> {
+                field(index)?
+                    .parse()
+                    .map_err(|_| ApiError::QuestDb(format!("invalid L2 feature in column {index}")))
+            };
+            let count = |index: usize| -> Result<u64, ApiError> {
+                field(index)?
+                    .parse()
+                    .map_err(|_| ApiError::QuestDb(format!("invalid L2 count in column {index}")))
+            };
+            let ts = field(0)?
+                .parse::<i64>()
+                .map_err(|_| ApiError::QuestDb("invalid L2 feature timestamp".into()))?
+                / 1_000_000;
+            let bid_replenishment = number(18)?;
+            let ask_replenishment = number(19)?;
+            let total_replenishment = bid_replenishment + ask_replenishment;
+            features.insert(
+                ts,
+                OrderFlowFeatures {
+                    midprice: number(1)?,
+                    spread: number(2)?,
+                    microprice: number(3)?,
+                    top1_imbalance: number(4)?,
+                    top5_imbalance: number(5)?,
+                    top10_imbalance: number(6)?,
+                    bid_add_volume: number(7)?,
+                    bid_cancel_volume: number(8)?,
+                    ask_add_volume: number(9)?,
+                    ask_cancel_volume: number(10)?,
+                    aggressive_buy_volume: number(11)?,
+                    aggressive_sell_volume: number(12)?,
+                    trade_delta: number(13)?,
+                    price_change: number(14)?,
+                    delta_per_tick: number(15)?,
+                    executed_at_bid: number(16)?,
+                    executed_at_ask: number(17)?,
+                    bid_replenishment,
+                    ask_replenishment,
+                    replenishment_score: if total_replenishment > 0.0 {
+                        (bid_replenishment - ask_replenishment) / total_replenishment
+                    } else {
+                        0.0
+                    },
+                    bid_depth_distance: number(20)?,
+                    ask_depth_distance: number(21)?,
+                    depth_weighted_distance: number(22)?,
+                    trade_count: count(23)?,
+                    depth_event_count: count(24)?,
+                    book_valid: field(25)?
+                        .parse()
+                        .map_err(|_| ApiError::QuestDb("invalid L2 book-valid flag".into()))?,
+                },
+            );
+        }
+    }
+    for bar in bars {
+        if let Some(feature) = features.get(&bar.ts) {
+            bar.order_flow = *feature;
+        }
+    }
+    Ok(())
+}
+
+async fn load_order_flow_source(
+    questdb: &QuestDb,
+    symbol: &str,
+    from: &str,
+    to: &str,
+    databento: bool,
+) -> Result<Vec<Bar>, ApiError> {
+    let table_prefix = if databento { "dbento" } else { "bm" };
+    let (timestamp_select, timestamp_filter, aggregation) = if databento {
+        (
+            "cast(date_trunc('minute',timestamp) as long)",
+            format!(
+                "timestamp >= '{from}' \
+                 AND timestamp < dateadd('d',1,'{to}')"
+            ),
+            "GROUP BY ts ORDER BY ts",
+        )
+    } else {
+        (
+            "cast(timestamp as long)",
+            format!("timestamp >= '{from}' AND timestamp < dateadd('d',1,'{to}')"),
+            "SAMPLE BY 1m FILL(NONE) ALIGN TO CALENDAR",
+        )
+    };
     let tick_sql = format!(
         concat!(
-            "SELECT cast(timestamp as long) ts,first(price) open,max(price) high,",
+            "SELECT {timestamp_select} ts,first(price) open,max(price) high,",
             "min(price) low,last(price) close,sum(size) volume,",
             "sum(CASE WHEN side = 'BUY' THEN size WHEN side = 'SELL' THEN -size ELSE 0 END) volume_delta ",
-            "FROM bm_{symbol}_ticks WHERE size > 0 ",
-            "AND timestamp >= '{from}' AND timestamp < dateadd('d',1,'{to}') ",
-            "SAMPLE BY 1m FILL(NONE) ALIGN TO CALENDAR",
+            "FROM {table_prefix}_{symbol}_ticks WHERE size > 0 AND {timestamp_filter} ",
+            "{aggregation}",
         ),
+        timestamp_select = timestamp_select,
+        table_prefix = table_prefix,
         symbol = symbol,
-        from = from,
-        to = to,
+        timestamp_filter = timestamp_filter,
+        aggregation = aggregation,
     );
     let depth_sql = format!(
         concat!(
-            "SELECT cast(timestamp as long) ts,count() depth_events ",
-            "FROM bm_{symbol}_depth WHERE timestamp >= '{from}' ",
-            "AND timestamp < dateadd('d',1,'{to}') ",
-            "SAMPLE BY 1m FILL(NONE) ALIGN TO CALENDAR",
+            "SELECT {timestamp_select} ts,count() depth_events ",
+            "FROM {table_prefix}_{symbol}_depth WHERE {timestamp_filter} ",
+            "{aggregation}",
         ),
+        timestamp_select = timestamp_select,
+        table_prefix = table_prefix,
         symbol = symbol,
-        from = from,
-        to = to,
+        timestamp_filter = timestamp_filter,
+        aggregation = aggregation,
     );
 
     let depth = questdb
@@ -229,6 +387,7 @@ fn order_flow_bar_from_csv(
         volume_delta: number(6)?,
         depth_events: depth.get(&ts).copied().unwrap_or(0),
         vix: 0.0,
+        order_flow: OrderFlowFeatures::default(),
     })
 }
 
@@ -396,6 +555,7 @@ fn bookmap_bar_from_csv(row: &csv::StringRecord) -> Result<Bar, ApiError> {
         volume_delta: 0.0,
         depth_events: 0,
         vix: 0.0,
+        order_flow: OrderFlowFeatures::default(),
     })
 }
 
@@ -423,5 +583,6 @@ pub(crate) fn backtest_bar_from_csv(row: &csv::StringRecord) -> Result<Bar, ApiE
         volume_delta: 0.0,
         depth_events: 0,
         vix: number(7)?,
+        order_flow: OrderFlowFeatures::default(),
     })
 }

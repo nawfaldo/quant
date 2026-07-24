@@ -184,6 +184,7 @@ mod tests {
             volume_delta: delta,
             depth_events: 1,
             vix: 18.0,
+            order_flow: Default::default(),
         }
     }
 
