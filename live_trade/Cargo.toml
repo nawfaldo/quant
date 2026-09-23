@@ -1,0 +1,59 @@
+[package]
+name = "live_trade"
+version = "0.1.0"
+edition = "2024"
+default-run = "live_trade"
+
+[dependencies]
+actix-cors = "0.7"
+actix-web = "4.11"
+anyhow = "1"
+arrow-array = "59"
+arrow-schema = "59"
+futures-util = "0.3"
+parquet = { version = "59", default-features = false, features = ["arrow", "snap", "zstd", "flate2-rust_backend"] }
+sea-orm = { version = "1.1.20", default-features = false, features = ["macros", "runtime-tokio-rustls", "sqlx-sqlite"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["net", "time"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[profile.dev]
+# Windows MSVC writes a 193 MB PDB for this crate and linking it dominates an
+# incremental build. Line tables keep backtraces pointing at real source lines
+# at a fraction of the size, and `opt-level = 1` stops a debug backtest from
+# crawling. Dependencies never need either.
+debug = "line-tables-only"
+opt-level = 1
+
+[profile.dev.package."*"]
+debug = false
+opt-level = 2
+
+[profile.release]
+lto = "thin"
+strip = true
+
+# Diagnostic drivers, kept out of `src/bin/` so the tree shows one library and
+# its tools rather than a directory Cargo treats as magic. Each needs an
+# explicit path because of that.
+[[bin]]
+name = "live_trade"
+path = "src/main.rs"
+
+[[bin]]
+name = "exness_book"
+path = "src/tools/exness_book.rs"
+
+[[bin]]
+name = "exness_live_book"
+path = "src/tools/exness_live_book.rs"
+
+[[bin]]
+name = "exness_sleeve_probe"
+path = "src/tools/exness_sleeve_probe.rs"

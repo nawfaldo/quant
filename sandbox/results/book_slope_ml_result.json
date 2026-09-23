@@ -1,0 +1,325 @@
+{
+  "strategy": "Book Slope Asymmetry",
+  "status": "rejected",
+  "model": {
+    "family": "standardized_l2_logistic_regression",
+    "regularization_c": 0.1,
+    "threshold": 0.5,
+    "features": [
+      "abs_slope",
+      "signed_top1_imbalance",
+      "signed_top5_imbalance",
+      "signed_top10_imbalance",
+      "signed_microprice_ticks",
+      "signed_trade_delta",
+      "signed_price_change",
+      "signed_replenishment",
+      "toxicity",
+      "log_trade_count",
+      "log_depth_events",
+      "asinh_depth_weighted_distance",
+      "spread",
+      "session_progress"
+    ]
+  },
+  "data_range": [
+    "2025-02-12",
+    "2026-07-28"
+  ],
+  "candidate_count": 15377,
+  "baseline_trade_count": 9458,
+  "folds": [
+    {
+      "month": "2025-08",
+      "train": 2844,
+      "candidates": 770,
+      "baseline_trades": 443,
+      "model_trades": 361,
+      "baseline_points": -390.5999999987107,
+      "model_points": -96.94999999894935
+    },
+    {
+      "month": "2025-09",
+      "train": 3317,
+      "candidates": 675,
+      "baseline_trades": 387,
+      "model_trades": 287,
+      "baseline_points": -461.1499999988737,
+      "model_points": -249.39999999916472
+    },
+    {
+      "month": "2025-10",
+      "train": 3686,
+      "candidates": 864,
+      "baseline_trades": 561,
+      "model_trades": 248,
+      "baseline_points": 542.3000000016327,
+      "model_points": 13.650000000721775
+    },
+    {
+      "month": "2025-11",
+      "train": 4240,
+      "candidates": 734,
+      "baseline_trades": 502,
+      "model_trades": 142,
+      "baseline_points": 1248.100000001461,
+      "model_points": 60.100000000413274
+    },
+    {
+      "month": "2025-12",
+      "train": 4767,
+      "candidates": 777,
+      "baseline_trades": 458,
+      "model_trades": 283,
+      "baseline_points": 465.15000000133296,
+      "model_points": 247.40000000082364
+    },
+    {
+      "month": "2026-01",
+      "train": 5214,
+      "candidates": 634,
+      "baseline_trades": 399,
+      "model_trades": 258,
+      "baseline_points": 58.70000000116124,
+      "model_points": -278.3499999992491
+    },
+    {
+      "month": "2026-02",
+      "train": 5624,
+      "candidates": 689,
+      "baseline_trades": 487,
+      "model_trades": 198,
+      "baseline_points": -488.64999999858264,
+      "model_points": -146.34999999942374
+    },
+    {
+      "month": "2026-03",
+      "train": 6111,
+      "candidates": 1069,
+      "baseline_trades": 662,
+      "model_trades": 271,
+      "baseline_points": -397.6499999980733,
+      "model_points": -367.9499999992113
+    },
+    {
+      "month": "2026-04",
+      "train": 6747,
+      "candidates": 907,
+      "baseline_trades": 540,
+      "model_trades": 331,
+      "baseline_points": -1244.2499999984284,
+      "model_points": -1186.9499999990367
+    },
+    {
+      "month": "2026-05",
+      "train": 7278,
+      "candidates": 1114,
+      "baseline_trades": 659,
+      "model_trades": 292,
+      "baseline_points": -315.54999999808206,
+      "model_points": 529.8500000008498
+    },
+    {
+      "month": "2026-06",
+      "train": 7972,
+      "candidates": 1301,
+      "baseline_trades": 774,
+      "model_trades": 216,
+      "baseline_points": 246.95000000225264,
+      "model_points": -394.19999999937136
+    },
+    {
+      "month": "2026-07",
+      "train": 8719,
+      "candidates": 1172,
+      "baseline_trades": 712,
+      "model_trades": 275,
+      "baseline_points": -1026.3999999979278,
+      "model_points": -586.7499999991996
+    }
+  ],
+  "baseline_oos_points": {
+    "trades": 6584,
+    "points": -1763.05,
+    "edge": -0.2678,
+    "pf": 0.9748
+  },
+  "model_oos_points": {
+    "trades": 3162,
+    "points": -2455.9,
+    "edge": -0.7767,
+    "pf": 0.9157
+  },
+  "pure_filter_oos_points": {
+    "trades": 2657,
+    "points": -2618.65,
+    "edge": -0.9856,
+    "pf": 0.8917
+  },
+  "baseline_oos_sized": {
+    "pnl": -249.88,
+    "trades": 6584,
+    "win_rate": 0.44,
+    "pf": 0.975,
+    "max_dd": 538.5,
+    "n_months": 12,
+    "pos_months": 5,
+    "worst_month": -180.78,
+    "best_month": 197.65,
+    "msharpe": -0.213,
+    "pos_rate": 0.417,
+    "max_loss_streak": 4,
+    "worst_quarter": -345.73,
+    "top_month_share": 0.526,
+    "months": {
+      "2025-08": -65.38,
+      "2025-09": -67.52,
+      "2025-10": 74.22,
+      "2025-11": 197.65,
+      "2025-12": 77.38,
+      "2026-01": 8.03,
+      "2026-02": -92.69,
+      "2026-03": -72.26,
+      "2026-04": -180.78,
+      "2026-05": -36.96,
+      "2026-06": 18.39,
+      "2026-07": -109.94
+    }
+  },
+  "model_oos_sized": {
+    "pnl": -308.4,
+    "trades": 3162,
+    "win_rate": 0.443,
+    "pf": 0.92,
+    "max_dd": 336.52,
+    "n_months": 12,
+    "pos_months": 4,
+    "worst_month": -138.03,
+    "best_month": 52.92,
+    "msharpe": -0.545,
+    "pos_rate": 0.333,
+    "max_loss_streak": 4,
+    "worst_quarter": -213.42,
+    "top_month_share": 0.54,
+    "months": {
+      "2025-08": -16.42,
+      "2025-09": -39.45,
+      "2025-10": 2.55,
+      "2025-11": 8.7,
+      "2025-12": 33.78,
+      "2026-01": -41.41,
+      "2026-02": -23.05,
+      "2026-03": -52.34,
+      "2026-04": -138.03,
+      "2026-05": 52.92,
+      "2026-06": -39.11,
+      "2026-07": -56.55
+    }
+  },
+  "matched_random_control": {
+    "draws": 5000,
+    "mean": -1157.28,
+    "p_ge_model": 0.957
+  },
+  "purged_cv": {
+    "blocks": [
+      {
+        "from": "2025-02-01",
+        "to": "2025-05-01",
+        "train": 7862,
+        "trades": 538,
+        "points": -886.35,
+        "edge": -1.6475,
+        "pf": 0.846
+      },
+      {
+        "from": "2025-05-01",
+        "to": "2025-08-01",
+        "train": 8100,
+        "trades": 1073,
+        "points": -197.1,
+        "edge": -0.1837,
+        "pf": 0.9759
+      },
+      {
+        "from": "2025-08-01",
+        "to": "2025-11-01",
+        "train": 8037,
+        "trades": 1055,
+        "points": -606.5,
+        "edge": -0.5749,
+        "pf": 0.9275
+      },
+      {
+        "from": "2025-11-01",
+        "to": "2026-02-01",
+        "train": 8074,
+        "trades": 634,
+        "points": 212.45,
+        "edge": 0.3351,
+        "pf": 1.045
+      },
+      {
+        "from": "2026-02-01",
+        "to": "2026-05-01",
+        "train": 7741,
+        "trades": 757,
+        "points": -1379.4,
+        "edge": -1.8222,
+        "pf": 0.8239
+      },
+      {
+        "from": "2026-05-01",
+        "to": "2026-08-01",
+        "train": 7278,
+        "trades": 766,
+        "points": -236.2,
+        "edge": -0.3084,
+        "pf": 0.9694
+      }
+    ],
+    "stitched": {
+      "trades": 4823,
+      "points": -3093.1,
+      "edge": -0.6413,
+      "pf": 0.9273
+    },
+    "positive_blocks": 1
+  },
+  "gate": {
+    "passed": false,
+    "cumulative_trials": 217,
+    "edge_t": -2.1755,
+    "deflated_t": -5.4558,
+    "edge_ci_95": [
+      -1.4853,
+      -0.0642
+    ],
+    "checks": [
+      {
+        "name": "stitched OOS PnL > 0",
+        "passed": false
+      },
+      {
+        "name": "profitable folds >= 2/3",
+        "passed": false
+      },
+      {
+        "name": "edge CI excludes zero",
+        "passed": false
+      },
+      {
+        "name": "deflated t > 0",
+        "passed": false
+      },
+      {
+        "name": "purged-CV coverage",
+        "passed": false
+      },
+      {
+        "name": "random-filter p < 0.05",
+        "passed": false
+      }
+    ]
+  }
+}

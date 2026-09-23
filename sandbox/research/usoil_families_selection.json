@@ -1,0 +1,46 @@
+{
+  "families": {
+    "donchian": null,
+    "eia": null,
+    "gap": null,
+    "ma_cross": null,
+    "momentum": null,
+    "orb": null,
+    "overnight": null,
+    "pdr": null,
+    "vwap": null,
+    "zscore": null
+  },
+  "protocol": {
+    "balance_note": "Selection runs at 10,000 because at the requested 1,000 the 10-barrel lot step, not the signal, decides which cells trade at all. Every winner is reported at both balances.",
+    "bars": "usoil_1m causally aggregated to 30m; out-of-session buckets used only for the overnight and gap anchors",
+    "candidate_counts": {
+      "donchian": 504,
+      "eia": 672,
+      "gap": 504,
+      "ma_cross": 1008,
+      "momentum": 4536,
+      "orb": 1344,
+      "overnight": 672,
+      "pdr": 672,
+      "vwap": 1008,
+      "zscore": 3024
+    },
+    "clock": "usoil_1m is New York wall-clock, established from the empty 17:00 maintenance hour and the 09:00 / 10:30 / 14:27-14:29 volume peaks; no timestamp is converted",
+    "contract": "Exness USOIL: 1000 barrels a lot, 0.01 lot minimum, so quantity is in barrels and the step is 10 barrels",
+    "cost_note": "0.20 a barrel charged wholly at entry, as specified. Zero-account commission (6.25 a lot = 0.00625 a barrel) is inside that, so this is the conservative side.",
+    "entry_spread": 0.2,
+    "in_sample": "2018-01-01 through 2024-12-31",
+    "out_of_sample": "2025-01-01 through 2026-08-06, untouched by selection",
+    "report_balances": [
+      10000.0,
+      1000.0
+    ],
+    "select_balance": 10000.0,
+    "selection_gate": ">=6 of 7 in-sample years profitable; selected DD 8.0-20.0%; annual DD <=22.0%; >=300 trades ({'eia': 150}); PF >=1.05; the volatility and trend filters must refine an already profitable unfiltered cell; >=60% of numeric neighbours robust",
+    "session": "09:00-14:30 New York (the WTI pit session); entries inside it only, forced flatten at the close",
+    "sizing": "fixed risk 0.015 of equity, vol target 0.4, floored to the 10-barrel lot step inside 25% margin; not searched, so it can be rescaled to a drawdown budget afterwards"
+  },
+  "seal_sha256": "1b4c86b41c621759e081c02695b39df376a313e6fcd0cb01d9679662f1dd345d",
+  "sealed": true
+}

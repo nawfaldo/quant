@@ -1,0 +1,445 @@
+{
+  "strategy": "Liquidity Withdrawal (adds-only)",
+  "status": "rejected",
+  "model": {
+    "version": 1,
+    "family": "standardized_l2_logistic_regression",
+    "regularization_c": 0.1,
+    "class_weight": "balanced",
+    "threshold": 0.5,
+    "feature_names": [
+      "abs_lwi_z",
+      "joint_withdrawal",
+      "signed_trade_delta",
+      "signed_top1_imbalance",
+      "signed_top5_imbalance",
+      "signed_top10_imbalance",
+      "signed_microprice_ticks",
+      "signed_price_change",
+      "signed_replenishment",
+      "toxicity",
+      "log_trade_count",
+      "log_depth_events",
+      "spread",
+      "session_progress"
+    ]
+  },
+  "data_range": [
+    "2025-02-12",
+    "2026-07-28"
+  ],
+  "candidate_count": 8913,
+  "baseline_trade_count": 4545,
+  "walk_forward_folds": [
+    {
+      "month": "2025-08",
+      "train": 1623,
+      "candidates": 506,
+      "baseline_trades": 290,
+      "model_trades": 213,
+      "baseline_points": -92.24999999915599,
+      "model_points": -128.3499999993801
+    },
+    {
+      "month": "2025-09",
+      "train": 1914,
+      "candidates": 451,
+      "baseline_trades": 211,
+      "model_trades": 142,
+      "baseline_points": -3.699999999385909,
+      "model_points": 84.60000000041327
+    },
+    {
+      "month": "2025-10",
+      "train": 2122,
+      "candidates": 520,
+      "baseline_trades": 289,
+      "model_trades": 189,
+      "baseline_points": 238.9500000008411,
+      "model_points": 250.95000000055006
+    },
+    {
+      "month": "2025-11",
+      "train": 2404,
+      "candidates": 479,
+      "baseline_trades": 196,
+      "model_trades": 120,
+      "baseline_points": -322.94999999942956,
+      "model_points": -503.49999999965075
+    },
+    {
+      "month": "2025-12",
+      "train": 2610,
+      "candidates": 614,
+      "baseline_trades": 281,
+      "model_trades": 148,
+      "baseline_points": -327.1999999991822,
+      "model_points": -135.09999999956926
+    },
+    {
+      "month": "2026-01",
+      "train": 2872,
+      "candidates": 329,
+      "baseline_trades": 185,
+      "model_trades": 73,
+      "baseline_points": -270.2499999994616,
+      "model_points": 53.90000000021246
+    },
+    {
+      "month": "2026-02",
+      "train": 3076,
+      "candidates": 402,
+      "baseline_trades": 217,
+      "model_trades": 85,
+      "baseline_points": 189.60000000063155,
+      "model_points": 227.25000000024738
+    },
+    {
+      "month": "2026-03",
+      "train": 3293,
+      "candidates": 363,
+      "baseline_trades": 238,
+      "model_trades": 61,
+      "baseline_points": 32.15000000069267,
+      "model_points": 117.55000000017753
+    },
+    {
+      "month": "2026-04",
+      "train": 3519,
+      "candidates": 788,
+      "baseline_trades": 418,
+      "model_trades": 187,
+      "baseline_points": -129.84999999878346,
+      "model_points": 32.85000000054424
+    },
+    {
+      "month": "2026-05",
+      "train": 3942,
+      "candidates": 570,
+      "baseline_trades": 283,
+      "model_trades": 111,
+      "baseline_points": -315.09999999917636,
+      "model_points": -100.69999999967695
+    },
+    {
+      "month": "2026-06",
+      "train": 4232,
+      "candidates": 312,
+      "baseline_trades": 155,
+      "model_trades": 50,
+      "baseline_points": -14.24999999954889,
+      "model_points": 193.00000000014552
+    },
+    {
+      "month": "2026-07",
+      "train": 4361,
+      "candidates": 355,
+      "baseline_trades": 158,
+      "model_trades": 69,
+      "baseline_points": -351.84999999954016,
+      "model_points": -117.54999999979918
+    }
+  ],
+  "baseline_points": {
+    "trades": 2921,
+    "points": -1366.7,
+    "points_per_trade": -0.4679,
+    "win_rate": 0.482,
+    "profit_factor": 0.9273
+  },
+  "model_points_live_dynamic": {
+    "trades": 1448,
+    "points": -25.1,
+    "points_per_trade": -0.0173,
+    "win_rate": 0.4883,
+    "profit_factor": 0.9967
+  },
+  "model_points_pure_filter": {
+    "trades": 1129,
+    "points": -309.55,
+    "points_per_trade": -0.2742,
+    "win_rate": 0.4916,
+    "profit_factor": 0.9489
+  },
+  "baseline_sized": {
+    "pnl": -184.34,
+    "trades": 2921,
+    "win_rate": 0.482,
+    "pf": 0.928,
+    "max_dd": 232.55,
+    "n_months": 12,
+    "pos_months": 3,
+    "worst_month": -50.82,
+    "best_month": 37.05,
+    "msharpe": -0.556,
+    "pos_rate": 0.25,
+    "max_loss_streak": 4,
+    "worst_quarter": -135.76,
+    "top_month_share": 0.531,
+    "months": {
+      "2025-08": -17.34,
+      "2025-09": -1.14,
+      "2025-10": 37.05,
+      "2025-11": -50.82,
+      "2025-12": -47.66,
+      "2026-01": -37.28,
+      "2026-02": 26.03,
+      "2026-03": 6.71,
+      "2026-04": -23.11,
+      "2026-05": -36.65,
+      "2026-06": -1.57,
+      "2026-07": -38.56
+    }
+  },
+  "model_sized_live_dynamic": {
+    "pnl": -8.87,
+    "trades": 1448,
+    "win_rate": 0.488,
+    "pf": 0.992,
+    "max_dd": 122.85,
+    "n_months": 12,
+    "pos_months": 7,
+    "worst_month": -77.12,
+    "best_month": 39.97,
+    "msharpe": -0.024,
+    "pos_rate": 0.583,
+    "max_loss_streak": 2,
+    "worst_quarter": -89.48,
+    "top_month_share": 0.29,
+    "months": {
+      "2025-08": -21.64,
+      "2025-09": 13.27,
+      "2025-10": 39.97,
+      "2025-11": -77.12,
+      "2025-12": -19.52,
+      "2026-01": 7.16,
+      "2026-02": 33.58,
+      "2026-03": 18.48,
+      "2026-04": 0.57,
+      "2026-05": -12.96,
+      "2026-06": 24.62,
+      "2026-07": -15.28
+    }
+  },
+  "clustered_model_t": {
+    "day": 0.9529,
+    "month": 0.402
+  },
+  "matched_random_control": {
+    "draws": 5000,
+    "mean": -480.31,
+    "p_ge_model": 0.3392
+  },
+  "purged_cv": {
+    "blocks": [
+      {
+        "from": "2025-02-01",
+        "to": "2025-05-01",
+        "train": 4024,
+        "trades": 208,
+        "points": -289.6,
+        "points_per_trade": -1.3923,
+        "win_rate": 0.4952,
+        "profit_factor": 0.8291
+      },
+      {
+        "from": "2025-05-01",
+        "to": "2025-08-01",
+        "train": 3390,
+        "trades": 872,
+        "points": 119.1,
+        "points_per_trade": 0.1366,
+        "win_rate": 0.508,
+        "profit_factor": 1.0301
+      },
+      {
+        "from": "2025-08-01",
+        "to": "2025-11-01",
+        "train": 3754,
+        "trades": 652,
+        "points": 220.1,
+        "points_per_trade": 0.3376,
+        "win_rate": 0.5061,
+        "profit_factor": 1.0855
+      },
+      {
+        "from": "2025-11-01",
+        "to": "2026-02-01",
+        "train": 3873,
+        "trades": 498,
+        "points": -751.35,
+        "points_per_trade": -1.5087,
+        "win_rate": 0.4357,
+        "profit_factor": 0.717
+      },
+      {
+        "from": "2026-02-01",
+        "to": "2026-05-01",
+        "train": 3656,
+        "trades": 312,
+        "points": 447.35,
+        "points_per_trade": 1.4338,
+        "win_rate": 0.4936,
+        "profit_factor": 1.2256
+      },
+      {
+        "from": "2026-05-01",
+        "to": "2026-08-01",
+        "train": 3942,
+        "trades": 236,
+        "points": 124.3,
+        "points_per_trade": 0.5267,
+        "win_rate": 0.5466,
+        "profit_factor": 1.0954
+      }
+    ],
+    "positive_blocks": 4,
+    "total_points": -130.1,
+    "worst_block": -751.35,
+    "stitched": {
+      "trades": 2778,
+      "points": -130.1,
+      "points_per_trade": -0.0468,
+      "win_rate": 0.4953,
+      "profit_factor": 0.9908
+    }
+  },
+  "coefficient_stability": {
+    "abs_lwi_z": {
+      "positive_folds": 7,
+      "folds": 12,
+      "median": 0.012512,
+      "minimum": -0.025957,
+      "maximum": 0.032897
+    },
+    "joint_withdrawal": {
+      "positive_folds": 12,
+      "folds": 12,
+      "median": 0.022393,
+      "minimum": 0.003986,
+      "maximum": 0.058372
+    },
+    "signed_trade_delta": {
+      "positive_folds": 0,
+      "folds": 12,
+      "median": -0.120453,
+      "minimum": -0.196867,
+      "maximum": -0.07745
+    },
+    "signed_top1_imbalance": {
+      "positive_folds": 12,
+      "folds": 12,
+      "median": 0.040441,
+      "minimum": 0.001154,
+      "maximum": 0.086367
+    },
+    "signed_top5_imbalance": {
+      "positive_folds": 0,
+      "folds": 12,
+      "median": -0.02374,
+      "minimum": -0.047823,
+      "maximum": -0.013502
+    },
+    "signed_top10_imbalance": {
+      "positive_folds": 4,
+      "folds": 12,
+      "median": -0.004299,
+      "minimum": -0.022799,
+      "maximum": 0.028418
+    },
+    "signed_microprice_ticks": {
+      "positive_folds": 0,
+      "folds": 12,
+      "median": -0.06986,
+      "minimum": -0.147725,
+      "maximum": -0.012475
+    },
+    "signed_price_change": {
+      "positive_folds": 3,
+      "folds": 12,
+      "median": -0.029139,
+      "minimum": -0.053705,
+      "maximum": 0.010713
+    },
+    "signed_replenishment": {
+      "positive_folds": 0,
+      "folds": 12,
+      "median": -0.108633,
+      "minimum": -0.139645,
+      "maximum": -0.061926
+    },
+    "toxicity": {
+      "positive_folds": 0,
+      "folds": 12,
+      "median": -0.015723,
+      "minimum": -0.050239,
+      "maximum": -0.003979
+    },
+    "log_trade_count": {
+      "positive_folds": 12,
+      "folds": 12,
+      "median": 0.123862,
+      "minimum": 0.073904,
+      "maximum": 0.16753
+    },
+    "log_depth_events": {
+      "positive_folds": 0,
+      "folds": 12,
+      "median": -0.150601,
+      "minimum": -0.20432,
+      "maximum": -0.110109
+    },
+    "spread": {
+      "positive_folds": 1,
+      "folds": 12,
+      "median": -0.010838,
+      "minimum": -0.026596,
+      "maximum": 0.003338
+    },
+    "session_progress": {
+      "positive_folds": 1,
+      "folds": 12,
+      "median": -0.02021,
+      "minimum": -0.030986,
+      "maximum": 0.008679
+    }
+  },
+  "promotion_gate": {
+    "passed": false,
+    "cumulative_trials": 56,
+    "edge_t": -0.0457,
+    "deflated_t": -2.8831,
+    "checks": [
+      {
+        "name": "stitched OOS PnL > 0",
+        "passed": false,
+        "detail": "-8.87"
+      },
+      {
+        "name": "profitable folds >= 2/3",
+        "passed": false,
+        "detail": "7/12"
+      },
+      {
+        "name": "per-trade edge CI excludes 0",
+        "passed": false,
+        "detail": "mean -0.017, 95% CI [-0.751, +0.727]"
+      },
+      {
+        "name": "deflated t > 0",
+        "passed": false,
+        "detail": "-2.88 vs 56 cumulative trials"
+      },
+      {
+        "name": "purged-CV coverage",
+        "passed": false,
+        "detail": "worst -751.4, mean -21.7"
+      },
+      {
+        "name": "matched random-filter p < 0.05",
+        "passed": false,
+        "detail": "p=0.3392"
+      }
+    ]
+  }
+}

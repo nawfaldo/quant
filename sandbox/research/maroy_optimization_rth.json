@@ -1,0 +1,3492 @@
+{
+  "in_sample": [
+    "2020-01-01",
+    "2024-12-31"
+  ],
+  "out_of_sample": [
+    "2025-01-01",
+    "2026-08-03"
+  ],
+  "mdd_target": 15.0,
+  "families": [
+    {
+      "strategy": "Time only",
+      "session": "rth",
+      "policy": {
+        "sizing": "vol_target",
+        "vol_target_annual": 0.2,
+        "leverage": 2.0,
+        "dd_threshold": 0.05,
+        "dd_throttle": 0.75,
+        "hours": [
+          11,
+          12,
+          13
+        ],
+        "weekdays": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "regime": {
+          "rv_pct": [
+            0.0,
+            0.8
+          ]
+        }
+      },
+      "trials": 79,
+      "stages": [
+        {
+          "stage": "sizing",
+          "is": {
+            "cagr_pct": 6.1,
+            "total_return_pct": 34.2,
+            "max_drawdown_pct": 14.2,
+            "sharpe": 0.62,
+            "trades": 856,
+            "win_rate_pct": 48.1,
+            "profit_factor": 1.15
+          },
+          "policy": {
+            "sizing": "vol_target",
+            "vol_target_annual": 0.2,
+            "leverage": 2.0
+          }
+        },
+        {
+          "stage": "equity curve",
+          "is": {
+            "cagr_pct": 6.1,
+            "total_return_pct": 34.7,
+            "max_drawdown_pct": 10.6,
+            "sharpe": 0.71,
+            "trades": 777,
+            "win_rate_pct": 48.3,
+            "profit_factor": 1.18
+          },
+          "policy": {
+            "sizing": "vol_target",
+            "vol_target_annual": 0.2,
+            "leverage": 2.0,
+            "dd_threshold": 0.05,
+            "dd_throttle": 0.75
+          }
+        },
+        {
+          "stage": "hours",
+          "is": {
+            "cagr_pct": 11.3,
+            "total_return_pct": 70.7,
+            "max_drawdown_pct": 4.3,
+            "sharpe": 1.59,
+            "trades": 585,
+            "win_rate_pct": 47.0,
+            "profit_factor": 1.6
+          },
+          "policy": {
+            "sizing": "vol_target",
+            "vol_target_annual": 0.2,
+            "leverage": 2.0,
+            "dd_threshold": 0.05,
+            "dd_throttle": 0.75,
+            "hours": [
+              11,
+              12,
+              13
+            ]
+          }
+        },
+        {
+          "stage": "weekday",
+          "is": {
+            "cagr_pct": 11.5,
+            "total_return_pct": 72.3,
+            "max_drawdown_pct": 4.1,
+            "sharpe": 1.62,
+            "trades": 537,
+            "win_rate_pct": 47.9,
+            "profit_factor": 1.65
+          },
+          "policy": {
+            "sizing": "vol_target",
+            "vol_target_annual": 0.2,
+            "leverage": 2.0,
+            "dd_threshold": 0.05,
+            "dd_throttle": 0.75,
+            "hours": [
+              11,
+              12,
+              13
+            ],
+            "weekdays": [
+              0,
+              1,
+              2,
+              3,
+              4,
+              5
+            ]
+          }
+        },
+        {
+          "stage": "regime",
+          "is": {
+            "cagr_pct": 11.9,
+            "total_return_pct": 75.3,
+            "max_drawdown_pct": 3.9,
+            "sharpe": 1.7,
+            "trades": 477,
+            "win_rate_pct": 48.0,
+            "profit_factor": 1.78
+          },
+          "policy": {
+            "sizing": "vol_target",
+            "vol_target_annual": 0.2,
+            "leverage": 2.0,
+            "dd_threshold": 0.05,
+            "dd_throttle": 0.75,
+            "hours": [
+              11,
+              12,
+              13
+            ],
+            "weekdays": [
+              0,
+              1,
+              2,
+              3,
+              4,
+              5
+            ],
+            "regime": {
+              "rv_pct": [
+                0.0,
+                0.8
+              ]
+            }
+          }
+        }
+      ],
+      "is_baseline": {
+        "cagr_pct": 4.4,
+        "total_return_pct": 23.9,
+        "max_drawdown_pct": 32.0,
+        "sharpe": 0.3,
+        "trades": 1234,
+        "win_rate_pct": 47.1,
+        "profit_factor": 1.04
+      },
+      "is_optimised": {
+        "cagr_pct": 11.9,
+        "total_return_pct": 75.3,
+        "max_drawdown_pct": 3.9,
+        "sharpe": 1.7,
+        "trades": 477,
+        "win_rate_pct": 48.0,
+        "profit_factor": 1.78
+      },
+      "oos_baseline": {
+        "cagr_pct": 11.5,
+        "total_return_pct": 18.8,
+        "max_drawdown_pct": 20.4,
+        "sharpe": 0.75,
+        "trades": 267,
+        "win_rate_pct": 47.9,
+        "profit_factor": 1.16
+      },
+      "oos_optimised": {
+        "cagr_pct": 1.4,
+        "total_return_pct": 2.3,
+        "max_drawdown_pct": 0.9,
+        "sharpe": 1.03,
+        "trades": 19,
+        "win_rate_pct": 52.6,
+        "profit_factor": 2.23
+      },
+      "plateau": [
+        {
+          "vol_target_annual": 0.134,
+          "cagr_pct": 5.5,
+          "max_drawdown_pct": 2.6,
+          "sharpe": 1.38
+        },
+        {
+          "vol_target_annual": 0.2,
+          "cagr_pct": 11.9,
+          "max_drawdown_pct": 3.9,
+          "sharpe": 1.7
+        },
+        {
+          "vol_target_annual": 0.3,
+          "cagr_pct": 16.5,
+          "max_drawdown_pct": 7.8,
+          "sharpe": 1.57
+        }
+      ],
+      "met_target_is": true,
+      "met_target_oos": true
+    },
+    {
+      "strategy": "Reference lb14 x1.0",
+      "session": "rth",
+      "policy": {
+        "sizing": "vol_target",
+        "vol_target_annual": 0.2,
+        "leverage": 2.0,
+        "dd_threshold": 0.05,
+        "dd_throttle": 0.75,
+        "hours": [
+          11,
+          12,
+          13,
+          14
+        ],
+        "weekdays": [
+          0,
+          1,
+          2,
+          3,
+          5,
+          6
+        ],
+        "regime": {
+          "rv_pct": [
+            0.0,
+            0.6
+          ]
+        }
+      },
+      "trials": 97,
+      "stages": [
+        {
+          "stage": "sizing",
+          "is": {
+            "cagr_pct": 3.9,
+            "total_return_pct": 21.4,
+            "max_drawdown_pct": 13.3,
+            "sharpe": 0.68,
+            "trades": 2176,
+            "win_rate_pct": 29.6,
+            "profit_factor": 1.21
+          },
+          "policy": {
+            "sizing": "vol_target",
+            "vol_target_annual": 0.2,
+            "leverage": 2.0
+          }
+        },
+        {
+          "stage": "equity curve",
+          "is": {
+            "cagr_pct": 5.4,
+            "total_return_pct": 30.3,
+            "max_drawdown_pct": 8.3,
+            "sharpe": 1.03,
+            "trades": 2053,
+            "win_rate_pct": 30.1,
+            "profit_factor": 1.32
+          },
+          "policy": {
+            "sizing": "vol_target",
+            "vol_target_annual": 0.2,
+            "leverage": 2.0,
+            "dd_threshold": 0.05,
+            "dd_throttle": 0.75
+          }
+        },
+        {
+          "stage": "hours",
+          "is": {
+            "cagr_pct": 5.6,
+            "total_return_pct": 31.3,
+            "max_drawdown_pct": 6.6,
+            "sharpe": 1.02,
+            "trades": 1170,
+            "win_rate_pct": 26.7,
+            "profit_factor": 1.44
+          },
+          "policy": {
+            "sizing": "vol_target",
+            "vol_target_annual": 0.2,
+            "leverage": 2.0,
+            "dd_threshold": 0.05,
+            "dd_throttle": 0.75,
+            "hours": [
+              11,
+              12,
+              13,
+              14
+            ]
+          }
+        },
+        {
+          "stage": "weekday",
+          "is": {
+            "cagr_pct": 6.0,
+            "total_return_pct": 33.8,
+            "max_drawdown_pct": 6.0,
+            "sharpe": 1.12,
+            "trades": 975,
+            "win_rate_pct": 26.5,
+            "profit_factor": 1.54
+          },
+          "policy": {
+            "sizing": "vol_target",
+            "vol_target_annual": 0.2,
+            "leverage": 2.0,
+            "dd_threshold": 0.05,
+            "dd_throttle": 0.75,
+            "hours": [
+              11,
+              12,
+              13,
+              14
+            ],
+            "weekdays": [
+              0,
+              1,
+              2,
+              3,
+              5,
+              6
+            ]
+          }
+        },
+        {
+          "stage": "regime",
+          "is": {
+            "cagr_pct": 6.2,
+            "total_return_pct": 35.2,
+            "max_drawdown_pct": 5.5,
+            "sharpe": 1.19,
+            "trades": 794,
+            "win_rate_pct": 26.6,
+            "profit_factor": 1.67
+          },
+          "policy": {
+            "sizing": "vol_target",
+            "vol_target_annual": 0.2,
+            "leverage": 2.0,
+            "dd_threshold": 0.05,
+            "dd_throttle": 0.75,
+            "hours": [
+              11,
+              12,
+              13,
+              14
+            ],
+            "weekdays": [
+              0,
+              1,
+              2,
+              3,
+              5,
+              6
+            ],
+            "regime": {
+              "rv_pct": [
+                0.0,
+                0.6
+              ]
+            }
+          }
+        }
+      ],
+      "is_baseline": {
+        "cagr_pct": 8.8,
+        "total_return_pct": 52.3,
+        "max_drawdown_pct": 28.7,
+        "sharpe": 0.72,
+        "trades": 3234,
+        "win_rate_pct": 30.7,
+        "profit_factor": 1.18
+      },
+      "is_optimised": {
+        "cagr_pct": 6.2,
+        "total_return_pct": 35.2,
+        "max_drawdown_pct": 5.5,
+        "sharpe": 1.19,
+        "trades": 794,
+        "win_rate_pct": 26.6,
+        "profit_factor": 1.67
+      },
+      "oos_baseline": {
+        "cagr_pct": -2.1,
+        "total_return_pct": -3.3,
+        "max_drawdown_pct": 12.8,
+        "sharpe": -0.19,
+        "trades": 708,
+        "win_rate_pct": 34.3,
+        "profit_factor": 0.95
+      },
+      "oos_optimised": {
+        "cagr_pct": -0.7,
+        "total_return_pct": -1.0,
+        "max_drawdown_pct": 1.0,
+        "sharpe": -0.63,
+        "trades": 42,
+        "win_rate_pct": 28.6,
+        "profit_factor": 0.62
+      },
+      "plateau": [
+        {
+          "vol_target_annual": 0.134,
+          "cagr_pct": 3.8,
+          "max_drawdown_pct": 2.7,
+          "sharpe": 1.14
+        },
+        {
+          "vol_target_annual": 0.2,
+          "cagr_pct": 6.2,
+          "max_drawdown_pct": 5.5,
+          "sharpe": 1.19
+        },
+        {
+          "vol_target_annual": 0.3,
+          "cagr_pct": 9.9,
+          "max_drawdown_pct": 10.0,
+          "sharpe": 1.25
+        }
+      ],
+      "met_target_is": true,
+      "met_target_oos": true
+    },
+    {
+      "strategy": "Reference lb90 x1.3",
+      "session": "rth",
+      "policy": {
+        "sizing": "vol_target",
+        "vol_target_annual": 0.2,
+        "leverage": 1.0,
+        "dd_threshold": 0.1,
+        "dd_throttle": 0.5,
+        "hours": [
+          10,
+          11,
+          12,
+          13
+        ],
+        "weekdays": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "regime": {
+          "rv20": [
+            0.0,
+            60.0
+          ]
+        }
+      },
+      "trials": 97,
+      "stages": [
+        {
+          "stage": "sizing",
+          "is": {
+            "cagr_pct": 0.2,
+            "total_return_pct": 1.2,
+            "max_drawdown_pct": 11.8,
+            "sharpe": 0.09,
+            "trades": 1405,
+            "win_rate_pct": 28.0,
+            "profit_factor": 1.02
+          },
+          "policy": {
+            "sizing": "vol_target",
+            "vol_target_annual": 0.2,
+            "leverage": 1.0
+          }
+        },
+        {
+          "stage": "equity curve",
+          "is": {
+            "cagr_pct": 0.2,
+            "total_return_pct": 0.8,
+            "max_drawdown_pct": 10.2,
+            "sharpe": 0.07,
+            "trades": 1145,
+            "win_rate_pct": 29.0,
+            "profit_factor": 1.02
+          },
+          "policy": {
+            "sizing": "vol_target",
+            "vol_target_annual": 0.2,
+            "leverage": 1.0,
+            "dd_threshold": 0.1,
+            "dd_throttle": 0.5
+          }
+        },
+        {
+          "stage": "hours",
+          "is": {
+            "cagr_pct": 1.4,
+            "total_return_pct": 7.4,
+            "max_drawdown_pct": 8.1,
+            "sharpe": 0.48,
+            "trades": 904,
+            "win_rate_pct": 24.1,
+            "profit_factor": 1.16
+          },
+          "policy": {
+            "sizing": "vol_target",
+            "vol_target_annual": 0.2,
+            "leverage": 1.0,
+            "dd_threshold": 0.1,
+            "dd_throttle": 0.5,
+            "hours": [
+              10,
+              11,
+              12,
+              13
+            ]
+          }
+        },
+        {
+          "stage": "weekday",
+          "is": {
+            "cagr_pct": 2.0,
+            "total_return_pct": 10.4,
+            "max_drawdown_pct": 6.7,
+            "sharpe": 0.66,
+            "trades": 837,
+            "win_rate_pct": 25.1,
+            "profit_factor": 1.24
+          },
+          "policy": {
+            "sizing": "vol_target",
+            "vol_target_annual": 0.2,
+            "leverage": 1.0,
+            "dd_threshold": 0.1,
+            "dd_throttle": 0.5,
+            "hours": [
+              10,
+              11,
+              12,
+              13
+            ],
+            "weekdays": [
+              0,
+              1,
+              2,
+              3,
+              4,
+              5
+            ]
+          }
+        },
+        {
+          "stage": "regime",
+          "is": {
+            "cagr_pct": 2.7,
+            "total_return_pct": 14.2,
+            "max_drawdown_pct": 3.7,
+            "sharpe": 0.97,
+            "trades": 640,
+            "win_rate_pct": 26.7,
+            "profit_factor": 1.43
+          },
+          "policy": {
+            "sizing": "vol_target",
+            "vol_target_annual": 0.2,
+            "leverage": 1.0,
+            "dd_threshold": 0.1,
+            "dd_throttle": 0.5,
+            "hours": [
+              10,
+              11,
+              12,
+              13
+            ],
+            "weekdays": [
+              0,
+              1,
+              2,
+              3,
+              4,
+              5
+            ],
+            "regime": {
+              "rv20": [
+                0.0,
+                60.0
+              ]
+            }
+          }
+        }
+      ],
+      "is_baseline": {
+        "cagr_pct": 2.0,
+        "total_return_pct": 10.2,
+        "max_drawdown_pct": 24.2,
+        "sharpe": 0.27,
+        "trades": 2142,
+        "win_rate_pct": 30.0,
+        "profit_factor": 1.06
+      },
+      "is_optimised": {
+        "cagr_pct": 2.7,
+        "total_return_pct": 14.2,
+        "max_drawdown_pct": 3.7,
+        "sharpe": 0.97,
+        "trades": 640,
+        "win_rate_pct": 26.7,
+        "profit_factor": 1.43
+      },
+      "oos_baseline": {
+        "cagr_pct": 5.8,
+        "total_return_pct": 9.3,
+        "max_drawdown_pct": 5.1,
+        "sharpe": 0.77,
+        "trades": 383,
+        "win_rate_pct": 35.2,
+        "profit_factor": 1.24
+      },
+      "oos_optimised": {
+        "cagr_pct": 0.0,
+        "total_return_pct": 0.0,
+        "max_drawdown_pct": 0.0,
+        "sharpe": 0.0,
+        "trades": 0,
+        "win_rate_pct": 0.0,
+        "profit_factor": null
+      },
+      "plateau": [
+        {
+          "vol_target_annual": 0.134,
+          "cagr_pct": 0.6,
+          "max_drawdown_pct": 2.4,
+          "sharpe": 0.42
+        },
+        {
+          "vol_target_annual": 0.2,
+          "cagr_pct": 2.7,
+          "max_drawdown_pct": 3.7,
+          "sharpe": 0.97
+        },
+        {
+          "vol_target_annual": 0.3,
+          "cagr_pct": 4.6,
+          "max_drawdown_pct": 5.9,
+          "sharpe": 0.92
+        }
+      ],
+      "met_target_is": true,
+      "met_target_oos": true
+    },
+    {
+      "strategy": "Boundary & VWAP #1",
+      "session": "rth",
+      "policy": {
+        "sizing": "vol_target",
+        "vol_target_annual": 0.2,
+        "leverage": 4.0,
+        "dd_threshold": 0.075,
+        "dd_throttle": 0.75,
+        "hours": [
+          10,
+          11,
+          12,
+          13,
+          14
+        ],
+        "weekdays": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5
+        ]
+      },
+      "trials": 97,
+      "stages": [
+        {
+          "stage": "sizing",
+          "is": {
+            "cagr_pct": 10.2,
+            "total_return_pct": 62.2,
+            "max_drawdown_pct": 13.8,
+            "sharpe": 1.07,
+            "trades": 2134,
+            "win_rate_pct": 30.3,
+            "profit_factor": 1.32
+          },
+          "policy": {
+            "sizing": "vol_target",
+            "vol_target_annual": 0.2,
+            "leverage": 4.0
+          }
+        },
+        {
+          "stage": "equity curve",
+          "is": {
+            "cagr_pct": 11.5,
+            "total_return_pct": 72.4,
+            "max_drawdown_pct": 11.9,
+            "sharpe": 1.22,
+            "trades": 2042,
+            "win_rate_pct": 30.5,
+            "profit_factor": 1.38
+          },
+          "policy": {
+            "sizing": "vol_target",
+            "vol_target_annual": 0.2,
+            "leverage": 4.0,
+            "dd_threshold": 0.075,
+            "dd_throttle": 0.75
+          }
+        },
+        {
+          "stage": "hours",
+          "is": {
+            "cagr_pct": 11.7,
+            "total_return_pct": 74.0,
+            "max_drawdown_pct": 10.6,
+            "sharpe": 1.3,
+            "trades": 1580,
+            "win_rate_pct": 30.1,
+            "profit_factor": 1.46
+          },
+          "policy": {
+            "sizing": "vol_target",
+            "vol_target_annual": 0.2,
+            "leverage": 4.0,
+            "dd_threshold": 0.075,
+            "dd_throttle": 0.75,
+            "hours": [
+              10,
+              11,
+              12,
+              13,
+              14
+            ]
+          }
+        },
+        {
+          "stage": "weekday",
+          "is": {
+            "cagr_pct": 11.7,
+            "total_return_pct": 74.2,
+            "max_drawdown_pct": 9.8,
+            "sharpe": 1.31,
+            "trades": 1469,
+            "win_rate_pct": 30.6,
+            "profit_factor": 1.48
+          },
+          "policy": {
+            "sizing": "vol_target",
+            "vol_target_annual": 0.2,
+            "leverage": 4.0,
+            "dd_threshold": 0.075,
+            "dd_throttle": 0.75,
+            "hours": [
+              10,
+              11,
+              12,
+              13,
+              14
+            ],
+            "weekdays": [
+              0,
+              1,
+              2,
+              3,
+              4,
+              5
+            ]
+          }
+        },
+        {
+          "stage": "regime",
+          "is": {
+            "cagr_pct": 11.7,
+            "total_return_pct": 74.2,
+            "max_drawdown_pct": 9.8,
+            "sharpe": 1.31,
+            "trades": 1469,
+            "win_rate_pct": 30.6,
+            "profit_factor": 1.48
+          },
+          "policy": {
+            "sizing": "vol_target",
+            "vol_target_annual": 0.2,
+            "leverage": 4.0,
+            "dd_threshold": 0.075,
+            "dd_throttle": 0.75,
+            "hours": [
+              10,
+              11,
+              12,
+              13,
+              14
+            ],
+            "weekdays": [
+              0,
+              1,
+              2,
+              3,
+              4,
+              5
+            ]
+          }
+        }
+      ],
+      "is_baseline": {
+        "cagr_pct": 27.3,
+        "total_return_pct": 234.5,
+        "max_drawdown_pct": 82.8,
+        "sharpe": 0.7,
+        "trades": 2823,
+        "win_rate_pct": 30.1,
+        "profit_factor": 1.12
+      },
+      "is_optimised": {
+        "cagr_pct": 11.7,
+        "total_return_pct": 74.2,
+        "max_drawdown_pct": 9.8,
+        "sharpe": 1.31,
+        "trades": 1469,
+        "win_rate_pct": 30.6,
+        "profit_factor": 1.48
+      },
+      "oos_baseline": {
+        "cagr_pct": -12.1,
+        "total_return_pct": -18.5,
+        "max_drawdown_pct": 37.5,
+        "sharpe": -0.09,
+        "trades": 968,
+        "win_rate_pct": 29.3,
+        "profit_factor": 0.96
+      },
+      "oos_optimised": {
+        "cagr_pct": -1.6,
+        "total_return_pct": -2.6,
+        "max_drawdown_pct": 3.1,
+        "sharpe": -0.46,
+        "trades": 162,
+        "win_rate_pct": 29.0,
+        "profit_factor": 0.88
+      },
+      "plateau": [
+        {
+          "vol_target_annual": 0.134,
+          "cagr_pct": 6.2,
+          "max_drawdown_pct": 7.2,
+          "sharpe": 1.11
+        },
+        {
+          "vol_target_annual": 0.2,
+          "cagr_pct": 11.7,
+          "max_drawdown_pct": 9.8,
+          "sharpe": 1.31
+        },
+        {
+          "vol_target_annual": 0.3,
+          "cagr_pct": 15.0,
+          "max_drawdown_pct": 15.7,
+          "sharpe": 1.16
+        }
+      ],
+      "met_target_is": true,
+      "met_target_oos": true
+    },
+    {
+      "strategy": "Boundary & VWAP #2",
+      "session": "rth",
+      "policy": {
+        "sizing": "vol_target",
+        "vol_target_annual": 0.2,
+        "leverage": 2.0,
+        "dd_threshold": 0.05,
+        "dd_throttle": 0.75,
+        "hours": [
+          10,
+          11,
+          12,
+          13,
+          14
+        ],
+        "weekdays": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "regime": {
+          "rv20": [
+            0.0,
+            60.0
+          ]
+        }
+      },
+      "trials": 97,
+      "stages": [
+        {
+          "stage": "sizing",
+          "is": {
+            "cagr_pct": 5.2,
+            "total_return_pct": 29.0,
+            "max_drawdown_pct": 9.8,
+            "sharpe": 0.96,
+            "trades": 1413,
+            "win_rate_pct": 30.1,
+            "profit_factor": 1.3
+          },
+          "policy": {
+            "sizing": "vol_target",
+            "vol_target_annual": 0.2,
+            "leverage": 2.0
+          }
+        },
+        {
+          "stage": "equity curve",
+          "is": {
+            "cagr_pct": 5.6,
+            "total_return_pct": 31.2,
+            "max_drawdown_pct": 9.0,
+            "sharpe": 1.07,
+            "trades": 1310,
+            "win_rate_pct": 30.3,
+            "profit_factor": 1.36
+          },
+          "policy": {
+            "sizing": "vol_target",
+            "vol_target_annual": 0.2,
+            "leverage": 2.0,
+            "dd_threshold": 0.05,
+            "dd_throttle": 0.75
+          }
+        },
+        {
+          "stage": "hours",
+          "is": {
+            "cagr_pct": 5.8,
+            "total_return_pct": 32.5,
+            "max_drawdown_pct": 8.4,
+            "sharpe": 1.11,
+            "trades": 1217,
+            "win_rate_pct": 28.8,
+            "profit_factor": 1.38
+          },
+          "policy": {
+            "sizing": "vol_target",
+            "vol_target_annual": 0.2,
+            "leverage": 2.0,
+            "dd_threshold": 0.05,
+            "dd_throttle": 0.75,
+            "hours": [
+              10,
+              11,
+              12,
+              13,
+              14
+            ]
+          }
+        },
+        {
+          "stage": "weekday",
+          "is": {
+            "cagr_pct": 6.1,
+            "total_return_pct": 34.2,
+            "max_drawdown_pct": 7.9,
+            "sharpe": 1.17,
+            "trades": 1108,
+            "win_rate_pct": 28.9,
+            "profit_factor": 1.42
+          },
+          "policy": {
+            "sizing": "vol_target",
+            "vol_target_annual": 0.2,
+            "leverage": 2.0,
+            "dd_threshold": 0.05,
+            "dd_throttle": 0.75,
+            "hours": [
+              10,
+              11,
+              12,
+              13,
+              14
+            ],
+            "weekdays": [
+              0,
+              1,
+              2,
+              3,
+              4,
+              5
+            ]
+          }
+        },
+        {
+          "stage": "regime",
+          "is": {
+            "cagr_pct": 6.8,
+            "total_return_pct": 38.8,
+            "max_drawdown_pct": 6.6,
+            "sharpe": 1.29,
+            "trades": 914,
+            "win_rate_pct": 30.4,
+            "profit_factor": 1.53
+          },
+          "policy": {
+            "sizing": "vol_target",
+            "vol_target_annual": 0.2,
+            "leverage": 2.0,
+            "dd_threshold": 0.05,
+            "dd_throttle": 0.75,
+            "hours": [
+              10,
+              11,
+              12,
+              13,
+              14
+            ],
+            "weekdays": [
+              0,
+              1,
+              2,
+              3,
+              4,
+              5
+            ],
+            "regime": {
+              "rv20": [
+                0.0,
+                60.0
+              ]
+            }
+          }
+        }
+      ],
+      "is_baseline": {
+        "cagr_pct": 35.0,
+        "total_return_pct": 347.6,
+        "max_drawdown_pct": 65.6,
+        "sharpe": 0.95,
+        "trades": 2188,
+        "win_rate_pct": 29.2,
+        "profit_factor": 1.23
+      },
+      "is_optimised": {
+        "cagr_pct": 6.8,
+        "total_return_pct": 38.8,
+        "max_drawdown_pct": 6.6,
+        "sharpe": 1.29,
+        "trades": 914,
+        "win_rate_pct": 30.4,
+        "profit_factor": 1.53
+      },
+      "oos_baseline": {
+        "cagr_pct": -1.9,
+        "total_return_pct": -3.0,
+        "max_drawdown_pct": 35.0,
+        "sharpe": 0.11,
+        "trades": 760,
+        "win_rate_pct": 31.3,
+        "profit_factor": 0.99
+      },
+      "oos_optimised": {
+        "cagr_pct": 0.5,
+        "total_return_pct": 0.8,
+        "max_drawdown_pct": 1.0,
+        "sharpe": 0.33,
+        "trades": 77,
+        "win_rate_pct": 31.2,
+        "profit_factor": 1.16
+      },
+      "plateau": [
+        {
+          "vol_target_annual": 0.134,
+          "cagr_pct": 3.6,
+          "max_drawdown_pct": 4.3,
+          "sharpe": 1.2
+        },
+        {
+          "vol_target_annual": 0.2,
+          "cagr_pct": 6.8,
+          "max_drawdown_pct": 6.6,
+          "sharpe": 1.29
+        },
+        {
+          "vol_target_annual": 0.3,
+          "cagr_pct": 10.9,
+          "max_drawdown_pct": 10.7,
+          "sharpe": 1.37
+        }
+      ],
+      "met_target_is": true,
+      "met_target_oos": true
+    },
+    {
+      "strategy": "Boundary with different exit #1",
+      "session": "rth",
+      "policy": {
+        "sizing": "risk_per_trade",
+        "risk_fraction": 0.0025,
+        "leverage": 4.0,
+        "hours": [
+          9,
+          10,
+          11,
+          12,
+          13
+        ],
+        "weekdays": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "regime": {
+          "rv20": [
+            0.0,
+            100.0
+          ]
+        }
+      },
+      "trials": 97,
+      "stages": [
+        {
+          "stage": "sizing",
+          "is": {
+            "cagr_pct": 23.8,
+            "total_return_pct": 190.9,
+            "max_drawdown_pct": 10.0,
+            "sharpe": 1.25,
+            "trades": 1525,
+            "win_rate_pct": 26.1,
+            "profit_factor": 1.64
+          },
+          "policy": {
+            "sizing": "risk_per_trade",
+            "risk_fraction": 0.0025,
+            "leverage": 4.0
+          }
+        },
+        {
+          "stage": "equity curve",
+          "is": {
+            "cagr_pct": 23.8,
+            "total_return_pct": 190.9,
+            "max_drawdown_pct": 10.0,
+            "sharpe": 1.25,
+            "trades": 1525,
+            "win_rate_pct": 26.1,
+            "profit_factor": 1.64
+          },
+          "policy": {
+            "sizing": "risk_per_trade",
+            "risk_fraction": 0.0025,
+            "leverage": 4.0
+          }
+        },
+        {
+          "stage": "hours",
+          "is": {
+            "cagr_pct": 25.5,
+            "total_return_pct": 211.3,
+            "max_drawdown_pct": 6.7,
+            "sharpe": 1.34,
+            "trades": 1339,
+            "win_rate_pct": 25.1,
+            "profit_factor": 1.74
+          },
+          "policy": {
+            "sizing": "risk_per_trade",
+            "risk_fraction": 0.0025,
+            "leverage": 4.0,
+            "hours": [
+              9,
+              10,
+              11,
+              12,
+              13
+            ]
+          }
+        },
+        {
+          "stage": "weekday",
+          "is": {
+            "cagr_pct": 26.2,
+            "total_return_pct": 219.6,
+            "max_drawdown_pct": 6.7,
+            "sharpe": 1.37,
+            "trades": 1244,
+            "win_rate_pct": 25.5,
+            "profit_factor": 1.82
+          },
+          "policy": {
+            "sizing": "risk_per_trade",
+            "risk_fraction": 0.0025,
+            "leverage": 4.0,
+            "hours": [
+              9,
+              10,
+              11,
+              12,
+              13
+            ],
+            "weekdays": [
+              0,
+              1,
+              2,
+              3,
+              4,
+              5
+            ]
+          }
+        },
+        {
+          "stage": "regime",
+          "is": {
+            "cagr_pct": 27.7,
+            "total_return_pct": 239.1,
+            "max_drawdown_pct": 6.5,
+            "sharpe": 1.43,
+            "trades": 1207,
+            "win_rate_pct": 25.9,
+            "profit_factor": 1.84
+          },
+          "policy": {
+            "sizing": "risk_per_trade",
+            "risk_fraction": 0.0025,
+            "leverage": 4.0,
+            "hours": [
+              9,
+              10,
+              11,
+              12,
+              13
+            ],
+            "weekdays": [
+              0,
+              1,
+              2,
+              3,
+              4,
+              5
+            ],
+            "regime": {
+              "rv20": [
+                0.0,
+                100.0
+              ]
+            }
+          }
+        }
+      ],
+      "is_baseline": {
+        "cagr_pct": 111.2,
+        "total_return_pct": 4103.6,
+        "max_drawdown_pct": 62.1,
+        "sharpe": 1.61,
+        "trades": 1686,
+        "win_rate_pct": 27.2,
+        "profit_factor": 1.51
+      },
+      "is_optimised": {
+        "cagr_pct": 27.7,
+        "total_return_pct": 239.1,
+        "max_drawdown_pct": 6.5,
+        "sharpe": 1.43,
+        "trades": 1207,
+        "win_rate_pct": 25.9,
+        "profit_factor": 1.84
+      },
+      "oos_baseline": {
+        "cagr_pct": 37.5,
+        "total_return_pct": 65.7,
+        "max_drawdown_pct": 30.7,
+        "sharpe": 1.0,
+        "trades": 540,
+        "win_rate_pct": 30.2,
+        "profit_factor": 1.14
+      },
+      "oos_optimised": {
+        "cagr_pct": 17.8,
+        "total_return_pct": 29.6,
+        "max_drawdown_pct": 7.6,
+        "sharpe": 1.44,
+        "trades": 235,
+        "win_rate_pct": 22.6,
+        "profit_factor": 1.82
+      },
+      "plateau": [
+        {
+          "risk_fraction": 0.001675,
+          "cagr_pct": 18.3,
+          "max_drawdown_pct": 4.0,
+          "sharpe": 1.18
+        },
+        {
+          "risk_fraction": 0.0025,
+          "cagr_pct": 27.7,
+          "max_drawdown_pct": 6.5,
+          "sharpe": 1.43
+        },
+        {
+          "risk_fraction": 0.00375,
+          "cagr_pct": 44.1,
+          "max_drawdown_pct": 9.5,
+          "sharpe": 1.65
+        }
+      ],
+      "met_target_is": true,
+      "met_target_oos": true
+    },
+    {
+      "strategy": "Boundary with different exit #2",
+      "session": "rth",
+      "policy": {
+        "sizing": "risk_per_trade",
+        "risk_fraction": 0.0025,
+        "leverage": 4.0,
+        "hours": [
+          9,
+          10,
+          11,
+          12,
+          13
+        ],
+        "weekdays": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "regime": {
+          "rv20": [
+            0.0,
+            100.0
+          ]
+        }
+      },
+      "trials": 97,
+      "stages": [
+        {
+          "stage": "sizing",
+          "is": {
+            "cagr_pct": 23.4,
+            "total_return_pct": 186.3,
+            "max_drawdown_pct": 9.9,
+            "sharpe": 1.26,
+            "trades": 1525,
+            "win_rate_pct": 26.1,
+            "profit_factor": 1.63
+          },
+          "policy": {
+            "sizing": "risk_per_trade",
+            "risk_fraction": 0.0025,
+            "leverage": 4.0
+          }
+        },
+        {
+          "stage": "equity curve",
+          "is": {
+            "cagr_pct": 23.4,
+            "total_return_pct": 186.3,
+            "max_drawdown_pct": 9.9,
+            "sharpe": 1.26,
+            "trades": 1525,
+            "win_rate_pct": 26.1,
+            "profit_factor": 1.63
+          },
+          "policy": {
+            "sizing": "risk_per_trade",
+            "risk_fraction": 0.0025,
+            "leverage": 4.0
+          }
+        },
+        {
+          "stage": "hours",
+          "is": {
+            "cagr_pct": 24.9,
+            "total_return_pct": 203.8,
+            "max_drawdown_pct": 7.5,
+            "sharpe": 1.31,
+            "trades": 1339,
+            "win_rate_pct": 24.7,
+            "profit_factor": 1.71
+          },
+          "policy": {
+            "sizing": "risk_per_trade",
+            "risk_fraction": 0.0025,
+            "leverage": 4.0,
+            "hours": [
+              9,
+              10,
+              11,
+              12,
+              13
+            ]
+          }
+        },
+        {
+          "stage": "weekday",
+          "is": {
+            "cagr_pct": 25.8,
+            "total_return_pct": 214.8,
+            "max_drawdown_pct": 7.3,
+            "sharpe": 1.37,
+            "trades": 1244,
+            "win_rate_pct": 25.1,
+            "profit_factor": 1.8
+          },
+          "policy": {
+            "sizing": "risk_per_trade",
+            "risk_fraction": 0.0025,
+            "leverage": 4.0,
+            "hours": [
+              9,
+              10,
+              11,
+              12,
+              13
+            ],
+            "weekdays": [
+              0,
+              1,
+              2,
+              3,
+              4,
+              5
+            ]
+          }
+        },
+        {
+          "stage": "regime",
+          "is": {
+            "cagr_pct": 27.3,
+            "total_return_pct": 234.9,
+            "max_drawdown_pct": 7.1,
+            "sharpe": 1.42,
+            "trades": 1210,
+            "win_rate_pct": 25.5,
+            "profit_factor": 1.83
+          },
+          "policy": {
+            "sizing": "risk_per_trade",
+            "risk_fraction": 0.0025,
+            "leverage": 4.0,
+            "hours": [
+              9,
+              10,
+              11,
+              12,
+              13
+            ],
+            "weekdays": [
+              0,
+              1,
+              2,
+              3,
+              4,
+              5
+            ],
+            "regime": {
+              "rv20": [
+                0.0,
+                100.0
+              ]
+            }
+          }
+        }
+      ],
+      "is_baseline": {
+        "cagr_pct": 121.3,
+        "total_return_pct": 5209.8,
+        "max_drawdown_pct": 70.8,
+        "sharpe": 1.48,
+        "trades": 1686,
+        "win_rate_pct": 27.5,
+        "profit_factor": 1.5
+      },
+      "is_optimised": {
+        "cagr_pct": 27.3,
+        "total_return_pct": 234.9,
+        "max_drawdown_pct": 7.1,
+        "sharpe": 1.42,
+        "trades": 1210,
+        "win_rate_pct": 25.5,
+        "profit_factor": 1.83
+      },
+      "oos_baseline": {
+        "cagr_pct": 61.3,
+        "total_return_pct": 113.4,
+        "max_drawdown_pct": 35.7,
+        "sharpe": 1.15,
+        "trades": 540,
+        "win_rate_pct": 30.7,
+        "profit_factor": 1.17
+      },
+      "oos_optimised": {
+        "cagr_pct": 17.3,
+        "total_return_pct": 28.9,
+        "max_drawdown_pct": 7.8,
+        "sharpe": 1.41,
+        "trades": 236,
+        "win_rate_pct": 22.5,
+        "profit_factor": 1.79
+      },
+      "plateau": [
+        {
+          "risk_fraction": 0.001675,
+          "cagr_pct": 18.0,
+          "max_drawdown_pct": 4.2,
+          "sharpe": 1.17
+        },
+        {
+          "risk_fraction": 0.0025,
+          "cagr_pct": 27.3,
+          "max_drawdown_pct": 7.1,
+          "sharpe": 1.42
+        },
+        {
+          "risk_fraction": 0.00375,
+          "cagr_pct": 43.3,
+          "max_drawdown_pct": 10.4,
+          "sharpe": 1.64
+        }
+      ],
+      "met_target_is": true,
+      "met_target_oos": true
+    },
+    {
+      "strategy": "Boundary with different exit & VWAP",
+      "session": "rth",
+      "policy": {
+        "sizing": "vol_target",
+        "vol_target_annual": 0.15,
+        "leverage": 2.0,
+        "dd_threshold": 0.075,
+        "dd_throttle": 0.25,
+        "hours": [
+          9,
+          10,
+          11,
+          12,
+          13
+        ]
+      },
+      "trials": 97,
+      "stages": [
+        {
+          "stage": "sizing",
+          "is": {
+            "cagr_pct": 7.1,
+            "total_return_pct": 40.8,
+            "max_drawdown_pct": 13.6,
+            "sharpe": 0.93,
+            "trades": 1311,
+            "win_rate_pct": 30.4,
+            "profit_factor": 1.33
+          },
+          "policy": {
+            "sizing": "vol_target",
+            "vol_target_annual": 0.15,
+            "leverage": 2.0
+          }
+        },
+        {
+          "stage": "equity curve",
+          "is": {
+            "cagr_pct": 7.7,
+            "total_return_pct": 45.2,
+            "max_drawdown_pct": 8.1,
+            "sharpe": 1.07,
+            "trades": 1127,
+            "win_rate_pct": 30.8,
+            "profit_factor": 1.43
+          },
+          "policy": {
+            "sizing": "vol_target",
+            "vol_target_annual": 0.15,
+            "leverage": 2.0,
+            "dd_threshold": 0.075,
+            "dd_throttle": 0.25
+          }
+        },
+        {
+          "stage": "hours",
+          "is": {
+            "cagr_pct": 7.7,
+            "total_return_pct": 44.6,
+            "max_drawdown_pct": 7.9,
+            "sharpe": 1.06,
+            "trades": 1037,
+            "win_rate_pct": 29.6,
+            "profit_factor": 1.45
+          },
+          "policy": {
+            "sizing": "vol_target",
+            "vol_target_annual": 0.15,
+            "leverage": 2.0,
+            "dd_threshold": 0.075,
+            "dd_throttle": 0.25,
+            "hours": [
+              9,
+              10,
+              11,
+              12,
+              13
+            ]
+          }
+        },
+        {
+          "stage": "weekday",
+          "is": {
+            "cagr_pct": 7.7,
+            "total_return_pct": 44.6,
+            "max_drawdown_pct": 7.9,
+            "sharpe": 1.06,
+            "trades": 1037,
+            "win_rate_pct": 29.6,
+            "profit_factor": 1.45
+          },
+          "policy": {
+            "sizing": "vol_target",
+            "vol_target_annual": 0.15,
+            "leverage": 2.0,
+            "dd_threshold": 0.075,
+            "dd_throttle": 0.25,
+            "hours": [
+              9,
+              10,
+              11,
+              12,
+              13
+            ]
+          }
+        },
+        {
+          "stage": "regime",
+          "is": {
+            "cagr_pct": 7.7,
+            "total_return_pct": 44.6,
+            "max_drawdown_pct": 7.9,
+            "sharpe": 1.06,
+            "trades": 1037,
+            "win_rate_pct": 29.6,
+            "profit_factor": 1.45
+          },
+          "policy": {
+            "sizing": "vol_target",
+            "vol_target_annual": 0.15,
+            "leverage": 2.0,
+            "dd_threshold": 0.075,
+            "dd_throttle": 0.25,
+            "hours": [
+              9,
+              10,
+              11,
+              12,
+              13
+            ]
+          }
+        }
+      ],
+      "is_baseline": {
+        "cagr_pct": 39.0,
+        "total_return_pct": 418.7,
+        "max_drawdown_pct": 79.7,
+        "sharpe": 0.86,
+        "trades": 2078,
+        "win_rate_pct": 31.0,
+        "profit_factor": 1.19
+      },
+      "is_optimised": {
+        "cagr_pct": 7.7,
+        "total_return_pct": 44.6,
+        "max_drawdown_pct": 7.9,
+        "sharpe": 1.06,
+        "trades": 1037,
+        "win_rate_pct": 29.6,
+        "profit_factor": 1.45
+      },
+      "oos_baseline": {
+        "cagr_pct": 91.9,
+        "total_return_pct": 181.2,
+        "max_drawdown_pct": 23.8,
+        "sharpe": 1.63,
+        "trades": 683,
+        "win_rate_pct": 35.6,
+        "profit_factor": 1.24
+      },
+      "oos_optimised": {
+        "cagr_pct": 3.8,
+        "total_return_pct": 6.1,
+        "max_drawdown_pct": 4.6,
+        "sharpe": 0.81,
+        "trades": 139,
+        "win_rate_pct": 36.0,
+        "profit_factor": 1.35
+      },
+      "plateau": [
+        {
+          "vol_target_annual": 0.1005,
+          "cagr_pct": -0.4,
+          "max_drawdown_pct": 8.0,
+          "sharpe": -0.16
+        },
+        {
+          "vol_target_annual": 0.15,
+          "cagr_pct": 7.7,
+          "max_drawdown_pct": 7.9,
+          "sharpe": 1.06
+        },
+        {
+          "vol_target_annual": 0.225,
+          "cagr_pct": 6.8,
+          "max_drawdown_pct": 9.2,
+          "sharpe": 0.91
+        }
+      ],
+      "met_target_is": true,
+      "met_target_oos": true
+    },
+    {
+      "strategy": "VWAP #1",
+      "session": "rth",
+      "policy": {
+        "sizing": "vol_target",
+        "vol_target_annual": 0.1,
+        "leverage": 4.0,
+        "hours": [
+          9,
+          10,
+          11,
+          12,
+          13
+        ],
+        "weekdays": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "regime": {
+          "rv20": [
+            0.0,
+            80.0
+          ]
+        }
+      },
+      "trials": 97,
+      "stages": [
+        {
+          "stage": "sizing",
+          "is": {
+            "cagr_pct": 26.8,
+            "total_return_pct": 228.2,
+            "max_drawdown_pct": 14.8,
+            "sharpe": 1.32,
+            "trades": 2306,
+            "win_rate_pct": 33.3,
+            "profit_factor": 1.41
+          },
+          "policy": {
+            "sizing": "vol_target",
+            "vol_target_annual": 0.1,
+            "leverage": 4.0
+          }
+        },
+        {
+          "stage": "equity curve",
+          "is": {
+            "cagr_pct": 26.8,
+            "total_return_pct": 228.2,
+            "max_drawdown_pct": 14.8,
+            "sharpe": 1.32,
+            "trades": 2306,
+            "win_rate_pct": 33.3,
+            "profit_factor": 1.41
+          },
+          "policy": {
+            "sizing": "vol_target",
+            "vol_target_annual": 0.1,
+            "leverage": 4.0
+          }
+        },
+        {
+          "stage": "hours",
+          "is": {
+            "cagr_pct": 30.6,
+            "total_return_pct": 280.2,
+            "max_drawdown_pct": 12.8,
+            "sharpe": 1.52,
+            "trades": 1834,
+            "win_rate_pct": 31.0,
+            "profit_factor": 1.56
+          },
+          "policy": {
+            "sizing": "vol_target",
+            "vol_target_annual": 0.1,
+            "leverage": 4.0,
+            "hours": [
+              9,
+              10,
+              11,
+              12,
+              13
+            ]
+          }
+        },
+        {
+          "stage": "weekday",
+          "is": {
+            "cagr_pct": 32.4,
+            "total_return_pct": 306.8,
+            "max_drawdown_pct": 13.3,
+            "sharpe": 1.61,
+            "trades": 1634,
+            "win_rate_pct": 31.8,
+            "profit_factor": 1.62
+          },
+          "policy": {
+            "sizing": "vol_target",
+            "vol_target_annual": 0.1,
+            "leverage": 4.0,
+            "hours": [
+              9,
+              10,
+              11,
+              12,
+              13
+            ],
+            "weekdays": [
+              0,
+              1,
+              2,
+              3,
+              4,
+              5
+            ]
+          }
+        },
+        {
+          "stage": "regime",
+          "is": {
+            "cagr_pct": 33.6,
+            "total_return_pct": 325.8,
+            "max_drawdown_pct": 12.7,
+            "sharpe": 1.68,
+            "trades": 1521,
+            "win_rate_pct": 32.1,
+            "profit_factor": 1.67
+          },
+          "policy": {
+            "sizing": "vol_target",
+            "vol_target_annual": 0.1,
+            "leverage": 4.0,
+            "hours": [
+              9,
+              10,
+              11,
+              12,
+              13
+            ],
+            "weekdays": [
+              0,
+              1,
+              2,
+              3,
+              4,
+              5
+            ],
+            "regime": {
+              "rv20": [
+                0.0,
+                80.0
+              ]
+            }
+          }
+        }
+      ],
+      "is_baseline": {
+        "cagr_pct": 51.1,
+        "total_return_pct": 686.9,
+        "max_drawdown_pct": 71.4,
+        "sharpe": 1.03,
+        "trades": 2883,
+        "win_rate_pct": 33.2,
+        "profit_factor": 1.19
+      },
+      "is_optimised": {
+        "cagr_pct": 33.6,
+        "total_return_pct": 325.8,
+        "max_drawdown_pct": 12.7,
+        "sharpe": 1.68,
+        "trades": 1521,
+        "win_rate_pct": 32.1,
+        "profit_factor": 1.67
+      },
+      "oos_baseline": {
+        "cagr_pct": 35.6,
+        "total_return_pct": 62.2,
+        "max_drawdown_pct": 29.4,
+        "sharpe": 0.91,
+        "trades": 892,
+        "win_rate_pct": 36.3,
+        "profit_factor": 1.1
+      },
+      "oos_optimised": {
+        "cagr_pct": 3.1,
+        "total_return_pct": 5.0,
+        "max_drawdown_pct": 13.1,
+        "sharpe": 0.31,
+        "trades": 265,
+        "win_rate_pct": 34.0,
+        "profit_factor": 1.07
+      },
+      "plateau": [
+        {
+          "vol_target_annual": 0.067,
+          "cagr_pct": 25.1,
+          "max_drawdown_pct": 8.6,
+          "sharpe": 1.64
+        },
+        {
+          "vol_target_annual": 0.1,
+          "cagr_pct": 33.6,
+          "max_drawdown_pct": 12.7,
+          "sharpe": 1.68
+        },
+        {
+          "vol_target_annual": 0.15,
+          "cagr_pct": 44.3,
+          "max_drawdown_pct": 16.2,
+          "sharpe": 1.66
+        }
+      ],
+      "met_target_is": true,
+      "met_target_oos": true
+    },
+    {
+      "strategy": "VWAP #2",
+      "session": "rth",
+      "policy": {
+        "sizing": "vol_target",
+        "vol_target_annual": 0.075,
+        "leverage": 2.0,
+        "hours": [
+          9,
+          10,
+          11,
+          12,
+          13
+        ],
+        "weekdays": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "regime": {
+          "rv20": [
+            0.0,
+            80.0
+          ]
+        }
+      },
+      "trials": 97,
+      "stages": [
+        {
+          "stage": "sizing",
+          "is": {
+            "cagr_pct": 15.6,
+            "total_return_pct": 106.5,
+            "max_drawdown_pct": 12.0,
+            "sharpe": 1.26,
+            "trades": 2121,
+            "win_rate_pct": 33.1,
+            "profit_factor": 1.39
+          },
+          "policy": {
+            "sizing": "vol_target",
+            "vol_target_annual": 0.075,
+            "leverage": 2.0
+          }
+        },
+        {
+          "stage": "equity curve",
+          "is": {
+            "cagr_pct": 15.6,
+            "total_return_pct": 106.5,
+            "max_drawdown_pct": 12.0,
+            "sharpe": 1.26,
+            "trades": 2121,
+            "win_rate_pct": 33.1,
+            "profit_factor": 1.39
+          },
+          "policy": {
+            "sizing": "vol_target",
+            "vol_target_annual": 0.075,
+            "leverage": 2.0
+          }
+        },
+        {
+          "stage": "hours",
+          "is": {
+            "cagr_pct": 17.9,
+            "total_return_pct": 127.6,
+            "max_drawdown_pct": 10.0,
+            "sharpe": 1.5,
+            "trades": 1657,
+            "win_rate_pct": 31.7,
+            "profit_factor": 1.55
+          },
+          "policy": {
+            "sizing": "vol_target",
+            "vol_target_annual": 0.075,
+            "leverage": 2.0,
+            "hours": [
+              9,
+              10,
+              11,
+              12,
+              13
+            ]
+          }
+        },
+        {
+          "stage": "weekday",
+          "is": {
+            "cagr_pct": 20.3,
+            "total_return_pct": 151.9,
+            "max_drawdown_pct": 8.7,
+            "sharpe": 1.66,
+            "trades": 1464,
+            "win_rate_pct": 32.6,
+            "profit_factor": 1.64
+          },
+          "policy": {
+            "sizing": "vol_target",
+            "vol_target_annual": 0.075,
+            "leverage": 2.0,
+            "hours": [
+              9,
+              10,
+              11,
+              12,
+              13
+            ],
+            "weekdays": [
+              0,
+              1,
+              2,
+              3,
+              4,
+              5
+            ]
+          }
+        },
+        {
+          "stage": "regime",
+          "is": {
+            "cagr_pct": 20.4,
+            "total_return_pct": 153.3,
+            "max_drawdown_pct": 8.2,
+            "sharpe": 1.71,
+            "trades": 1363,
+            "win_rate_pct": 32.9,
+            "profit_factor": 1.69
+          },
+          "policy": {
+            "sizing": "vol_target",
+            "vol_target_annual": 0.075,
+            "leverage": 2.0,
+            "hours": [
+              9,
+              10,
+              11,
+              12,
+              13
+            ],
+            "weekdays": [
+              0,
+              1,
+              2,
+              3,
+              4,
+              5
+            ],
+            "regime": {
+              "rv20": [
+                0.0,
+                80.0
+              ]
+            }
+          }
+        }
+      ],
+      "is_baseline": {
+        "cagr_pct": 55.6,
+        "total_return_pct": 811.9,
+        "max_drawdown_pct": 78.3,
+        "sharpe": 1.06,
+        "trades": 3212,
+        "win_rate_pct": 33.1,
+        "profit_factor": 1.2
+      },
+      "is_optimised": {
+        "cagr_pct": 20.4,
+        "total_return_pct": 153.3,
+        "max_drawdown_pct": 8.2,
+        "sharpe": 1.71,
+        "trades": 1363,
+        "win_rate_pct": 32.9,
+        "profit_factor": 1.69
+      },
+      "oos_baseline": {
+        "cagr_pct": 40.4,
+        "total_return_pct": 71.4,
+        "max_drawdown_pct": 29.8,
+        "sharpe": 0.98,
+        "trades": 1021,
+        "win_rate_pct": 36.5,
+        "profit_factor": 1.1
+      },
+      "oos_optimised": {
+        "cagr_pct": 1.9,
+        "total_return_pct": 3.0,
+        "max_drawdown_pct": 6.1,
+        "sharpe": 0.33,
+        "trades": 222,
+        "win_rate_pct": 33.8,
+        "profit_factor": 1.08
+      },
+      "plateau": [
+        {
+          "vol_target_annual": 0.05025,
+          "cagr_pct": 15.9,
+          "max_drawdown_pct": 5.7,
+          "sharpe": 1.74
+        },
+        {
+          "vol_target_annual": 0.075,
+          "cagr_pct": 20.4,
+          "max_drawdown_pct": 8.2,
+          "sharpe": 1.71
+        },
+        {
+          "vol_target_annual": 0.1125,
+          "cagr_pct": 26.9,
+          "max_drawdown_pct": 10.8,
+          "sharpe": 1.78
+        }
+      ],
+      "met_target_is": true,
+      "met_target_oos": true
+    },
+    {
+      "strategy": "Boundary & Ladder #1",
+      "session": "rth",
+      "policy": {
+        "sizing": "vol_target",
+        "vol_target_annual": 0.2,
+        "leverage": 4.0,
+        "dd_threshold": 0.075,
+        "dd_throttle": 0.75,
+        "hours": [
+          9,
+          10,
+          11,
+          12,
+          13
+        ],
+        "weekdays": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "regime": {
+          "rv20": [
+            0.0,
+            80.0
+          ]
+        }
+      },
+      "trials": 97,
+      "stages": [
+        {
+          "stage": "sizing",
+          "is": {
+            "cagr_pct": 27.5,
+            "total_return_pct": 237.4,
+            "max_drawdown_pct": 8.4,
+            "sharpe": 1.63,
+            "trades": 3593,
+            "win_rate_pct": 25.8,
+            "profit_factor": 1.47
+          },
+          "policy": {
+            "sizing": "vol_target",
+            "vol_target_annual": 0.2,
+            "leverage": 4.0
+          }
+        },
+        {
+          "stage": "equity curve",
+          "is": {
+            "cagr_pct": 29.5,
+            "total_return_pct": 264.2,
+            "max_drawdown_pct": 7.8,
+            "sharpe": 1.58,
+            "trades": 3584,
+            "win_rate_pct": 25.8,
+            "profit_factor": 1.51
+          },
+          "policy": {
+            "sizing": "vol_target",
+            "vol_target_annual": 0.2,
+            "leverage": 4.0,
+            "dd_threshold": 0.075,
+            "dd_throttle": 0.75
+          }
+        },
+        {
+          "stage": "hours",
+          "is": {
+            "cagr_pct": 31.7,
+            "total_return_pct": 296.7,
+            "max_drawdown_pct": 7.3,
+            "sharpe": 1.72,
+            "trades": 2963,
+            "win_rate_pct": 25.1,
+            "profit_factor": 1.63
+          },
+          "policy": {
+            "sizing": "vol_target",
+            "vol_target_annual": 0.2,
+            "leverage": 4.0,
+            "dd_threshold": 0.075,
+            "dd_throttle": 0.75,
+            "hours": [
+              9,
+              10,
+              11,
+              12,
+              13
+            ]
+          }
+        },
+        {
+          "stage": "weekday",
+          "is": {
+            "cagr_pct": 32.2,
+            "total_return_pct": 303.1,
+            "max_drawdown_pct": 7.8,
+            "sharpe": 1.75,
+            "trades": 2602,
+            "win_rate_pct": 25.4,
+            "profit_factor": 1.69
+          },
+          "policy": {
+            "sizing": "vol_target",
+            "vol_target_annual": 0.2,
+            "leverage": 4.0,
+            "dd_threshold": 0.075,
+            "dd_throttle": 0.75,
+            "hours": [
+              9,
+              10,
+              11,
+              12,
+              13
+            ],
+            "weekdays": [
+              0,
+              1,
+              2,
+              3,
+              4,
+              5
+            ]
+          }
+        },
+        {
+          "stage": "regime",
+          "is": {
+            "cagr_pct": 32.5,
+            "total_return_pct": 309.1,
+            "max_drawdown_pct": 6.4,
+            "sharpe": 1.97,
+            "trades": 2413,
+            "win_rate_pct": 26.0,
+            "profit_factor": 1.69
+          },
+          "policy": {
+            "sizing": "vol_target",
+            "vol_target_annual": 0.2,
+            "leverage": 4.0,
+            "dd_threshold": 0.075,
+            "dd_throttle": 0.75,
+            "hours": [
+              9,
+              10,
+              11,
+              12,
+              13
+            ],
+            "weekdays": [
+              0,
+              1,
+              2,
+              3,
+              4,
+              5
+            ],
+            "regime": {
+              "rv20": [
+                0.0,
+                80.0
+              ]
+            }
+          }
+        }
+      ],
+      "is_baseline": {
+        "cagr_pct": 82.3,
+        "total_return_pct": 1914.7,
+        "max_drawdown_pct": 71.6,
+        "sharpe": 1.28,
+        "trades": 5442,
+        "win_rate_pct": 28.5,
+        "profit_factor": 1.19
+      },
+      "is_optimised": {
+        "cagr_pct": 32.5,
+        "total_return_pct": 309.1,
+        "max_drawdown_pct": 6.4,
+        "sharpe": 1.97,
+        "trades": 2413,
+        "win_rate_pct": 26.0,
+        "profit_factor": 1.69
+      },
+      "oos_baseline": {
+        "cagr_pct": 38.3,
+        "total_return_pct": 67.2,
+        "max_drawdown_pct": 45.4,
+        "sharpe": 0.89,
+        "trades": 1595,
+        "win_rate_pct": 29.8,
+        "profit_factor": 1.06
+      },
+      "oos_optimised": {
+        "cagr_pct": 0.3,
+        "total_return_pct": 0.4,
+        "max_drawdown_pct": 7.0,
+        "sharpe": 0.07,
+        "trades": 305,
+        "win_rate_pct": 29.8,
+        "profit_factor": 1.01
+      },
+      "plateau": [
+        {
+          "vol_target_annual": 0.134,
+          "cagr_pct": 18.9,
+          "max_drawdown_pct": 3.5,
+          "sharpe": 1.89
+        },
+        {
+          "vol_target_annual": 0.2,
+          "cagr_pct": 32.5,
+          "max_drawdown_pct": 6.4,
+          "sharpe": 1.97
+        },
+        {
+          "vol_target_annual": 0.3,
+          "cagr_pct": 38.4,
+          "max_drawdown_pct": 8.9,
+          "sharpe": 1.9
+        }
+      ],
+      "met_target_is": true,
+      "met_target_oos": true
+    },
+    {
+      "strategy": "Boundary & Ladder #2",
+      "session": "rth",
+      "policy": {
+        "sizing": "vol_target",
+        "vol_target_annual": 0.2,
+        "leverage": 4.0,
+        "hours": [
+          9,
+          10,
+          11,
+          12,
+          13,
+          14
+        ],
+        "weekdays": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "regime": {
+          "rv20": [
+            0.0,
+            80.0
+          ]
+        }
+      },
+      "trials": 97,
+      "stages": [
+        {
+          "stage": "sizing",
+          "is": {
+            "cagr_pct": 26.3,
+            "total_return_pct": 221.4,
+            "max_drawdown_pct": 8.6,
+            "sharpe": 1.69,
+            "trades": 3459,
+            "win_rate_pct": 28.2,
+            "profit_factor": 1.51
+          },
+          "policy": {
+            "sizing": "vol_target",
+            "vol_target_annual": 0.2,
+            "leverage": 4.0
+          }
+        },
+        {
+          "stage": "equity curve",
+          "is": {
+            "cagr_pct": 26.3,
+            "total_return_pct": 221.4,
+            "max_drawdown_pct": 8.6,
+            "sharpe": 1.69,
+            "trades": 3459,
+            "win_rate_pct": 28.2,
+            "profit_factor": 1.51
+          },
+          "policy": {
+            "sizing": "vol_target",
+            "vol_target_annual": 0.2,
+            "leverage": 4.0
+          }
+        },
+        {
+          "stage": "hours",
+          "is": {
+            "cagr_pct": 27.1,
+            "total_return_pct": 231.3,
+            "max_drawdown_pct": 8.3,
+            "sharpe": 1.73,
+            "trades": 3352,
+            "win_rate_pct": 28.2,
+            "profit_factor": 1.53
+          },
+          "policy": {
+            "sizing": "vol_target",
+            "vol_target_annual": 0.2,
+            "leverage": 4.0,
+            "hours": [
+              9,
+              10,
+              11,
+              12,
+              13,
+              14
+            ]
+          }
+        },
+        {
+          "stage": "weekday",
+          "is": {
+            "cagr_pct": 28.5,
+            "total_return_pct": 250.8,
+            "max_drawdown_pct": 8.5,
+            "sharpe": 1.83,
+            "trades": 2997,
+            "win_rate_pct": 28.2,
+            "profit_factor": 1.59
+          },
+          "policy": {
+            "sizing": "vol_target",
+            "vol_target_annual": 0.2,
+            "leverage": 4.0,
+            "hours": [
+              9,
+              10,
+              11,
+              12,
+              13,
+              14
+            ],
+            "weekdays": [
+              0,
+              1,
+              2,
+              3,
+              4,
+              5
+            ]
+          }
+        },
+        {
+          "stage": "regime",
+          "is": {
+            "cagr_pct": 29.9,
+            "total_return_pct": 270.5,
+            "max_drawdown_pct": 8.7,
+            "sharpe": 1.92,
+            "trades": 2780,
+            "win_rate_pct": 28.6,
+            "profit_factor": 1.64
+          },
+          "policy": {
+            "sizing": "vol_target",
+            "vol_target_annual": 0.2,
+            "leverage": 4.0,
+            "hours": [
+              9,
+              10,
+              11,
+              12,
+              13,
+              14
+            ],
+            "weekdays": [
+              0,
+              1,
+              2,
+              3,
+              4,
+              5
+            ],
+            "regime": {
+              "rv20": [
+                0.0,
+                80.0
+              ]
+            }
+          }
+        }
+      ],
+      "is_baseline": {
+        "cagr_pct": 103.8,
+        "total_return_pct": 3412.4,
+        "max_drawdown_pct": 68.4,
+        "sharpe": 1.55,
+        "trades": 4863,
+        "win_rate_pct": 29.4,
+        "profit_factor": 1.34
+      },
+      "is_optimised": {
+        "cagr_pct": 29.9,
+        "total_return_pct": 270.5,
+        "max_drawdown_pct": 8.7,
+        "sharpe": 1.92,
+        "trades": 2780,
+        "win_rate_pct": 28.6,
+        "profit_factor": 1.64
+      },
+      "oos_baseline": {
+        "cagr_pct": 55.5,
+        "total_return_pct": 101.4,
+        "max_drawdown_pct": 36.8,
+        "sharpe": 1.14,
+        "trades": 1500,
+        "win_rate_pct": 30.3,
+        "profit_factor": 1.14
+      },
+      "oos_optimised": {
+        "cagr_pct": -2.5,
+        "total_return_pct": -3.9,
+        "max_drawdown_pct": 8.0,
+        "sharpe": -0.4,
+        "trades": 348,
+        "win_rate_pct": 28.2,
+        "profit_factor": 0.9
+      },
+      "plateau": [
+        {
+          "vol_target_annual": 0.134,
+          "cagr_pct": 19.5,
+          "max_drawdown_pct": 5.4,
+          "sharpe": 1.83
+        },
+        {
+          "vol_target_annual": 0.2,
+          "cagr_pct": 29.9,
+          "max_drawdown_pct": 8.7,
+          "sharpe": 1.92
+        },
+        {
+          "vol_target_annual": 0.3,
+          "cagr_pct": 47.3,
+          "max_drawdown_pct": 12.5,
+          "sharpe": 2.0
+        }
+      ],
+      "met_target_is": true,
+      "met_target_oos": true
+    },
+    {
+      "strategy": "VWAP & Ladder #1",
+      "session": "rth",
+      "policy": {
+        "sizing": "vol_target",
+        "vol_target_annual": 0.3,
+        "leverage": 1.0,
+        "hours": [
+          10,
+          11,
+          12,
+          13
+        ],
+        "weekdays": [
+          0,
+          1,
+          3,
+          4,
+          5,
+          6
+        ]
+      },
+      "trials": 97,
+      "stages": [
+        {
+          "stage": "sizing",
+          "is": {
+            "cagr_pct": 14.0,
+            "total_return_pct": 92.3,
+            "max_drawdown_pct": 13.5,
+            "sharpe": 1.25,
+            "trades": 1466,
+            "win_rate_pct": 30.3,
+            "profit_factor": 1.34
+          },
+          "policy": {
+            "sizing": "vol_target",
+            "vol_target_annual": 0.3,
+            "leverage": 1.0
+          }
+        },
+        {
+          "stage": "equity curve",
+          "is": {
+            "cagr_pct": 14.0,
+            "total_return_pct": 92.3,
+            "max_drawdown_pct": 13.5,
+            "sharpe": 1.25,
+            "trades": 1466,
+            "win_rate_pct": 30.3,
+            "profit_factor": 1.34
+          },
+          "policy": {
+            "sizing": "vol_target",
+            "vol_target_annual": 0.3,
+            "leverage": 1.0
+          }
+        },
+        {
+          "stage": "hours",
+          "is": {
+            "cagr_pct": 16.3,
+            "total_return_pct": 112.8,
+            "max_drawdown_pct": 7.2,
+            "sharpe": 1.5,
+            "trades": 1204,
+            "win_rate_pct": 29.7,
+            "profit_factor": 1.45
+          },
+          "policy": {
+            "sizing": "vol_target",
+            "vol_target_annual": 0.3,
+            "leverage": 1.0,
+            "hours": [
+              10,
+              11,
+              12,
+              13
+            ]
+          }
+        },
+        {
+          "stage": "weekday",
+          "is": {
+            "cagr_pct": 17.3,
+            "total_return_pct": 121.8,
+            "max_drawdown_pct": 6.0,
+            "sharpe": 1.69,
+            "trades": 979,
+            "win_rate_pct": 29.8,
+            "profit_factor": 1.61
+          },
+          "policy": {
+            "sizing": "vol_target",
+            "vol_target_annual": 0.3,
+            "leverage": 1.0,
+            "hours": [
+              10,
+              11,
+              12,
+              13
+            ],
+            "weekdays": [
+              0,
+              1,
+              3,
+              4,
+              5,
+              6
+            ]
+          }
+        },
+        {
+          "stage": "regime",
+          "is": {
+            "cagr_pct": 17.3,
+            "total_return_pct": 121.8,
+            "max_drawdown_pct": 6.0,
+            "sharpe": 1.69,
+            "trades": 979,
+            "win_rate_pct": 29.8,
+            "profit_factor": 1.61
+          },
+          "policy": {
+            "sizing": "vol_target",
+            "vol_target_annual": 0.3,
+            "leverage": 1.0,
+            "hours": [
+              10,
+              11,
+              12,
+              13
+            ],
+            "weekdays": [
+              0,
+              1,
+              3,
+              4,
+              5,
+              6
+            ]
+          }
+        }
+      ],
+      "is_baseline": {
+        "cagr_pct": 17.5,
+        "total_return_pct": 123.8,
+        "max_drawdown_pct": 60.4,
+        "sharpe": 0.6,
+        "trades": 2160,
+        "win_rate_pct": 28.9,
+        "profit_factor": 1.1
+      },
+      "is_optimised": {
+        "cagr_pct": 17.3,
+        "total_return_pct": 121.8,
+        "max_drawdown_pct": 6.0,
+        "sharpe": 1.69,
+        "trades": 979,
+        "win_rate_pct": 29.8,
+        "profit_factor": 1.61
+      },
+      "oos_baseline": {
+        "cagr_pct": 14.0,
+        "total_return_pct": 23.1,
+        "max_drawdown_pct": 28.3,
+        "sharpe": 0.56,
+        "trades": 702,
+        "win_rate_pct": 31.2,
+        "profit_factor": 1.07
+      },
+      "oos_optimised": {
+        "cagr_pct": 0.9,
+        "total_return_pct": 1.5,
+        "max_drawdown_pct": 5.1,
+        "sharpe": 0.23,
+        "trades": 150,
+        "win_rate_pct": 28.0,
+        "profit_factor": 1.07
+      },
+      "plateau": [
+        {
+          "vol_target_annual": 0.201,
+          "cagr_pct": 11.7,
+          "max_drawdown_pct": 5.9,
+          "sharpe": 1.49
+        },
+        {
+          "vol_target_annual": 0.3,
+          "cagr_pct": 17.3,
+          "max_drawdown_pct": 6.0,
+          "sharpe": 1.69
+        },
+        {
+          "vol_target_annual": 0.45,
+          "cagr_pct": 17.9,
+          "max_drawdown_pct": 6.8,
+          "sharpe": 1.52
+        }
+      ],
+      "met_target_is": true,
+      "met_target_oos": true
+    },
+    {
+      "strategy": "VWAP & Ladder #2",
+      "session": "rth",
+      "policy": {
+        "sizing": "vol_target",
+        "vol_target_annual": 0.2,
+        "leverage": 4.0,
+        "dd_threshold": 0.075,
+        "dd_throttle": 0.5,
+        "weekdays": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "regime": {
+          "rv_pct": [
+            0.0,
+            0.6
+          ]
+        }
+      },
+      "trials": 97,
+      "stages": [
+        {
+          "stage": "sizing",
+          "is": {
+            "cagr_pct": 23.0,
+            "total_return_pct": 181.4,
+            "max_drawdown_pct": 13.9,
+            "sharpe": 1.49,
+            "trades": 2697,
+            "win_rate_pct": 31.4,
+            "profit_factor": 1.48
+          },
+          "policy": {
+            "sizing": "vol_target",
+            "vol_target_annual": 0.2,
+            "leverage": 4.0
+          }
+        },
+        {
+          "stage": "equity curve",
+          "is": {
+            "cagr_pct": 23.6,
+            "total_return_pct": 188.1,
+            "max_drawdown_pct": 8.1,
+            "sharpe": 1.53,
+            "trades": 2601,
+            "win_rate_pct": 31.6,
+            "profit_factor": 1.5
+          },
+          "policy": {
+            "sizing": "vol_target",
+            "vol_target_annual": 0.2,
+            "leverage": 4.0,
+            "dd_threshold": 0.075,
+            "dd_throttle": 0.5
+          }
+        },
+        {
+          "stage": "hours",
+          "is": {
+            "cagr_pct": 23.6,
+            "total_return_pct": 188.1,
+            "max_drawdown_pct": 8.1,
+            "sharpe": 1.53,
+            "trades": 2601,
+            "win_rate_pct": 31.6,
+            "profit_factor": 1.5
+          },
+          "policy": {
+            "sizing": "vol_target",
+            "vol_target_annual": 0.2,
+            "leverage": 4.0,
+            "dd_threshold": 0.075,
+            "dd_throttle": 0.5
+          }
+        },
+        {
+          "stage": "weekday",
+          "is": {
+            "cagr_pct": 24.1,
+            "total_return_pct": 193.9,
+            "max_drawdown_pct": 8.1,
+            "sharpe": 1.57,
+            "trades": 2417,
+            "win_rate_pct": 31.9,
+            "profit_factor": 1.52
+          },
+          "policy": {
+            "sizing": "vol_target",
+            "vol_target_annual": 0.2,
+            "leverage": 4.0,
+            "dd_threshold": 0.075,
+            "dd_throttle": 0.5,
+            "weekdays": [
+              0,
+              1,
+              2,
+              3,
+              4,
+              5
+            ]
+          }
+        },
+        {
+          "stage": "regime",
+          "is": {
+            "cagr_pct": 25.3,
+            "total_return_pct": 208.5,
+            "max_drawdown_pct": 5.1,
+            "sharpe": 1.71,
+            "trades": 1686,
+            "win_rate_pct": 33.7,
+            "profit_factor": 1.78
+          },
+          "policy": {
+            "sizing": "vol_target",
+            "vol_target_annual": 0.2,
+            "leverage": 4.0,
+            "dd_threshold": 0.075,
+            "dd_throttle": 0.5,
+            "weekdays": [
+              0,
+              1,
+              2,
+              3,
+              4,
+              5
+            ],
+            "regime": {
+              "rv_pct": [
+                0.0,
+                0.6
+              ]
+            }
+          }
+        }
+      ],
+      "is_baseline": {
+        "cagr_pct": 66.6,
+        "total_return_pct": 1183.7,
+        "max_drawdown_pct": 68.8,
+        "sharpe": 1.17,
+        "trades": 3450,
+        "win_rate_pct": 29.6,
+        "profit_factor": 1.27
+      },
+      "is_optimised": {
+        "cagr_pct": 25.3,
+        "total_return_pct": 208.5,
+        "max_drawdown_pct": 5.1,
+        "sharpe": 1.71,
+        "trades": 1686,
+        "win_rate_pct": 33.7,
+        "profit_factor": 1.78
+      },
+      "oos_baseline": {
+        "cagr_pct": 10.3,
+        "total_return_pct": 16.9,
+        "max_drawdown_pct": 45.1,
+        "sharpe": 0.43,
+        "trades": 1149,
+        "win_rate_pct": 31.6,
+        "profit_factor": 1.02
+      },
+      "oos_optimised": {
+        "cagr_pct": 4.0,
+        "total_return_pct": 6.4,
+        "max_drawdown_pct": 4.6,
+        "sharpe": 0.64,
+        "trades": 285,
+        "win_rate_pct": 35.4,
+        "profit_factor": 1.22
+      },
+      "plateau": [
+        {
+          "vol_target_annual": 0.134,
+          "cagr_pct": 16.6,
+          "max_drawdown_pct": 3.2,
+          "sharpe": 1.77
+        },
+        {
+          "vol_target_annual": 0.2,
+          "cagr_pct": 25.3,
+          "max_drawdown_pct": 5.1,
+          "sharpe": 1.71
+        },
+        {
+          "vol_target_annual": 0.3,
+          "cagr_pct": 41.5,
+          "max_drawdown_pct": 7.5,
+          "sharpe": 1.86
+        }
+      ],
+      "met_target_is": true,
+      "met_target_oos": true
+    },
+    {
+      "strategy": "Ladder #1",
+      "session": "rth",
+      "policy": {
+        "sizing": "vol_target",
+        "vol_target_annual": 0.3,
+        "leverage": 2.0,
+        "hours": [
+          10,
+          11,
+          12,
+          13
+        ],
+        "weekdays": [
+          0,
+          1,
+          3,
+          4,
+          5,
+          6
+        ],
+        "regime": {
+          "rv20": [
+            0.0,
+            100.0
+          ]
+        }
+      },
+      "trials": 79,
+      "stages": [
+        {
+          "stage": "sizing",
+          "is": {
+            "cagr_pct": 29.7,
+            "total_return_pct": 266.5,
+            "max_drawdown_pct": 13.1,
+            "sharpe": 1.48,
+            "trades": 1160,
+            "win_rate_pct": 43.9,
+            "profit_factor": 1.35
+          },
+          "policy": {
+            "sizing": "vol_target",
+            "vol_target_annual": 0.3,
+            "leverage": 2.0
+          }
+        },
+        {
+          "stage": "equity curve",
+          "is": {
+            "cagr_pct": 29.7,
+            "total_return_pct": 266.5,
+            "max_drawdown_pct": 13.1,
+            "sharpe": 1.48,
+            "trades": 1160,
+            "win_rate_pct": 43.9,
+            "profit_factor": 1.35
+          },
+          "policy": {
+            "sizing": "vol_target",
+            "vol_target_annual": 0.3,
+            "leverage": 2.0
+          }
+        },
+        {
+          "stage": "hours",
+          "is": {
+            "cagr_pct": 30.2,
+            "total_return_pct": 274.3,
+            "max_drawdown_pct": 14.3,
+            "sharpe": 1.55,
+            "trades": 1020,
+            "win_rate_pct": 44.4,
+            "profit_factor": 1.37
+          },
+          "policy": {
+            "sizing": "vol_target",
+            "vol_target_annual": 0.3,
+            "leverage": 2.0,
+            "hours": [
+              10,
+              11,
+              12,
+              13
+            ]
+          }
+        },
+        {
+          "stage": "weekday",
+          "is": {
+            "cagr_pct": 32.6,
+            "total_return_pct": 309.8,
+            "max_drawdown_pct": 9.0,
+            "sharpe": 1.79,
+            "trades": 814,
+            "win_rate_pct": 45.3,
+            "profit_factor": 1.56
+          },
+          "policy": {
+            "sizing": "vol_target",
+            "vol_target_annual": 0.3,
+            "leverage": 2.0,
+            "hours": [
+              10,
+              11,
+              12,
+              13
+            ],
+            "weekdays": [
+              0,
+              1,
+              3,
+              4,
+              5,
+              6
+            ]
+          }
+        },
+        {
+          "stage": "regime",
+          "is": {
+            "cagr_pct": 33.5,
+            "total_return_pct": 324.4,
+            "max_drawdown_pct": 9.6,
+            "sharpe": 1.84,
+            "trades": 786,
+            "win_rate_pct": 45.9,
+            "profit_factor": 1.58
+          },
+          "policy": {
+            "sizing": "vol_target",
+            "vol_target_annual": 0.3,
+            "leverage": 2.0,
+            "hours": [
+              10,
+              11,
+              12,
+              13
+            ],
+            "weekdays": [
+              0,
+              1,
+              3,
+              4,
+              5,
+              6
+            ],
+            "regime": {
+              "rv20": [
+                0.0,
+                100.0
+              ]
+            }
+          }
+        }
+      ],
+      "is_baseline": {
+        "cagr_pct": 50.6,
+        "total_return_pct": 674.1,
+        "max_drawdown_pct": 64.3,
+        "sharpe": 1.02,
+        "trades": 3419,
+        "win_rate_pct": 28.6,
+        "profit_factor": 1.13
+      },
+      "is_optimised": {
+        "cagr_pct": 33.5,
+        "total_return_pct": 324.4,
+        "max_drawdown_pct": 9.6,
+        "sharpe": 1.84,
+        "trades": 786,
+        "win_rate_pct": 45.9,
+        "profit_factor": 1.58
+      },
+      "oos_baseline": {
+        "cagr_pct": -2.4,
+        "total_return_pct": -3.8,
+        "max_drawdown_pct": 39.3,
+        "sharpe": 0.14,
+        "trades": 867,
+        "win_rate_pct": 27.3,
+        "profit_factor": 0.99
+      },
+      "oos_optimised": {
+        "cagr_pct": 11.1,
+        "total_return_pct": 18.2,
+        "max_drawdown_pct": 7.6,
+        "sharpe": 1.1,
+        "trades": 170,
+        "win_rate_pct": 45.3,
+        "profit_factor": 1.28
+      },
+      "plateau": [
+        {
+          "vol_target_annual": 0.201,
+          "cagr_pct": 21.0,
+          "max_drawdown_pct": 7.7,
+          "sharpe": 1.62
+        },
+        {
+          "vol_target_annual": 0.3,
+          "cagr_pct": 33.5,
+          "max_drawdown_pct": 9.6,
+          "sharpe": 1.84
+        },
+        {
+          "vol_target_annual": 0.45,
+          "cagr_pct": 39.6,
+          "max_drawdown_pct": 14.6,
+          "sharpe": 1.72
+        }
+      ],
+      "met_target_is": true,
+      "met_target_oos": true
+    },
+    {
+      "strategy": "Ladder #2",
+      "session": "rth",
+      "policy": {
+        "sizing": "vol_target",
+        "vol_target_annual": 0.3,
+        "leverage": 2.0,
+        "dd_threshold": 0.05,
+        "dd_throttle": 0.75,
+        "hours": [
+          10,
+          11,
+          12
+        ],
+        "weekdays": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "regime": {
+          "rv20": [
+            0.0,
+            80.0
+          ]
+        }
+      },
+      "trials": 79,
+      "stages": [
+        {
+          "stage": "sizing",
+          "is": {
+            "cagr_pct": 26.5,
+            "total_return_pct": 224.1,
+            "max_drawdown_pct": 13.3,
+            "sharpe": 1.44,
+            "trades": 1152,
+            "win_rate_pct": 44.2,
+            "profit_factor": 1.32
+          },
+          "policy": {
+            "sizing": "vol_target",
+            "vol_target_annual": 0.3,
+            "leverage": 2.0
+          }
+        },
+        {
+          "stage": "equity curve",
+          "is": {
+            "cagr_pct": 27.3,
+            "total_return_pct": 234.8,
+            "max_drawdown_pct": 11.6,
+            "sharpe": 1.54,
+            "trades": 1124,
+            "win_rate_pct": 45.2,
+            "profit_factor": 1.36
+          },
+          "policy": {
+            "sizing": "vol_target",
+            "vol_target_annual": 0.3,
+            "leverage": 2.0,
+            "dd_threshold": 0.05,
+            "dd_throttle": 0.75
+          }
+        },
+        {
+          "stage": "hours",
+          "is": {
+            "cagr_pct": 29.4,
+            "total_return_pct": 263.0,
+            "max_drawdown_pct": 11.2,
+            "sharpe": 1.7,
+            "trades": 919,
+            "win_rate_pct": 46.5,
+            "profit_factor": 1.42
+          },
+          "policy": {
+            "sizing": "vol_target",
+            "vol_target_annual": 0.3,
+            "leverage": 2.0,
+            "dd_threshold": 0.05,
+            "dd_throttle": 0.75,
+            "hours": [
+              10,
+              11,
+              12
+            ]
+          }
+        },
+        {
+          "stage": "weekday",
+          "is": {
+            "cagr_pct": 30.4,
+            "total_return_pct": 276.9,
+            "max_drawdown_pct": 10.5,
+            "sharpe": 1.77,
+            "trades": 838,
+            "win_rate_pct": 47.4,
+            "profit_factor": 1.47
+          },
+          "policy": {
+            "sizing": "vol_target",
+            "vol_target_annual": 0.3,
+            "leverage": 2.0,
+            "dd_threshold": 0.05,
+            "dd_throttle": 0.75,
+            "hours": [
+              10,
+              11,
+              12
+            ],
+            "weekdays": [
+              0,
+              1,
+              2,
+              3,
+              4,
+              5
+            ]
+          }
+        },
+        {
+          "stage": "regime",
+          "is": {
+            "cagr_pct": 31.8,
+            "total_return_pct": 298.1,
+            "max_drawdown_pct": 10.5,
+            "sharpe": 1.89,
+            "trades": 760,
+            "win_rate_pct": 48.2,
+            "profit_factor": 1.52
+          },
+          "policy": {
+            "sizing": "vol_target",
+            "vol_target_annual": 0.3,
+            "leverage": 2.0,
+            "dd_threshold": 0.05,
+            "dd_throttle": 0.75,
+            "hours": [
+              10,
+              11,
+              12
+            ],
+            "weekdays": [
+              0,
+              1,
+              2,
+              3,
+              4,
+              5
+            ],
+            "regime": {
+              "rv20": [
+                0.0,
+                80.0
+              ]
+            }
+          }
+        }
+      ],
+      "is_baseline": {
+        "cagr_pct": 29.0,
+        "total_return_pct": 257.3,
+        "max_drawdown_pct": 66.4,
+        "sharpe": 0.76,
+        "trades": 2735,
+        "win_rate_pct": 26.8,
+        "profit_factor": 1.11
+      },
+      "is_optimised": {
+        "cagr_pct": 31.8,
+        "total_return_pct": 298.1,
+        "max_drawdown_pct": 10.5,
+        "sharpe": 1.89,
+        "trades": 760,
+        "win_rate_pct": 48.2,
+        "profit_factor": 1.52
+      },
+      "oos_baseline": {
+        "cagr_pct": 2.6,
+        "total_return_pct": 4.2,
+        "max_drawdown_pct": 30.4,
+        "sharpe": 0.25,
+        "trades": 784,
+        "win_rate_pct": 28.8,
+        "profit_factor": 1.01
+      },
+      "oos_optimised": {
+        "cagr_pct": -1.5,
+        "total_return_pct": -2.4,
+        "max_drawdown_pct": 7.3,
+        "sharpe": -0.15,
+        "trades": 151,
+        "win_rate_pct": 41.7,
+        "profit_factor": 0.96
+      },
+      "plateau": [
+        {
+          "vol_target_annual": 0.201,
+          "cagr_pct": 19.5,
+          "max_drawdown_pct": 8.4,
+          "sharpe": 1.56
+        },
+        {
+          "vol_target_annual": 0.3,
+          "cagr_pct": 31.8,
+          "max_drawdown_pct": 10.5,
+          "sharpe": 1.89
+        },
+        {
+          "vol_target_annual": 0.45,
+          "cagr_pct": 43.8,
+          "max_drawdown_pct": 15.5,
+          "sharpe": 2.02
+        }
+      ],
+      "met_target_is": true,
+      "met_target_oos": true
+    }
+  ],
+  "total_trials": 1498
+}

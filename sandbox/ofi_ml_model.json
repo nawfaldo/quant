@@ -1,0 +1,588 @@
+{
+  "model_version": 1,
+  "strategy": "Deep OFI Momentum",
+  "status": "paper_only",
+  "trained_through": "2026-07-23",
+  "data_range": [
+    "2025-02-12",
+    "2026-07-23"
+  ],
+  "feature_names": [
+    "abs_ofi_z",
+    "signed_trade_delta",
+    "signed_top1_imbalance",
+    "signed_top5_imbalance",
+    "signed_top10_imbalance",
+    "signed_microprice_ticks",
+    "signed_price_change",
+    "signed_replenishment",
+    "log_trade_count",
+    "log_depth_events",
+    "spread",
+    "session_progress"
+  ],
+  "threshold": 0.5,
+  "regularization_c": 0.1,
+  "class_weight": "balanced",
+  "scaler_mean": [
+    2.967115918215,
+    0.76337697358,
+    0.112081223503,
+    0.130061699123,
+    0.181876233062,
+    0.126081437376,
+    1.048912053387,
+    -0.087261897333,
+    6.249364251374,
+    10.132055302289,
+    0.599717336683,
+    0.484461369347
+  ],
+  "scaler_scale": [
+    1.060351456903,
+    0.596201634548,
+    0.335654188854,
+    0.163831885573,
+    0.131605826596,
+    0.395998856126,
+    1.545801985815,
+    0.076782330728,
+    0.651146544062,
+    0.641062436301,
+    0.171560552332,
+    0.293319458515
+  ],
+  "coefficients": [
+    -0.030626811503,
+    -0.12574695526,
+    0.010085019116,
+    -0.032370899981,
+    -0.034325330038,
+    0.004693154516,
+    -0.111378403092,
+    -0.11424431083,
+    -0.057941817668,
+    0.04939095329,
+    0.076271585899,
+    -0.053515589346
+  ],
+  "intercept": -2.0724245e-05,
+  "research": {
+    "walk_forward_folds": [
+      {
+        "month": "2025-08",
+        "train": 466,
+        "candidates": 193,
+        "baseline_trades": 109,
+        "model_trades": 46,
+        "baseline_points": 172.70000000031723,
+        "model_points": -151.94999999986612
+      },
+      {
+        "month": "2025-09",
+        "train": 580,
+        "candidates": 173,
+        "baseline_trades": 84,
+        "model_trades": 47,
+        "baseline_points": -154.79999999975553,
+        "model_points": 223.6000000001368
+      },
+      {
+        "month": "2025-10",
+        "train": 661,
+        "candidates": 204,
+        "baseline_trades": 106,
+        "model_trades": 68,
+        "baseline_points": 453.8000000003085,
+        "model_points": 257.1500000001979
+      },
+      {
+        "month": "2025-11",
+        "train": 767,
+        "candidates": 186,
+        "baseline_trades": 96,
+        "model_trades": 61,
+        "baseline_points": -553.1999999997206,
+        "model_points": -181.44999999982247
+      },
+      {
+        "month": "2025-12",
+        "train": 866,
+        "candidates": 199,
+        "baseline_trades": 98,
+        "model_trades": 70,
+        "baseline_points": -18.849999999714782,
+        "model_points": -87.99999999979627
+      },
+      {
+        "month": "2026-01",
+        "train": 957,
+        "candidates": 214,
+        "baseline_trades": 111,
+        "model_trades": 79,
+        "baseline_points": 856.550000000323,
+        "model_points": 608.9500000002299
+      },
+      {
+        "month": "2026-02",
+        "train": 1075,
+        "candidates": 172,
+        "baseline_trades": 85,
+        "model_trades": 69,
+        "baseline_points": 368.2500000002474,
+        "model_points": 362.2000000002008
+      },
+      {
+        "month": "2026-03",
+        "train": 1160,
+        "candidates": 132,
+        "baseline_trades": 81,
+        "model_trades": 49,
+        "baseline_points": -468.94999999976426,
+        "model_points": -281.0499999998574
+      },
+      {
+        "month": "2026-04",
+        "train": 1237,
+        "candidates": 303,
+        "baseline_trades": 127,
+        "model_trades": 84,
+        "baseline_points": 196.60000000036962,
+        "model_points": -177.04999999975553
+      },
+      {
+        "month": "2026-05",
+        "train": 1364,
+        "candidates": 203,
+        "baseline_trades": 102,
+        "model_trades": 72,
+        "baseline_points": 1105.3500000002969,
+        "model_points": 967.3500000002095
+      },
+      {
+        "month": "2026-06",
+        "train": 1470,
+        "candidates": 133,
+        "baseline_trades": 72,
+        "model_trades": 51,
+        "baseline_points": 274.85000000020955,
+        "model_points": 613.3000000001484
+      },
+      {
+        "month": "2026-07",
+        "train": 1535,
+        "candidates": 93,
+        "baseline_trades": 50,
+        "model_trades": 39,
+        "baseline_points": 327.7500000001455,
+        "model_points": 269.7000000001135
+      }
+    ],
+    "baseline_points": {
+      "trades": 1121,
+      "points": 2560.05,
+      "points_per_trade": 2.2837,
+      "win_rate": 0.5094,
+      "profit_factor": 1.1701
+    },
+    "model_points_live_dynamic": {
+      "trades": 735,
+      "points": 2422.75,
+      "points_per_trade": 3.2963,
+      "win_rate": 0.5143,
+      "profit_factor": 1.2511
+    },
+    "model_points_pure_filter": {
+      "trades": 573,
+      "points": 2455.15,
+      "points_per_trade": 4.2847,
+      "win_rate": 0.5166,
+      "profit_factor": 1.3265
+    },
+    "baseline_sized": {
+      "pnl": 215.96,
+      "trades": 1121,
+      "win_rate": 0.509,
+      "pf": 1.173,
+      "max_dd": 76.43,
+      "n_months": 12,
+      "pos_months": 8,
+      "worst_month": -44.26,
+      "best_month": 96.78,
+      "msharpe": 0.466,
+      "pos_rate": 0.667,
+      "max_loss_streak": 2,
+      "worst_quarter": -20.34,
+      "top_month_share": 0.309,
+      "months": {
+        "2025-08": 13.82,
+        "2025-09": -12.38,
+        "2025-10": 36.3,
+        "2025-11": -44.26,
+        "2025-12": -1.51,
+        "2026-01": 68.52,
+        "2026-02": 30.55,
+        "2026-03": -39.35,
+        "2026-04": 14.61,
+        "2026-05": 96.78,
+        "2026-06": 22.76,
+        "2026-07": 30.12
+      }
+    },
+    "model_sized_live_dynamic": {
+      "pnl": 204.28,
+      "trades": 735,
+      "win_rate": 0.514,
+      "pf": 1.257,
+      "max_dd": 62.42,
+      "n_months": 12,
+      "pos_months": 7,
+      "worst_month": -22.94,
+      "best_month": 81.71,
+      "msharpe": 0.543,
+      "pos_rate": 0.583,
+      "max_loss_streak": 2,
+      "worst_quarter": -8.74,
+      "top_month_share": 0.297,
+      "months": {
+        "2025-08": -12.16,
+        "2025-09": 17.89,
+        "2025-10": 20.57,
+        "2025-11": -14.52,
+        "2025-12": -7.04,
+        "2026-01": 48.72,
+        "2026-02": 28.36,
+        "2026-03": -22.94,
+        "2026-04": -14.16,
+        "2026-05": 81.71,
+        "2026-06": 55.2,
+        "2026-07": 22.65
+      }
+    },
+    "model_cluster_t": {
+      "day": 1.9675,
+      "month": 1.7731
+    },
+    "purged_cv": {
+      "blocks": [
+        {
+          "from": "2025-02-01",
+          "to": "2025-05-01",
+          "train": 1449,
+          "trades": 77,
+          "points": 469.6,
+          "points_per_trade": 6.0987,
+          "win_rate": 0.5584,
+          "profit_factor": 1.3795
+        },
+        {
+          "from": "2025-05-01",
+          "to": "2025-08-01",
+          "train": 1243,
+          "trades": 267,
+          "points": 203.85,
+          "points_per_trade": 0.7635,
+          "win_rate": 0.4532,
+          "profit_factor": 1.0831
+        },
+        {
+          "from": "2025-08-01",
+          "to": "2025-11-01",
+          "train": 1288,
+          "trades": 138,
+          "points": 393.4,
+          "points_per_trade": 2.8507,
+          "win_rate": 0.5072,
+          "profit_factor": 1.2938
+        },
+        {
+          "from": "2025-11-01",
+          "to": "2026-02-01",
+          "train": 1284,
+          "trades": 194,
+          "points": 182.45,
+          "points_per_trade": 0.9405,
+          "win_rate": 0.4948,
+          "profit_factor": 1.082
+        },
+        {
+          "from": "2026-02-01",
+          "to": "2026-05-01",
+          "train": 1292,
+          "trades": 217,
+          "points": 248.1,
+          "points_per_trade": 1.1433,
+          "win_rate": 0.4931,
+          "profit_factor": 1.0741
+        },
+        {
+          "from": "2026-05-01",
+          "to": "2026-08-01",
+          "train": 1364,
+          "trades": 159,
+          "points": 1839.2,
+          "points_per_trade": 11.5673,
+          "win_rate": 0.566,
+          "profit_factor": 1.8597
+        }
+      ],
+      "positive_blocks": 6,
+      "total_points": 3336.6,
+      "worst_block": 182.45,
+      "full_sample_points": {
+        "trades": 1052,
+        "points": 3336.6,
+        "points_per_trade": 3.1717,
+        "win_rate": 0.501,
+        "profit_factor": 1.2619
+      },
+      "full_sample_sized": {
+        "pnl": 294.36,
+        "trades": 1052,
+        "win_rate": 0.501,
+        "pf": 1.265,
+        "max_dd": 38.31,
+        "n_months": 17,
+        "pos_months": 12,
+        "worst_month": -13.97,
+        "best_month": 87.67,
+        "msharpe": 0.691,
+        "pos_rate": 0.706,
+        "max_loss_streak": 2,
+        "worst_quarter": 5.83,
+        "top_month_share": 0.263,
+        "months": {
+          "2025-03": 3.96,
+          "2025-04": 33.61,
+          "2025-05": -10.04,
+          "2025-06": 34.18,
+          "2025-07": -7.83,
+          "2025-08": -1.55,
+          "2025-09": 17.72,
+          "2025-10": 14.41,
+          "2025-11": 5.4,
+          "2025-12": -13.97,
+          "2026-01": 23.12,
+          "2026-02": 25.4,
+          "2026-03": 2.36,
+          "2026-04": -5.43,
+          "2026-05": 87.67,
+          "2026-06": 42.79,
+          "2026-07": 42.57
+        }
+      },
+      "monthly_points": {
+        "2025-03": {
+          "trades": 35,
+          "points": 49.5,
+          "points_per_trade": 1.4143,
+          "win_rate": 0.5143,
+          "profit_factor": 1.1023
+        },
+        "2025-04": {
+          "trades": 42,
+          "points": 420.1,
+          "points_per_trade": 10.0024,
+          "win_rate": 0.5952,
+          "profit_factor": 1.5576
+        },
+        "2025-05": {
+          "trades": 95,
+          "points": -125.5,
+          "points_per_trade": -1.3211,
+          "win_rate": 0.4632,
+          "profit_factor": 0.8891
+        },
+        "2025-06": {
+          "trades": 75,
+          "points": 427.25,
+          "points_per_trade": 5.6967,
+          "win_rate": 0.4667,
+          "profit_factor": 1.796
+        },
+        "2025-07": {
+          "trades": 97,
+          "points": -97.9,
+          "points_per_trade": -1.0093,
+          "win_rate": 0.433,
+          "profit_factor": 0.8754
+        },
+        "2025-08": {
+          "trades": 38,
+          "points": -19.35,
+          "points_per_trade": -0.5092,
+          "win_rate": 0.5263,
+          "profit_factor": 0.9581
+        },
+        "2025-09": {
+          "trades": 39,
+          "points": 221.45,
+          "points_per_trade": 5.6782,
+          "win_rate": 0.641,
+          "profit_factor": 1.8331
+        },
+        "2025-10": {
+          "trades": 61,
+          "points": 191.3,
+          "points_per_trade": 3.1361,
+          "win_rate": 0.4098,
+          "profit_factor": 1.3132
+        },
+        "2025-11": {
+          "trades": 50,
+          "points": 64.5,
+          "points_per_trade": 1.29,
+          "win_rate": 0.46,
+          "profit_factor": 1.0861
+        },
+        "2025-12": {
+          "trades": 73,
+          "points": -160.1,
+          "points_per_trade": -2.1932,
+          "win_rate": 0.5068,
+          "profit_factor": 0.7857
+        },
+        "2026-01": {
+          "trades": 71,
+          "points": 278.05,
+          "points_per_trade": 3.9162,
+          "win_rate": 0.507,
+          "profit_factor": 1.3821
+        },
+        "2026-02": {
+          "trades": 69,
+          "points": 282.2,
+          "points_per_trade": 4.0899,
+          "win_rate": 0.4348,
+          "profit_factor": 1.2618
+        },
+        "2026-03": {
+          "trades": 55,
+          "points": 26.25,
+          "points_per_trade": 0.4773,
+          "win_rate": 0.5455,
+          "profit_factor": 1.0299
+        },
+        "2026-04": {
+          "trades": 93,
+          "points": -60.35,
+          "points_per_trade": -0.6489,
+          "win_rate": 0.5054,
+          "profit_factor": 0.9566
+        },
+        "2026-05": {
+          "trades": 72,
+          "points": 967.35,
+          "points_per_trade": 13.4354,
+          "win_rate": 0.5833,
+          "profit_factor": 2.5246
+        },
+        "2026-06": {
+          "trades": 48,
+          "points": 446.15,
+          "points_per_trade": 9.2948,
+          "win_rate": 0.4792,
+          "profit_factor": 1.4598
+        },
+        "2026-07": {
+          "trades": 39,
+          "points": 425.7,
+          "points_per_trade": 10.9154,
+          "win_rate": 0.641,
+          "profit_factor": 1.7964
+        }
+      }
+    },
+    "coefficient_stability": {
+      "abs_ofi_z": {
+        "positive_folds": 0,
+        "folds": 12,
+        "median": -0.031517,
+        "minimum": -0.090344,
+        "maximum": -0.005157
+      },
+      "signed_trade_delta": {
+        "positive_folds": 0,
+        "folds": 12,
+        "median": -0.160949,
+        "minimum": -0.205726,
+        "maximum": -0.106794
+      },
+      "signed_top1_imbalance": {
+        "positive_folds": 6,
+        "folds": 12,
+        "median": 0.008174,
+        "minimum": -0.038893,
+        "maximum": 0.078348
+      },
+      "signed_top5_imbalance": {
+        "positive_folds": 0,
+        "folds": 12,
+        "median": -0.047117,
+        "minimum": -0.154266,
+        "maximum": -0.028991
+      },
+      "signed_top10_imbalance": {
+        "positive_folds": 0,
+        "folds": 12,
+        "median": -0.04079,
+        "minimum": -0.066183,
+        "maximum": -0.009546
+      },
+      "signed_microprice_ticks": {
+        "positive_folds": 3,
+        "folds": 12,
+        "median": -0.033244,
+        "minimum": -0.107107,
+        "maximum": 0.04212
+      },
+      "signed_price_change": {
+        "positive_folds": 0,
+        "folds": 12,
+        "median": -0.143168,
+        "minimum": -0.23611,
+        "maximum": -0.101675
+      },
+      "signed_replenishment": {
+        "positive_folds": 0,
+        "folds": 12,
+        "median": -0.150317,
+        "minimum": -0.177622,
+        "maximum": -0.111254
+      },
+      "log_trade_count": {
+        "positive_folds": 2,
+        "folds": 12,
+        "median": -0.024601,
+        "minimum": -0.101727,
+        "maximum": 0.025114
+      },
+      "log_depth_events": {
+        "positive_folds": 12,
+        "folds": 12,
+        "median": 0.075508,
+        "minimum": 0.034595,
+        "maximum": 0.222943
+      },
+      "spread": {
+        "positive_folds": 12,
+        "folds": 12,
+        "median": 0.071493,
+        "minimum": 0.055062,
+        "maximum": 0.086115
+      },
+      "session_progress": {
+        "positive_folds": 0,
+        "folds": 12,
+        "median": -0.054694,
+        "minimum": -0.21673,
+        "maximum": -0.024367
+      }
+    },
+    "matched_random_control": {
+      "draws": 5000,
+      "mean": 1456.64,
+      "p_ge_model": 0.0598
+    }
+  }
+}

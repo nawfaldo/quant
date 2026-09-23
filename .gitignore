@@ -182,9 +182,48 @@ output_daily.bin
 !web/src/lib/**
 
 # Large market-data files & local DB (never commit)
+#
+# `/data/` holds the Parquet market-data store, which is the only source there
+# is now that QuestDB is retired. It is 45 GB, and `dbento_nq_depth.parquet`
+# alone is 41 GB.
+/data/
 /nq-1m_bk*.csv
 /parquets/
 /qdbroot/
 
+# Offline strategy sandbox runtime artifacts
+/sandbox/.cache/
+/sandbox/results/*_sweep.json
+
 # Playwright MCP test artifacts
 .playwright-mcp/
+
+# Exness's bundled browser drops a full Chrome profile here, thousands of files
+# deep, and it buries every real change in `git status`.
+/.exness-browser/
+
+# Research scratch written to the repo root by the sweep drivers. The findings
+# that mattered are in the memory notes; these are the raw dumps behind them.
+/*.log
+/aus200_scale.json
+/swaps_raw.json
+/why_todo.json
+/run_why*.sh
+
+# Daemon logs (the feed supervisor and the feed itself write here).
+/logs/
+
+# Database copies. `*.db` above does not match `app.db.bak-<stamp>`, and these
+# carry the mt5_accounts table -- the MT5 login password included.
+*.db.bak*
+*.db-journal
+
+# Live-fill maps: ~130 MB of derived JSON, rebuilt by
+# `py -m sandbox.research.exness_live_execution precompute --source bars`.
+# A fresh clone must run that before any live-fill book run.
+/sandbox/research/exness_live_execution_maps*.json
+/sandbox/research/*.json.bak
+
+# Caches and pickles -- rebuilt on demand, never source.
+*.pkl
+/sandbox/results/charts/_book_cache/

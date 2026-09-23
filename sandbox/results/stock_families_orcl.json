@@ -1,0 +1,275 @@
+{
+  "families": {
+    "donchian": null,
+    "gap": null,
+    "ma_cross": null,
+    "momentum": null,
+    "orb": null,
+    "overnight": null,
+    "pdr": null,
+    "vwap": {
+      "in_sample": {
+        "annual": {
+          "2020": {
+            "max_dd_pct": 2.38,
+            "pnl": 47.11,
+            "return_pct": 0.47,
+            "trades": 19
+          },
+          "2021": {
+            "max_dd_pct": 2.68,
+            "pnl": 346.93,
+            "return_pct": 3.45,
+            "trades": 51
+          },
+          "2022": {
+            "max_dd_pct": 2.54,
+            "pnl": -195.29,
+            "return_pct": -1.88,
+            "trades": 45
+          },
+          "2023": {
+            "max_dd_pct": 3.9,
+            "pnl": 357.54,
+            "return_pct": 3.51,
+            "trades": 48
+          },
+          "2024": {
+            "max_dd_pct": 3.01,
+            "pnl": 94.47,
+            "return_pct": 0.89,
+            "trades": 42
+          }
+        },
+        "breakeven_spread_bp": 11.3252,
+        "drift_bp_per_trade": 1.874,
+        "edge_vs_drift_bp": 9.4512,
+        "edge_vs_drift_t_stat": 1.4,
+        "fill_rate_micro": 100.0,
+        "final": 10650.76,
+        "gross_atr_per_trade": 0.2187,
+        "gross_atr_t_stat": 1.83,
+        "gross_bp_per_trade": 11.3252,
+        "gross_bp_t_stat": 1.68,
+        "long_gross_bp": 9.973,
+        "long_pnl": 298.94,
+        "long_share": 0.61,
+        "max_dd_pct": 4.73,
+        "mean_bars_held": 8.01,
+        "micro_max_dd_pct": 4.73,
+        "micro_return_pct": 6.51,
+        "micro_trades": 205,
+        "monthly_sharpe": 0.162,
+        "n_months": 34,
+        "pf": 1.181,
+        "pnl": 650.76,
+        "positive_months": 20,
+        "return_pct": 6.51,
+        "short_gross_bp": 13.439,
+        "short_pnl": 351.82,
+        "spread_bp": 7.99,
+        "trades": 205,
+        "win_rate": 0.502
+      },
+      "params": {
+        "direction": "follow",
+        "exit_mode": "rr_3",
+        "last_entry_minute": 780,
+        "stop_atr": 3.5,
+        "threshold_atr": 1.0,
+        "trend": "none",
+        "vol_mode": "active"
+      },
+      "plateau_score": 2.551593,
+      "robust_neighbours": "3/5",
+      "score": 3.859222
+    },
+    "zscore": null
+  },
+  "holdout_benchmarks": {
+    "always_long_gross_bp_per_trade": -2.9508,
+    "always_long_max_dd_pct": 74.24,
+    "always_long_return_pct": -43.76,
+    "always_long_trades": 400,
+    "buy_and_hold_pct": -12.79
+  },
+  "protocol": {
+    "bars": "orcl_1m causally aggregated to 30m; out-of-session buckets used only for the overnight and gap anchors",
+    "benchmarks": {
+      "in_sample": {
+        "always_long_gross_bp_per_trade": 43.1741,
+        "always_long_max_dd_pct": 6.77,
+        "always_long_return_pct": 398.64,
+        "always_long_trades": 1133,
+        "buy_and_hold_pct": 204.62
+      }
+    },
+    "candidate_counts": {
+      "donchian": 2700,
+      "gap": 2700,
+      "ma_cross": 5400,
+      "momentum": 24300,
+      "orb": 7200,
+      "overnight": 3600,
+      "pdr": 3600,
+      "vwap": 5400,
+      "zscore": 16200
+    },
+    "clock": "New York wall-clock encoded as fake UTC; nothing converts",
+    "entry_spread_bp": 7.99,
+    "entry_spread_note": "measured Dukascopy median spread for orcl; the requested 0.2 USD reads as 10.523bp on this symbol and 0.2 pips as 0.1052bp; see the cost sweep in `validate`",
+    "fx": "every symbol is USD-quoted, so the FX leg is a constant 1.0",
+    "in_sample": "2020-07-01 through 2024-12-31; 2020 H1 is warm-up and 2021-2024 are the gated years",
+    "out_of_sample": "2025-01-01 through 2026-08-07, untouched by selection",
+    "quote_currency": "USD",
+    "report_balances": [
+      10000.0,
+      1000.0
+    ],
+    "select_balance": 10000.0,
+    "selection_gate": ">=3 of 4 in-sample years profitable; selected DD 3.0-15.0%; annual DD <=15.0%; >=200 trades; PF >=1.05; regime filters must refine an already profitable unfiltered cell; >=60% of numeric neighbours robust; >=80.0% of signals fillable on $1,000 in sample",
+    "session": "09:30-15:30 New York in 30m buckets; entries inside it only, forced flatten in the 15:30 bucket (the tables end 15:59, so there is no 16:00 bar)",
+    "sizing": "riskvol_1.5pct against a per-symbol volatility target of 0.241 (in-sample median realised volatility), floored to the 0.01 share step inside 0.0500 margin (Exness stocks 1:20); the step and the margin leg are both inert at these balances, the risk budget binds",
+    "split_adjustment": "prices are ratio back-adjusted; risk sizing, notional sizing and the margin ceiling are all invariant to it, the lot step is not but is inert here"
+  },
+  "seal_sha256": "8dbb0d6aa110c0d56111275e8306c2c96e3ebba16603c5f988ed6e02d8e7fbb1",
+  "sealed": true,
+  "symbol": "orcl",
+  "validation": {
+    "vwap": {
+      "cost_sweep_bp": {
+        "0.0": {
+          "is_pf": 1.488,
+          "is_return_pct": 16.11,
+          "oos_max_dd_pct": 2.46,
+          "oos_pf": 0.919,
+          "oos_return_pct": -0.96
+        },
+        "1.0": {
+          "is_pf": 1.445,
+          "is_return_pct": 14.86,
+          "oos_max_dd_pct": 2.6,
+          "oos_pf": 0.902,
+          "oos_return_pct": -1.18
+        },
+        "10.0": {
+          "is_pf": 1.115,
+          "is_return_pct": 4.22,
+          "oos_max_dd_pct": 3.92,
+          "oos_pf": 0.759,
+          "oos_return_pct": -3.11
+        },
+        "20.0": {
+          "is_pf": 0.839,
+          "is_return_pct": -6.46,
+          "oos_max_dd_pct": 5.62,
+          "oos_pf": 0.627,
+          "oos_return_pct": -5.21
+        },
+        "3.0": {
+          "is_pf": 1.364,
+          "is_return_pct": 12.41,
+          "oos_max_dd_pct": 2.9,
+          "oos_pf": 0.868,
+          "oos_return_pct": -1.61
+        },
+        "30.0": {
+          "is_pf": 0.634,
+          "is_return_pct": -16.04,
+          "oos_max_dd_pct": 7.49,
+          "oos_pf": 0.519,
+          "oos_return_pct": -7.27
+        },
+        "5.0": {
+          "is_pf": 1.287,
+          "is_return_pct": 10.0,
+          "oos_max_dd_pct": 3.19,
+          "oos_pf": 0.835,
+          "oos_return_pct": -2.04
+        }
+      },
+      "oos_1000": {
+        "annual": {
+          "2025": {
+            "max_dd_pct": 3.14,
+            "pnl": -19.45,
+            "return_pct": -1.94,
+            "trades": 71
+          },
+          "2026": {
+            "max_dd_pct": 1.54,
+            "pnl": -7.34,
+            "return_pct": -0.75,
+            "trades": 39
+          }
+        },
+        "breakeven_spread_bp": -2.7959,
+        "drift_bp_per_trade": -0.3991,
+        "edge_vs_drift_bp": -2.3968,
+        "edge_vs_drift_t_stat": -0.15,
+        "final": 973.22,
+        "gross_atr_per_trade": -0.0342,
+        "gross_atr_t_stat": -0.23,
+        "gross_bp_per_trade": -2.7959,
+        "gross_bp_t_stat": -0.18,
+        "long_gross_bp": 0.831,
+        "long_pnl": -20.41,
+        "long_share": 0.4,
+        "max_dd_pct": 3.61,
+        "mean_bars_held": 7.84,
+        "monthly_sharpe": -0.32,
+        "n_months": 17,
+        "pf": 0.788,
+        "pnl": -26.78,
+        "positive_months": 8,
+        "return_pct": -2.68,
+        "short_gross_bp": -5.214,
+        "short_pnl": -6.37,
+        "spread_bp": 7.99,
+        "trades": 110,
+        "win_rate": 0.473
+      },
+      "oos_10000": {
+        "annual": {
+          "2025": {
+            "max_dd_pct": 3.15,
+            "pnl": -195.25,
+            "return_pct": -1.95,
+            "trades": 71
+          },
+          "2026": {
+            "max_dd_pct": 1.54,
+            "pnl": -73.09,
+            "return_pct": -0.75,
+            "trades": 39
+          }
+        },
+        "breakeven_spread_bp": -2.7959,
+        "drift_bp_per_trade": -0.3991,
+        "edge_vs_drift_bp": -2.3968,
+        "edge_vs_drift_t_stat": -0.15,
+        "final": 9731.66,
+        "gross_atr_per_trade": -0.0342,
+        "gross_atr_t_stat": -0.23,
+        "gross_bp_per_trade": -2.7959,
+        "gross_bp_t_stat": -0.18,
+        "long_gross_bp": 0.831,
+        "long_pnl": -204.6,
+        "long_share": 0.4,
+        "max_dd_pct": 3.63,
+        "mean_bars_held": 7.84,
+        "monthly_sharpe": -0.319,
+        "n_months": 17,
+        "pf": 0.789,
+        "pnl": -268.34,
+        "positive_months": 8,
+        "return_pct": -2.68,
+        "short_gross_bp": -5.214,
+        "short_pnl": -63.74,
+        "spread_bp": 7.99,
+        "trades": 110,
+        "win_rate": 0.473
+      }
+    }
+  }
+}

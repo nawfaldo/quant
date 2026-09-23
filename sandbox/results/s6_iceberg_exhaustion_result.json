@@ -1,0 +1,2639 @@
+{
+  "strategy": "S6 Iceberg Exhaustion Breakout",
+  "status": "rejected",
+  "git_sha": "bae9624e9c1a0b6176958bfae7b568864f46c249",
+  "created_at": "2026-07-31T12:26:04.476674+00:00",
+  "hypothesis": "Continue a price break when unusually strong same-side replenishment and directional aggression failed to hold price.",
+  "scope": {
+    "writes": "sandbox S6 strategy/research/test/results only",
+    "server_changed": false,
+    "data_access": "read-only cached QuestDB-derived inputs"
+  },
+  "data": {
+    "bars": 142548,
+    "loaded_from": "2025-02-12",
+    "loaded_to": "2026-07-29",
+    "oos_from": "2025-08-01",
+    "oos_to_exclusive": "2026-08-01"
+  },
+  "fixed_definition": {
+    "normalization_observations": 20,
+    "entry": "next contiguous minute open",
+    "bracket": {
+      "stop": 12.0,
+      "target": 20.0,
+      "time_stop_minutes": 15
+    },
+    "entry_window": [
+      575,
+      930
+    ],
+    "session_flatten_minute": 945,
+    "max_observed_spread": 1.25,
+    "execution": {
+      "initial": 1000.0,
+      "spread": 0.2,
+      "margin": 0.25,
+      "step": 0.01,
+      "point_value": 1.0,
+      "risk": 0.005,
+      "leverage": 1.0,
+      "session_end_min": 945
+    }
+  },
+  "grid": {
+    "replenishment_z": [
+      1.0,
+      2.0,
+      3.0
+    ],
+    "break_points": [
+      1.0,
+      3.0,
+      5.0
+    ],
+    "aggression_share": [
+      0.5,
+      0.525,
+      0.55
+    ]
+  },
+  "default_full": {
+    "pnl": -348.37,
+    "trades": 1733,
+    "win_rate": 0.382,
+    "pf": 0.842,
+    "max_dd": 386.47,
+    "n_months": 18,
+    "pos_months": 4,
+    "worst_month": -106.43,
+    "best_month": 46.52,
+    "msharpe": -0.581,
+    "pos_rate": 0.222,
+    "max_loss_streak": 4,
+    "worst_quarter": -187.48,
+    "top_month_share": 0.534,
+    "months": {
+      "2025-02": 0.0,
+      "2025-03": -14.68,
+      "2025-04": -2.8,
+      "2025-05": -13.94,
+      "2025-06": 17.98,
+      "2025-07": 46.52,
+      "2025-08": -106.43,
+      "2025-09": -38.64,
+      "2025-10": -42.42,
+      "2025-11": -43.14,
+      "2025-12": 20.28,
+      "2026-01": -25.81,
+      "2026-02": -58.31,
+      "2026-03": -36.63,
+      "2026-04": 2.32,
+      "2026-05": -35.19,
+      "2026-06": -16.6,
+      "2026-07": -0.89
+    }
+  },
+  "default_effect": {
+    "trades": 1733,
+    "points": -2751.1,
+    "mean_points": -1.5875,
+    "t": -3.327,
+    "bootstrap_95": [
+      -2.5195,
+      -0.6626
+    ],
+    "point_pf": 0.8378,
+    "gross_mean_before_cost": -1.3875,
+    "kill_test_passed": false
+  },
+  "walkforward": {
+    "folds": [
+      {
+        "fold": 1,
+        "params": null,
+        "train": null,
+        "test": null,
+        "plateau_t": null,
+        "test_points": 0
+      },
+      {
+        "fold": 2,
+        "params": null,
+        "train": null,
+        "test": null,
+        "plateau_t": null,
+        "test_points": 0
+      },
+      {
+        "fold": 3,
+        "params": null,
+        "train": null,
+        "test": null,
+        "plateau_t": null,
+        "test_points": 0
+      },
+      {
+        "fold": 4,
+        "params": null,
+        "train": null,
+        "test": null,
+        "plateau_t": null,
+        "test_points": 0
+      },
+      {
+        "fold": 5,
+        "params": null,
+        "train": null,
+        "test": null,
+        "plateau_t": null,
+        "test_points": 0
+      },
+      {
+        "fold": 6,
+        "params": null,
+        "train": null,
+        "test": null,
+        "plateau_t": null,
+        "test_points": 0
+      },
+      {
+        "fold": 7,
+        "params": null,
+        "train": null,
+        "test": null,
+        "plateau_t": null,
+        "test_points": 0
+      },
+      {
+        "fold": 8,
+        "params": null,
+        "train": null,
+        "test": null,
+        "plateau_t": null,
+        "test_points": 0
+      },
+      {
+        "fold": 9,
+        "params": null,
+        "train": null,
+        "test": null,
+        "plateau_t": null,
+        "test_points": 0
+      },
+      {
+        "fold": 10,
+        "params": null,
+        "train": null,
+        "test": null,
+        "plateau_t": null,
+        "test_points": 0
+      },
+      {
+        "fold": 11,
+        "params": null,
+        "train": null,
+        "test": null,
+        "plateau_t": null,
+        "test_points": 0
+      },
+      {
+        "fold": 12,
+        "params": null,
+        "train": null,
+        "test": null,
+        "plateau_t": null,
+        "test_points": 0
+      }
+    ],
+    "stitched": {
+      "pnl": 0,
+      "trades": 0,
+      "win_rate": 0.0,
+      "pf": 0.0,
+      "max_dd": 0.0,
+      "n_months": 12,
+      "pos_months": 0,
+      "worst_month": 0.0,
+      "best_month": 0.0,
+      "msharpe": 0.0,
+      "pos_rate": 0.0,
+      "max_loss_streak": 0,
+      "worst_quarter": 0.0,
+      "top_month_share": 0.0,
+      "months": {
+        "2025-08": 0.0,
+        "2025-09": 0.0,
+        "2025-10": 0.0,
+        "2025-11": 0.0,
+        "2025-12": 0.0,
+        "2026-01": 0.0,
+        "2026-02": 0.0,
+        "2026-03": 0.0,
+        "2026-04": 0.0,
+        "2026-05": 0.0,
+        "2026-06": 0.0,
+        "2026-07": 0.0
+      }
+    },
+    "median_params": {
+      "replenishment_z": 2.0,
+      "break_points": 3.0,
+      "aggression_share": 0.525
+    },
+    "fixed_median_or_default": {
+      "pnl": -368.14,
+      "trades": 1375,
+      "win_rate": 0.369,
+      "pf": 0.773,
+      "max_dd": 371.47,
+      "n_months": 12,
+      "pos_months": 2,
+      "worst_month": -102.84,
+      "best_month": 20.32,
+      "msharpe": -1.02,
+      "pos_rate": 0.167,
+      "max_loss_streak": 4,
+      "worst_quarter": -179.6,
+      "top_month_share": 0.941,
+      "months": {
+        "2025-08": -102.84,
+        "2025-09": -37.22,
+        "2025-10": -39.55,
+        "2025-11": -40.93,
+        "2025-12": 20.32,
+        "2026-01": -26.0,
+        "2026-02": -55.24,
+        "2026-03": -36.28,
+        "2026-04": 1.28,
+        "2026-05": -35.43,
+        "2026-06": -15.37,
+        "2026-07": -0.89
+      }
+    },
+    "purged_cv": {
+      "blocks": [
+        {
+          "block": "2025-02-01",
+          "params": null,
+          "points": 0.0,
+          "trades": 0,
+          "t": 0.0
+        },
+        {
+          "block": "2025-05-01",
+          "params": null,
+          "points": 0.0,
+          "trades": 0,
+          "t": 0.0
+        },
+        {
+          "block": "2025-08-01",
+          "params": null,
+          "points": 0.0,
+          "trades": 0,
+          "t": 0.0
+        },
+        {
+          "block": "2025-11-01",
+          "params": null,
+          "points": 0.0,
+          "trades": 0,
+          "t": 0.0
+        },
+        {
+          "block": "2026-02-01",
+          "params": null,
+          "points": 0.0,
+          "trades": 0,
+          "t": 0.0
+        },
+        {
+          "block": "2026-05-01",
+          "params": null,
+          "points": 0.0,
+          "trades": 0,
+          "t": 0.0
+        }
+      ],
+      "mean": 0.0,
+      "worst": 0.0,
+      "positive": 0
+    },
+    "gate": {
+      "passed": false,
+      "checks": [
+        {
+          "name": "stitched OOS PnL > 0",
+          "passed": false,
+          "detail": "+0.00 (+0.0 pts)"
+        },
+        {
+          "name": "profitable folds >= 2/3 (0/0)",
+          "passed": false,
+          "detail": "0/0"
+        },
+        {
+          "name": "per-trade edge CI excludes 0",
+          "passed": false,
+          "detail": "mean +0.000 pts, 95% CI [+0.000, +0.000], t=0.00"
+        },
+        {
+          "name": "deflated t > 0 vs 75 cumulative trials",
+          "passed": false,
+          "detail": "-2.94"
+        },
+        {
+          "name": "no CV block worse than -2x mean block",
+          "passed": true,
+          "detail": "worst +0.0 pts vs mean +0.0"
+        }
+      ]
+    }
+  },
+  "diagnostic_filters": {
+    "baseline": {
+      "trades": 1375,
+      "points": -2982.0,
+      "mean_points": -2.1687,
+      "t": -3.965,
+      "bootstrap_95": [
+        -3.2053,
+        -1.1002
+      ],
+      "point_pf": 0.7877,
+      "sized": {
+        "pnl": -368.14,
+        "trades": 1375,
+        "win_rate": 0.369,
+        "pf": 0.773,
+        "max_dd": 371.47,
+        "n_months": 12,
+        "pos_months": 2,
+        "worst_month": -102.84,
+        "best_month": 20.32,
+        "msharpe": -1.02,
+        "pos_rate": 0.167,
+        "max_loss_streak": 4,
+        "worst_quarter": -179.6,
+        "top_month_share": 0.941,
+        "months": {
+          "2025-08": -102.84,
+          "2025-09": -37.22,
+          "2025-10": -39.55,
+          "2025-11": -40.93,
+          "2025-12": 20.32,
+          "2026-01": -26.0,
+          "2026-02": -55.24,
+          "2026-03": -36.28,
+          "2026-04": 1.28,
+          "2026-05": -35.43,
+          "2026-06": -15.37,
+          "2026-07": -0.89
+        }
+      },
+      "improved_folds": 0,
+      "fold_deltas": [
+        {
+          "month": "2025-08",
+          "baseline_points": -654.3,
+          "filter_points": -654.3,
+          "delta_points": 0.0
+        },
+        {
+          "month": "2025-09",
+          "baseline_points": -263.85,
+          "filter_points": -263.85,
+          "delta_points": 0.0
+        },
+        {
+          "month": "2025-10",
+          "baseline_points": -321.8,
+          "filter_points": -321.8,
+          "delta_points": 0.0
+        },
+        {
+          "month": "2025-11",
+          "baseline_points": -315.55,
+          "filter_points": -315.55,
+          "delta_points": 0.0
+        },
+        {
+          "month": "2025-12",
+          "baseline_points": 169.35,
+          "filter_points": 169.35,
+          "delta_points": 0.0
+        },
+        {
+          "month": "2026-01",
+          "baseline_points": -216.7,
+          "filter_points": -216.7,
+          "delta_points": 0.0
+        },
+        {
+          "month": "2026-02",
+          "baseline_points": -487.2,
+          "filter_points": -487.2,
+          "delta_points": 0.0
+        },
+        {
+          "month": "2026-03",
+          "baseline_points": -329.85,
+          "filter_points": -329.85,
+          "delta_points": 0.0
+        },
+        {
+          "month": "2026-04",
+          "baseline_points": 13.8,
+          "filter_points": 13.8,
+          "delta_points": 0.0
+        },
+        {
+          "month": "2026-05",
+          "baseline_points": -392.75,
+          "filter_points": -392.75,
+          "delta_points": 0.0
+        },
+        {
+          "month": "2026-06",
+          "baseline_points": -172.05,
+          "filter_points": -172.05,
+          "delta_points": 0.0
+        },
+        {
+          "month": "2026-07",
+          "baseline_points": -11.1,
+          "filter_points": -11.1,
+          "delta_points": 0.0
+        }
+      ]
+    },
+    "long_only": {
+      "trades": 591,
+      "points": -764.45,
+      "mean_points": -1.2935,
+      "t": -1.539,
+      "bootstrap_95": [
+        -2.9487,
+        0.333
+      ],
+      "point_pf": 0.8685,
+      "sized": {
+        "pnl": -115.27,
+        "trades": 591,
+        "win_rate": 0.396,
+        "pf": 0.857,
+        "max_dd": 132.58,
+        "n_months": 12,
+        "pos_months": 3,
+        "worst_month": -39.71,
+        "best_month": 15.58,
+        "msharpe": -0.6,
+        "pos_rate": 0.25,
+        "max_loss_streak": 4,
+        "worst_quarter": -60.75,
+        "top_month_share": 0.389,
+        "months": {
+          "2025-08": -39.71,
+          "2025-09": -11.59,
+          "2025-10": -7.36,
+          "2025-11": -18.7,
+          "2025-12": 12.98,
+          "2026-01": -16.89,
+          "2026-02": -25.58,
+          "2026-03": -18.28,
+          "2026-04": 11.5,
+          "2026-05": 15.58,
+          "2026-06": -15.88,
+          "2026-07": -1.34
+        }
+      },
+      "improved_folds": 10,
+      "fold_deltas": [
+        {
+          "month": "2025-08",
+          "baseline_points": -654.3,
+          "filter_points": -243.05,
+          "delta_points": 411.25
+        },
+        {
+          "month": "2025-09",
+          "baseline_points": -263.85,
+          "filter_points": -75.35,
+          "delta_points": 188.5
+        },
+        {
+          "month": "2025-10",
+          "baseline_points": -321.8,
+          "filter_points": -56.9,
+          "delta_points": 264.9
+        },
+        {
+          "month": "2025-11",
+          "baseline_points": -315.55,
+          "filter_points": -125.75,
+          "delta_points": 189.8
+        },
+        {
+          "month": "2025-12",
+          "baseline_points": 169.35,
+          "filter_points": 92.75,
+          "delta_points": -76.6
+        },
+        {
+          "month": "2026-01",
+          "baseline_points": -216.7,
+          "filter_points": -120.65,
+          "delta_points": 96.05
+        },
+        {
+          "month": "2026-02",
+          "baseline_points": -487.2,
+          "filter_points": -182.7,
+          "delta_points": 304.5
+        },
+        {
+          "month": "2026-03",
+          "baseline_points": -329.85,
+          "filter_points": -130.55,
+          "delta_points": 199.3
+        },
+        {
+          "month": "2026-04",
+          "baseline_points": 13.8,
+          "filter_points": 88.25,
+          "delta_points": 74.45
+        },
+        {
+          "month": "2026-05",
+          "baseline_points": -392.75,
+          "filter_points": 130.5,
+          "delta_points": 523.25
+        },
+        {
+          "month": "2026-06",
+          "baseline_points": -172.05,
+          "filter_points": -128.8,
+          "delta_points": 43.25
+        },
+        {
+          "month": "2026-07",
+          "baseline_points": -11.1,
+          "filter_points": -12.2,
+          "delta_points": -1.1
+        }
+      ]
+    },
+    "short_only": {
+      "trades": 784,
+      "points": -2217.55,
+      "mean_points": -2.8285,
+      "t": -3.93,
+      "bootstrap_95": [
+        -4.2383,
+        -1.4076
+      ],
+      "point_pf": 0.7307,
+      "sized": {
+        "pnl": -289.35,
+        "trades": 784,
+        "win_rate": 0.348,
+        "pf": 0.719,
+        "max_dd": 298.26,
+        "n_months": 12,
+        "pos_months": 2,
+        "worst_month": -66.76,
+        "best_month": 9.96,
+        "msharpe": -1.13,
+        "pos_rate": 0.167,
+        "max_loss_streak": 6,
+        "worst_quarter": -129.97,
+        "top_month_share": 0.99,
+        "months": {
+          "2025-08": -66.76,
+          "2025-09": -27.68,
+          "2025-10": -35.53,
+          "2025-11": -28.09,
+          "2025-12": 9.96,
+          "2026-01": -12.72,
+          "2026-02": -39.07,
+          "2026-03": -25.31,
+          "2026-04": -8.08,
+          "2026-05": -51.5,
+          "2026-06": -4.67,
+          "2026-07": 0.1
+        }
+      },
+      "improved_folds": 9,
+      "fold_deltas": [
+        {
+          "month": "2025-08",
+          "baseline_points": -654.3,
+          "filter_points": -411.25,
+          "delta_points": 243.05
+        },
+        {
+          "month": "2025-09",
+          "baseline_points": -263.85,
+          "filter_points": -188.5,
+          "delta_points": 75.35
+        },
+        {
+          "month": "2025-10",
+          "baseline_points": -321.8,
+          "filter_points": -264.9,
+          "delta_points": 56.9
+        },
+        {
+          "month": "2025-11",
+          "baseline_points": -315.55,
+          "filter_points": -189.8,
+          "delta_points": 125.75
+        },
+        {
+          "month": "2025-12",
+          "baseline_points": 169.35,
+          "filter_points": 76.6,
+          "delta_points": -92.75
+        },
+        {
+          "month": "2026-01",
+          "baseline_points": -216.7,
+          "filter_points": -96.05,
+          "delta_points": 120.65
+        },
+        {
+          "month": "2026-02",
+          "baseline_points": -487.2,
+          "filter_points": -304.5,
+          "delta_points": 182.7
+        },
+        {
+          "month": "2026-03",
+          "baseline_points": -329.85,
+          "filter_points": -199.3,
+          "delta_points": 130.55
+        },
+        {
+          "month": "2026-04",
+          "baseline_points": 13.8,
+          "filter_points": -74.45,
+          "delta_points": -88.25
+        },
+        {
+          "month": "2026-05",
+          "baseline_points": -392.75,
+          "filter_points": -523.25,
+          "delta_points": -130.5
+        },
+        {
+          "month": "2026-06",
+          "baseline_points": -172.05,
+          "filter_points": -43.25,
+          "delta_points": 128.8
+        },
+        {
+          "month": "2026-07",
+          "baseline_points": -11.1,
+          "filter_points": 1.1,
+          "delta_points": 12.2
+        }
+      ]
+    },
+    "skip_mon": {
+      "trades": 1199,
+      "points": -2880.8,
+      "mean_points": -2.4027,
+      "t": -4.117,
+      "bootstrap_95": [
+        -3.5559,
+        -1.2721
+      ],
+      "point_pf": 0.7676,
+      "sized": {
+        "pnl": -355.63,
+        "trades": 1199,
+        "win_rate": 0.362,
+        "pf": 0.757,
+        "max_dd": 356.65,
+        "n_months": 12,
+        "pos_months": 1,
+        "worst_month": -91.03,
+        "best_month": 20.87,
+        "msharpe": -1.102,
+        "pos_rate": 0.083,
+        "max_loss_streak": 7,
+        "worst_quarter": -181.22,
+        "top_month_share": 1.0,
+        "months": {
+          "2025-08": -91.03,
+          "2025-09": -44.96,
+          "2025-10": -45.23,
+          "2025-11": -29.54,
+          "2025-12": 20.87,
+          "2026-01": -29.45,
+          "2026-02": -46.57,
+          "2026-03": -32.42,
+          "2026-04": -2.11,
+          "2026-05": -27.8,
+          "2026-06": -26.42,
+          "2026-07": -0.98
+        }
+      },
+      "improved_folds": 6,
+      "fold_deltas": [
+        {
+          "month": "2025-08",
+          "baseline_points": -654.3,
+          "filter_points": -565.65,
+          "delta_points": 88.65
+        },
+        {
+          "month": "2025-09",
+          "baseline_points": -263.85,
+          "filter_points": -314.05,
+          "delta_points": -50.2
+        },
+        {
+          "month": "2025-10",
+          "baseline_points": -321.8,
+          "filter_points": -362.7,
+          "delta_points": -40.9
+        },
+        {
+          "month": "2025-11",
+          "baseline_points": -315.55,
+          "filter_points": -222.3,
+          "delta_points": 93.25
+        },
+        {
+          "month": "2025-12",
+          "baseline_points": 169.35,
+          "filter_points": 173.95,
+          "delta_points": 4.6
+        },
+        {
+          "month": "2026-01",
+          "baseline_points": -216.7,
+          "filter_points": -245.4,
+          "delta_points": -28.7
+        },
+        {
+          "month": "2026-02",
+          "baseline_points": -487.2,
+          "filter_points": -398.1,
+          "delta_points": 89.1
+        },
+        {
+          "month": "2026-03",
+          "baseline_points": -329.85,
+          "filter_points": -293.6,
+          "delta_points": 36.25
+        },
+        {
+          "month": "2026-04",
+          "baseline_points": 13.8,
+          "filter_points": -26.3,
+          "delta_points": -40.1
+        },
+        {
+          "month": "2026-05",
+          "baseline_points": -392.75,
+          "filter_points": -310.85,
+          "delta_points": 81.9
+        },
+        {
+          "month": "2026-06",
+          "baseline_points": -172.05,
+          "filter_points": -303.6,
+          "delta_points": -131.55
+        },
+        {
+          "month": "2026-07",
+          "baseline_points": -11.1,
+          "filter_points": -12.2,
+          "delta_points": -1.1
+        }
+      ]
+    },
+    "skip_tue": {
+      "trades": 1076,
+      "points": -2928.45,
+      "mean_points": -2.7216,
+      "t": -4.458,
+      "bootstrap_95": [
+        -3.9272,
+        -1.5383
+      ],
+      "point_pf": 0.7385,
+      "sized": {
+        "pnl": -359.56,
+        "trades": 1076,
+        "win_rate": 0.362,
+        "pf": 0.735,
+        "max_dd": 360.58,
+        "n_months": 12,
+        "pos_months": 1,
+        "worst_month": -73.88,
+        "best_month": 21.74,
+        "msharpe": -1.194,
+        "pos_rate": 0.083,
+        "max_loss_streak": 7,
+        "worst_quarter": -149.02,
+        "top_month_share": 1.0,
+        "months": {
+          "2025-08": -73.88,
+          "2025-09": -38.73,
+          "2025-10": -36.4,
+          "2025-11": -49.78,
+          "2025-12": 21.74,
+          "2026-01": -11.18,
+          "2026-02": -57.91,
+          "2026-03": -32.31,
+          "2026-04": -11.36,
+          "2026-05": -40.64,
+          "2026-06": -28.22,
+          "2026-07": -0.89
+        }
+      },
+      "improved_folds": 6,
+      "fold_deltas": [
+        {
+          "month": "2025-08",
+          "baseline_points": -654.3,
+          "filter_points": -455.05,
+          "delta_points": 199.25
+        },
+        {
+          "month": "2025-09",
+          "baseline_points": -263.85,
+          "filter_points": -265.75,
+          "delta_points": -1.9
+        },
+        {
+          "month": "2025-10",
+          "baseline_points": -321.8,
+          "filter_points": -275.5,
+          "delta_points": 46.3
+        },
+        {
+          "month": "2025-11",
+          "baseline_points": -315.55,
+          "filter_points": -358.95,
+          "delta_points": -43.4
+        },
+        {
+          "month": "2025-12",
+          "baseline_points": 169.35,
+          "filter_points": 181.55,
+          "delta_points": 12.2
+        },
+        {
+          "month": "2026-01",
+          "baseline_points": -216.7,
+          "filter_points": -93.5,
+          "delta_points": 123.2
+        },
+        {
+          "month": "2026-02",
+          "baseline_points": -487.2,
+          "filter_points": -480.65,
+          "delta_points": 6.55
+        },
+        {
+          "month": "2026-03",
+          "baseline_points": -329.85,
+          "filter_points": -276.7,
+          "delta_points": 53.15
+        },
+        {
+          "month": "2026-04",
+          "baseline_points": 13.8,
+          "filter_points": -119.65,
+          "delta_points": -133.45
+        },
+        {
+          "month": "2026-05",
+          "baseline_points": -392.75,
+          "filter_points": -457.8,
+          "delta_points": -65.05
+        },
+        {
+          "month": "2026-06",
+          "baseline_points": -172.05,
+          "filter_points": -315.35,
+          "delta_points": -143.3
+        },
+        {
+          "month": "2026-07",
+          "baseline_points": -11.1,
+          "filter_points": -11.1,
+          "delta_points": 0.0
+        }
+      ]
+    },
+    "skip_wed": {
+      "trades": 1080,
+      "points": -1949.5,
+      "mean_points": -1.8051,
+      "t": -2.902,
+      "bootstrap_95": [
+        -3.0299,
+        -0.5727
+      ],
+      "point_pf": 0.8209,
+      "sized": {
+        "pnl": -263.24,
+        "trades": 1080,
+        "win_rate": 0.374,
+        "pf": 0.807,
+        "max_dd": 279.99,
+        "n_months": 12,
+        "pos_months": 2,
+        "worst_month": -62.05,
+        "best_month": 10.09,
+        "msharpe": -1.067,
+        "pos_rate": 0.167,
+        "max_loss_streak": 6,
+        "worst_quarter": -109.86,
+        "top_month_share": 0.989,
+        "months": {
+          "2025-08": -62.05,
+          "2025-09": -17.76,
+          "2025-10": -13.01,
+          "2025-11": -42.31,
+          "2025-12": 10.09,
+          "2026-01": -30.93,
+          "2026-02": -44.42,
+          "2026-03": -34.5,
+          "2026-04": -2.49,
+          "2026-05": -21.94,
+          "2026-06": -4.01,
+          "2026-07": 0.11
+        }
+      },
+      "improved_folds": 9,
+      "fold_deltas": [
+        {
+          "month": "2025-08",
+          "baseline_points": -654.3,
+          "filter_points": -383.5,
+          "delta_points": 270.8
+        },
+        {
+          "month": "2025-09",
+          "baseline_points": -263.85,
+          "filter_points": -120.9,
+          "delta_points": 142.95
+        },
+        {
+          "month": "2025-10",
+          "baseline_points": -321.8,
+          "filter_points": -96.1,
+          "delta_points": 225.7
+        },
+        {
+          "month": "2025-11",
+          "baseline_points": -315.55,
+          "filter_points": -282.2,
+          "delta_points": 33.35
+        },
+        {
+          "month": "2025-12",
+          "baseline_points": 169.35,
+          "filter_points": 77.6,
+          "delta_points": -91.75
+        },
+        {
+          "month": "2026-01",
+          "baseline_points": -216.7,
+          "filter_points": -237.95,
+          "delta_points": -21.25
+        },
+        {
+          "month": "2026-02",
+          "baseline_points": -487.2,
+          "filter_points": -348.1,
+          "delta_points": 139.1
+        },
+        {
+          "month": "2026-03",
+          "baseline_points": -329.85,
+          "filter_points": -284.75,
+          "delta_points": 45.1
+        },
+        {
+          "month": "2026-04",
+          "baseline_points": 13.8,
+          "filter_points": -29.15,
+          "delta_points": -42.95
+        },
+        {
+          "month": "2026-05",
+          "baseline_points": -392.75,
+          "filter_points": -215.9,
+          "delta_points": 176.85
+        },
+        {
+          "month": "2026-06",
+          "baseline_points": -172.05,
+          "filter_points": -29.65,
+          "delta_points": 142.4
+        },
+        {
+          "month": "2026-07",
+          "baseline_points": -11.1,
+          "filter_points": 1.1,
+          "delta_points": 12.2
+        }
+      ]
+    },
+    "skip_thu": {
+      "trades": 1061,
+      "points": -1917.2,
+      "mean_points": -1.807,
+      "t": -2.911,
+      "bootstrap_95": [
+        -3.0553,
+        -0.5803
+      ],
+      "point_pf": 0.8193,
+      "sized": {
+        "pnl": -257.5,
+        "trades": 1061,
+        "win_rate": 0.372,
+        "pf": 0.803,
+        "max_dd": 268.13,
+        "n_months": 12,
+        "pos_months": 3,
+        "worst_month": -109.21,
+        "best_month": 17.98,
+        "msharpe": -0.653,
+        "pos_rate": 0.25,
+        "max_loss_streak": 3,
+        "worst_quarter": -171.48,
+        "top_month_share": 0.406,
+        "months": {
+          "2025-08": -109.21,
+          "2025-09": -24.11,
+          "2025-10": -38.16,
+          "2025-11": 17.18,
+          "2025-12": 9.15,
+          "2026-01": -22.7,
+          "2026-02": -39.71,
+          "2026-03": -21.85,
+          "2026-04": 17.98,
+          "2026-05": -33.52,
+          "2026-06": -11.43,
+          "2026-07": -1.11
+        }
+      },
+      "improved_folds": 9,
+      "fold_deltas": [
+        {
+          "month": "2025-08",
+          "baseline_points": -654.3,
+          "filter_points": -699.3,
+          "delta_points": -45.0
+        },
+        {
+          "month": "2025-09",
+          "baseline_points": -263.85,
+          "filter_points": -168.45,
+          "delta_points": 95.4
+        },
+        {
+          "month": "2025-10",
+          "baseline_points": -321.8,
+          "filter_points": -293.55,
+          "delta_points": 28.25
+        },
+        {
+          "month": "2025-11",
+          "baseline_points": -315.55,
+          "filter_points": 125.7,
+          "delta_points": 441.25
+        },
+        {
+          "month": "2025-12",
+          "baseline_points": 169.35,
+          "filter_points": 70.35,
+          "delta_points": -99.0
+        },
+        {
+          "month": "2026-01",
+          "baseline_points": -216.7,
+          "filter_points": -172.25,
+          "delta_points": 44.45
+        },
+        {
+          "month": "2026-02",
+          "baseline_points": -487.2,
+          "filter_points": -315.3,
+          "delta_points": 171.9
+        },
+        {
+          "month": "2026-03",
+          "baseline_points": -329.85,
+          "filter_points": -181.2,
+          "delta_points": 148.65
+        },
+        {
+          "month": "2026-04",
+          "baseline_points": 13.8,
+          "filter_points": 153.35,
+          "delta_points": 139.55
+        },
+        {
+          "month": "2026-05",
+          "baseline_points": -392.75,
+          "filter_points": -320.85,
+          "delta_points": 71.9
+        },
+        {
+          "month": "2026-06",
+          "baseline_points": -172.05,
+          "filter_points": -104.6,
+          "delta_points": 67.45
+        },
+        {
+          "month": "2026-07",
+          "baseline_points": -11.1,
+          "filter_points": -11.1,
+          "delta_points": 0.0
+        }
+      ]
+    },
+    "skip_fri": {
+      "trades": 1084,
+      "points": -2252.05,
+      "mean_points": -2.0775,
+      "t": -3.335,
+      "bootstrap_95": [
+        -3.3211,
+        -0.8534
+      ],
+      "point_pf": 0.7972,
+      "sized": {
+        "pnl": -299.06,
+        "trades": 1084,
+        "win_rate": 0.375,
+        "pf": 0.776,
+        "max_dd": 305.79,
+        "n_months": 12,
+        "pos_months": 3,
+        "worst_month": -83.19,
+        "best_month": 20.87,
+        "msharpe": -0.831,
+        "pos_rate": 0.25,
+        "max_loss_streak": 4,
+        "worst_quarter": -144.24,
+        "top_month_share": 0.615,
+        "months": {
+          "2025-08": -83.19,
+          "2025-09": -26.92,
+          "2025-10": -34.13,
+          "2025-11": -68.48,
+          "2025-12": 20.87,
+          "2026-01": -14.12,
+          "2026-02": -48.98,
+          "2026-03": -32.19,
+          "2026-04": 8.84,
+          "2026-05": -23.99,
+          "2026-06": 4.25,
+          "2026-07": -1.0
+        }
+      },
+      "improved_folds": 10,
+      "fold_deltas": [
+        {
+          "month": "2025-08",
+          "baseline_points": -654.3,
+          "filter_points": -513.7,
+          "delta_points": 140.6
+        },
+        {
+          "month": "2025-09",
+          "baseline_points": -263.85,
+          "filter_points": -186.25,
+          "delta_points": 77.6
+        },
+        {
+          "month": "2025-10",
+          "baseline_points": -321.8,
+          "filter_points": -259.35,
+          "delta_points": 62.45
+        },
+        {
+          "month": "2025-11",
+          "baseline_points": -315.55,
+          "filter_points": -524.45,
+          "delta_points": -208.9
+        },
+        {
+          "month": "2025-12",
+          "baseline_points": 169.35,
+          "filter_points": 173.95,
+          "delta_points": 4.6
+        },
+        {
+          "month": "2026-01",
+          "baseline_points": -216.7,
+          "filter_points": -117.7,
+          "delta_points": 99.0
+        },
+        {
+          "month": "2026-02",
+          "baseline_points": -487.2,
+          "filter_points": -406.65,
+          "delta_points": 80.55
+        },
+        {
+          "month": "2026-03",
+          "baseline_points": -329.85,
+          "filter_points": -283.15,
+          "delta_points": 46.7
+        },
+        {
+          "month": "2026-04",
+          "baseline_points": 13.8,
+          "filter_points": 76.95,
+          "delta_points": 63.15
+        },
+        {
+          "month": "2026-05",
+          "baseline_points": -392.75,
+          "filter_points": -265.6,
+          "delta_points": 127.15
+        },
+        {
+          "month": "2026-06",
+          "baseline_points": -172.05,
+          "filter_points": 65.0,
+          "delta_points": 237.05
+        },
+        {
+          "month": "2026-07",
+          "baseline_points": -11.1,
+          "filter_points": -11.1,
+          "delta_points": 0.0
+        }
+      ]
+    },
+    "open_only": {
+      "trades": 423,
+      "points": -647.1,
+      "mean_points": -1.5298,
+      "t": -1.414,
+      "bootstrap_95": [
+        -3.5794,
+        0.6085
+      ],
+      "point_pf": 0.8568,
+      "sized": {
+        "pnl": -93.64,
+        "trades": 423,
+        "win_rate": 0.4,
+        "pf": 0.854,
+        "max_dd": 96.9,
+        "n_months": 12,
+        "pos_months": 3,
+        "worst_month": -50.6,
+        "best_month": 52.04,
+        "msharpe": -0.299,
+        "pos_rate": 0.25,
+        "max_loss_streak": 3,
+        "worst_quarter": -60.77,
+        "top_month_share": 0.794,
+        "months": {
+          "2025-08": -50.6,
+          "2025-09": -0.1,
+          "2025-10": -7.42,
+          "2025-11": 52.04,
+          "2025-12": 1.14,
+          "2026-01": -23.88,
+          "2026-02": -35.43,
+          "2026-03": -1.46,
+          "2026-04": 12.37,
+          "2026-05": -39.91,
+          "2026-06": -0.41,
+          "2026-07": 0.0
+        }
+      },
+      "improved_folds": 11,
+      "fold_deltas": [
+        {
+          "month": "2025-08",
+          "baseline_points": -654.3,
+          "filter_points": -310.35,
+          "delta_points": 343.95
+        },
+        {
+          "month": "2025-09",
+          "baseline_points": -263.85,
+          "filter_points": -0.6,
+          "delta_points": 263.25
+        },
+        {
+          "month": "2025-10",
+          "baseline_points": -321.8,
+          "filter_points": -54.3,
+          "delta_points": 267.5
+        },
+        {
+          "month": "2025-11",
+          "baseline_points": -315.55,
+          "filter_points": 357.85,
+          "delta_points": 673.4
+        },
+        {
+          "month": "2025-12",
+          "baseline_points": 169.35,
+          "filter_points": 7.6,
+          "delta_points": -161.75
+        },
+        {
+          "month": "2026-01",
+          "baseline_points": -216.7,
+          "filter_points": -159.2,
+          "delta_points": 57.5
+        },
+        {
+          "month": "2026-02",
+          "baseline_points": -487.2,
+          "filter_points": -237.35,
+          "delta_points": 249.85
+        },
+        {
+          "month": "2026-03",
+          "baseline_points": -329.85,
+          "filter_points": -9.7,
+          "delta_points": 320.15
+        },
+        {
+          "month": "2026-04",
+          "baseline_points": 13.8,
+          "filter_points": 89.35,
+          "delta_points": 75.55
+        },
+        {
+          "month": "2026-05",
+          "baseline_points": -392.75,
+          "filter_points": -326.0,
+          "delta_points": 66.75
+        },
+        {
+          "month": "2026-06",
+          "baseline_points": -172.05,
+          "filter_points": -4.4,
+          "delta_points": 167.65
+        },
+        {
+          "month": "2026-07",
+          "baseline_points": -11.1,
+          "filter_points": 0,
+          "delta_points": 11.1
+        }
+      ]
+    },
+    "mid_only": {
+      "trades": 572,
+      "points": -1317.4,
+      "mean_points": -2.3031,
+      "t": -2.798,
+      "bootstrap_95": [
+        -3.9102,
+        -0.6969
+      ],
+      "point_pf": 0.7696,
+      "sized": {
+        "pnl": -189.34,
+        "trades": 572,
+        "win_rate": 0.358,
+        "pf": 0.748,
+        "max_dd": 216.37,
+        "n_months": 12,
+        "pos_months": 2,
+        "worst_month": -58.69,
+        "best_month": 6.11,
+        "msharpe": -0.862,
+        "pos_rate": 0.167,
+        "max_loss_streak": 4,
+        "worst_quarter": -110.59,
+        "top_month_share": 0.672,
+        "months": {
+          "2025-08": -22.61,
+          "2025-09": -19.37,
+          "2025-10": -32.53,
+          "2025-11": -58.69,
+          "2025-12": 0.0,
+          "2026-01": -4.46,
+          "2026-02": -34.98,
+          "2026-03": -16.06,
+          "2026-04": -8.51,
+          "2026-05": 2.98,
+          "2026-06": 6.11,
+          "2026-07": -1.22
+        }
+      },
+      "improved_folds": 8,
+      "fold_deltas": [
+        {
+          "month": "2025-08",
+          "baseline_points": -654.3,
+          "filter_points": -136.7,
+          "delta_points": 517.6
+        },
+        {
+          "month": "2025-09",
+          "baseline_points": -263.85,
+          "filter_points": -121.15,
+          "delta_points": 142.7
+        },
+        {
+          "month": "2025-10",
+          "baseline_points": -321.8,
+          "filter_points": -222.55,
+          "delta_points": 99.25
+        },
+        {
+          "month": "2025-11",
+          "baseline_points": -315.55,
+          "filter_points": -421.55,
+          "delta_points": -106.0
+        },
+        {
+          "month": "2025-12",
+          "baseline_points": 169.35,
+          "filter_points": 0,
+          "delta_points": -169.35
+        },
+        {
+          "month": "2026-01",
+          "baseline_points": -216.7,
+          "filter_points": -34.3,
+          "delta_points": 182.4
+        },
+        {
+          "month": "2026-02",
+          "baseline_points": -487.2,
+          "filter_points": -269.1,
+          "delta_points": 218.1
+        },
+        {
+          "month": "2026-03",
+          "baseline_points": -329.85,
+          "filter_points": -123.55,
+          "delta_points": 206.3
+        },
+        {
+          "month": "2026-04",
+          "baseline_points": 13.8,
+          "filter_points": -63.05,
+          "delta_points": -76.85
+        },
+        {
+          "month": "2026-05",
+          "baseline_points": -392.75,
+          "filter_points": 34.35,
+          "delta_points": 427.1
+        },
+        {
+          "month": "2026-06",
+          "baseline_points": -172.05,
+          "filter_points": 52.4,
+          "delta_points": 224.45
+        },
+        {
+          "month": "2026-07",
+          "baseline_points": -11.1,
+          "filter_points": -12.2,
+          "delta_points": -1.1
+        }
+      ]
+    },
+    "late_only": {
+      "trades": 380,
+      "points": -1017.5,
+      "mean_points": -2.6776,
+      "t": -2.769,
+      "bootstrap_95": [
+        -4.5382,
+        -0.7342
+      ],
+      "point_pf": 0.7331,
+      "sized": {
+        "pnl": -142.58,
+        "trades": 380,
+        "win_rate": 0.35,
+        "pf": 0.728,
+        "max_dd": 143.99,
+        "n_months": 12,
+        "pos_months": 3,
+        "worst_month": -37.56,
+        "best_month": 22.64,
+        "msharpe": -0.701,
+        "pos_rate": 0.25,
+        "max_loss_streak": 4,
+        "worst_quarter": -65.12,
+        "top_month_share": 0.889,
+        "months": {
+          "2025-08": -33.68,
+          "2025-09": -21.5,
+          "2025-10": -6.06,
+          "2025-11": -37.56,
+          "2025-12": 22.64,
+          "2026-01": -3.25,
+          "2026-02": 2.69,
+          "2026-03": -27.65,
+          "2026-04": -1.05,
+          "2026-05": -11.52,
+          "2026-06": -25.77,
+          "2026-07": 0.12
+        }
+      },
+      "improved_folds": 9,
+      "fold_deltas": [
+        {
+          "month": "2025-08",
+          "baseline_points": -654.3,
+          "filter_points": -207.25,
+          "delta_points": 447.05
+        },
+        {
+          "month": "2025-09",
+          "baseline_points": -263.85,
+          "filter_points": -142.1,
+          "delta_points": 121.75
+        },
+        {
+          "month": "2025-10",
+          "baseline_points": -321.8,
+          "filter_points": -44.95,
+          "delta_points": 276.85
+        },
+        {
+          "month": "2025-11",
+          "baseline_points": -315.55,
+          "filter_points": -251.85,
+          "delta_points": 63.7
+        },
+        {
+          "month": "2025-12",
+          "baseline_points": 169.35,
+          "filter_points": 161.75,
+          "delta_points": -7.6
+        },
+        {
+          "month": "2026-01",
+          "baseline_points": -216.7,
+          "filter_points": -23.2,
+          "delta_points": 193.5
+        },
+        {
+          "month": "2026-02",
+          "baseline_points": -487.2,
+          "filter_points": 19.25,
+          "delta_points": 506.45
+        },
+        {
+          "month": "2026-03",
+          "baseline_points": -329.85,
+          "filter_points": -196.6,
+          "delta_points": 133.25
+        },
+        {
+          "month": "2026-04",
+          "baseline_points": 13.8,
+          "filter_points": -12.5,
+          "delta_points": -26.3
+        },
+        {
+          "month": "2026-05",
+          "baseline_points": -392.75,
+          "filter_points": -101.1,
+          "delta_points": 291.65
+        },
+        {
+          "month": "2026-06",
+          "baseline_points": -172.05,
+          "filter_points": -220.05,
+          "delta_points": -48.0
+        },
+        {
+          "month": "2026-07",
+          "baseline_points": -11.1,
+          "filter_points": 1.1,
+          "delta_points": 12.2
+        }
+      ]
+    },
+    "skip_open": {
+      "trades": 952,
+      "points": -2334.9,
+      "mean_points": -2.4526,
+      "t": -3.911,
+      "bootstrap_95": [
+        -3.6477,
+        -1.1819
+      ],
+      "point_pf": 0.755,
+      "sized": {
+        "pnl": -303.88,
+        "trades": 952,
+        "win_rate": 0.355,
+        "pf": 0.736,
+        "max_dd": 311.68,
+        "n_months": 12,
+        "pos_months": 1,
+        "worst_month": -86.93,
+        "best_month": 19.41,
+        "msharpe": -0.927,
+        "pos_rate": 0.083,
+        "max_loss_streak": 7,
+        "worst_quarter": -162.08,
+        "top_month_share": 1.0,
+        "months": {
+          "2025-08": -56.13,
+          "2025-09": -39.11,
+          "2025-10": -36.04,
+          "2025-11": -86.93,
+          "2025-12": 19.41,
+          "2026-01": -6.9,
+          "2026-02": -29.98,
+          "2026-03": -38.27,
+          "2026-04": -6.87,
+          "2026-05": -6.85,
+          "2026-06": -15.21,
+          "2026-07": -1.0
+        }
+      },
+      "improved_folds": 8,
+      "fold_deltas": [
+        {
+          "month": "2025-08",
+          "baseline_points": -654.3,
+          "filter_points": -343.95,
+          "delta_points": 310.35
+        },
+        {
+          "month": "2025-09",
+          "baseline_points": -263.85,
+          "filter_points": -263.25,
+          "delta_points": 0.6
+        },
+        {
+          "month": "2025-10",
+          "baseline_points": -321.8,
+          "filter_points": -267.5,
+          "delta_points": 54.3
+        },
+        {
+          "month": "2025-11",
+          "baseline_points": -315.55,
+          "filter_points": -673.4,
+          "delta_points": -357.85
+        },
+        {
+          "month": "2025-12",
+          "baseline_points": 169.35,
+          "filter_points": 161.75,
+          "delta_points": -7.6
+        },
+        {
+          "month": "2026-01",
+          "baseline_points": -216.7,
+          "filter_points": -57.5,
+          "delta_points": 159.2
+        },
+        {
+          "month": "2026-02",
+          "baseline_points": -487.2,
+          "filter_points": -249.85,
+          "delta_points": 237.35
+        },
+        {
+          "month": "2026-03",
+          "baseline_points": -329.85,
+          "filter_points": -320.15,
+          "delta_points": 9.7
+        },
+        {
+          "month": "2026-04",
+          "baseline_points": 13.8,
+          "filter_points": -75.55,
+          "delta_points": -89.35
+        },
+        {
+          "month": "2026-05",
+          "baseline_points": -392.75,
+          "filter_points": -66.75,
+          "delta_points": 326.0
+        },
+        {
+          "month": "2026-06",
+          "baseline_points": -172.05,
+          "filter_points": -167.65,
+          "delta_points": 4.4
+        },
+        {
+          "month": "2026-07",
+          "baseline_points": -11.1,
+          "filter_points": -11.1,
+          "delta_points": 0.0
+        }
+      ]
+    },
+    "skip_mid": {
+      "trades": 803,
+      "points": -1664.6,
+      "mean_points": -2.073,
+      "t": -2.837,
+      "bootstrap_95": [
+        -3.5263,
+        -0.6545
+      ],
+      "point_pf": 0.8002,
+      "sized": {
+        "pnl": -221.15,
+        "trades": 803,
+        "win_rate": 0.376,
+        "pf": 0.797,
+        "max_dd": 221.26,
+        "n_months": 12,
+        "pos_months": 4,
+        "worst_month": -83.52,
+        "best_month": 23.71,
+        "msharpe": -0.658,
+        "pos_rate": 0.333,
+        "max_loss_streak": 3,
+        "worst_quarter": -115.92,
+        "top_month_share": 0.484,
+        "months": {
+          "2025-08": -83.52,
+          "2025-09": -20.41,
+          "2025-10": -11.99,
+          "2025-11": 14.43,
+          "2025-12": 23.71,
+          "2026-01": -25.83,
+          "2026-02": -31.51,
+          "2026-03": -27.14,
+          "2026-04": 10.76,
+          "2026-05": -45.65,
+          "2026-06": -24.12,
+          "2026-07": 0.11
+        }
+      },
+      "improved_folds": 9,
+      "fold_deltas": [
+        {
+          "month": "2025-08",
+          "baseline_points": -654.3,
+          "filter_points": -517.6,
+          "delta_points": 136.7
+        },
+        {
+          "month": "2025-09",
+          "baseline_points": -263.85,
+          "filter_points": -142.7,
+          "delta_points": 121.15
+        },
+        {
+          "month": "2025-10",
+          "baseline_points": -321.8,
+          "filter_points": -99.25,
+          "delta_points": 222.55
+        },
+        {
+          "month": "2025-11",
+          "baseline_points": -315.55,
+          "filter_points": 106.0,
+          "delta_points": 421.55
+        },
+        {
+          "month": "2025-12",
+          "baseline_points": 169.35,
+          "filter_points": 169.35,
+          "delta_points": 0.0
+        },
+        {
+          "month": "2026-01",
+          "baseline_points": -216.7,
+          "filter_points": -182.4,
+          "delta_points": 34.3
+        },
+        {
+          "month": "2026-02",
+          "baseline_points": -487.2,
+          "filter_points": -218.1,
+          "delta_points": 269.1
+        },
+        {
+          "month": "2026-03",
+          "baseline_points": -329.85,
+          "filter_points": -206.3,
+          "delta_points": 123.55
+        },
+        {
+          "month": "2026-04",
+          "baseline_points": 13.8,
+          "filter_points": 76.85,
+          "delta_points": 63.05
+        },
+        {
+          "month": "2026-05",
+          "baseline_points": -392.75,
+          "filter_points": -427.1,
+          "delta_points": -34.35
+        },
+        {
+          "month": "2026-06",
+          "baseline_points": -172.05,
+          "filter_points": -224.45,
+          "delta_points": -52.4
+        },
+        {
+          "month": "2026-07",
+          "baseline_points": -11.1,
+          "filter_points": 1.1,
+          "delta_points": 12.2
+        }
+      ]
+    },
+    "skip_late": {
+      "trades": 995,
+      "points": -1964.5,
+      "mean_points": -1.9744,
+      "t": -2.993,
+      "bootstrap_95": [
+        -3.25,
+        -0.655
+      ],
+      "point_pf": 0.8081,
+      "sized": {
+        "pnl": -264.32,
+        "trades": 995,
+        "win_rate": 0.376,
+        "pf": 0.794,
+        "max_dd": 278.37,
+        "n_months": 12,
+        "pos_months": 3,
+        "worst_month": -72.39,
+        "best_month": 4.74,
+        "msharpe": -0.915,
+        "pos_rate": 0.25,
+        "max_loss_streak": 4,
+        "worst_quarter": -127.72,
+        "top_month_share": 0.546,
+        "months": {
+          "2025-08": -72.39,
+          "2025-09": -18.49,
+          "2025-10": -36.84,
+          "2025-11": -10.52,
+          "2025-12": 0.99,
+          "2026-01": -25.16,
+          "2026-02": -62.55,
+          "2026-03": -15.99,
+          "2026-04": 2.95,
+          "2026-05": -29.97,
+          "2026-06": 4.74,
+          "2026-07": -1.1
+        }
+      },
+      "improved_folds": 9,
+      "fold_deltas": [
+        {
+          "month": "2025-08",
+          "baseline_points": -654.3,
+          "filter_points": -447.05,
+          "delta_points": 207.25
+        },
+        {
+          "month": "2025-09",
+          "baseline_points": -263.85,
+          "filter_points": -121.75,
+          "delta_points": 142.1
+        },
+        {
+          "month": "2025-10",
+          "baseline_points": -321.8,
+          "filter_points": -276.85,
+          "delta_points": 44.95
+        },
+        {
+          "month": "2025-11",
+          "baseline_points": -315.55,
+          "filter_points": -63.7,
+          "delta_points": 251.85
+        },
+        {
+          "month": "2025-12",
+          "baseline_points": 169.35,
+          "filter_points": 7.6,
+          "delta_points": -161.75
+        },
+        {
+          "month": "2026-01",
+          "baseline_points": -216.7,
+          "filter_points": -193.5,
+          "delta_points": 23.2
+        },
+        {
+          "month": "2026-02",
+          "baseline_points": -487.2,
+          "filter_points": -506.45,
+          "delta_points": -19.25
+        },
+        {
+          "month": "2026-03",
+          "baseline_points": -329.85,
+          "filter_points": -133.25,
+          "delta_points": 196.6
+        },
+        {
+          "month": "2026-04",
+          "baseline_points": 13.8,
+          "filter_points": 26.3,
+          "delta_points": 12.5
+        },
+        {
+          "month": "2026-05",
+          "baseline_points": -392.75,
+          "filter_points": -291.65,
+          "delta_points": 101.1
+        },
+        {
+          "month": "2026-06",
+          "baseline_points": -172.05,
+          "filter_points": 48.0,
+          "delta_points": 220.05
+        },
+        {
+          "month": "2026-07",
+          "baseline_points": -11.1,
+          "filter_points": -12.2,
+          "delta_points": -1.1
+        }
+      ]
+    }
+  },
+  "sizing": {
+    "fixed_fraction_0.25%": {
+      "pnl": -368.14,
+      "trades": 1375,
+      "win_rate": 0.369,
+      "pf": 0.773,
+      "max_dd": 371.47,
+      "n_months": 12,
+      "pos_months": 2,
+      "worst_month": -102.84,
+      "best_month": 20.32,
+      "msharpe": -1.02,
+      "pos_rate": 0.167,
+      "max_loss_streak": 4,
+      "worst_quarter": -179.6,
+      "top_month_share": 0.941,
+      "months": {
+        "2025-08": -102.84,
+        "2025-09": -37.22,
+        "2025-10": -39.55,
+        "2025-11": -40.93,
+        "2025-12": 20.32,
+        "2026-01": -26.0,
+        "2026-02": -55.24,
+        "2026-03": -36.28,
+        "2026-04": 1.28,
+        "2026-05": -35.43,
+        "2026-06": -15.37,
+        "2026-07": -0.89
+      }
+    },
+    "fixed_fraction_0.50%": {
+      "pnl": -368.14,
+      "trades": 1375,
+      "win_rate": 0.369,
+      "pf": 0.773,
+      "max_dd": 371.47,
+      "n_months": 12,
+      "pos_months": 2,
+      "worst_month": -102.84,
+      "best_month": 20.32,
+      "msharpe": -1.02,
+      "pos_rate": 0.167,
+      "max_loss_streak": 4,
+      "worst_quarter": -179.6,
+      "top_month_share": 0.941,
+      "months": {
+        "2025-08": -102.84,
+        "2025-09": -37.22,
+        "2025-10": -39.55,
+        "2025-11": -40.93,
+        "2025-12": 20.32,
+        "2026-01": -26.0,
+        "2026-02": -55.24,
+        "2026-03": -36.28,
+        "2026-04": 1.28,
+        "2026-05": -35.43,
+        "2026-06": -15.37,
+        "2026-07": -0.89
+      }
+    },
+    "fixed_fraction_1.00%": {
+      "pnl": -368.14,
+      "trades": 1375,
+      "win_rate": 0.369,
+      "pf": 0.773,
+      "max_dd": 371.47,
+      "n_months": 12,
+      "pos_months": 2,
+      "worst_month": -102.84,
+      "best_month": 20.32,
+      "msharpe": -1.02,
+      "pos_rate": 0.167,
+      "max_loss_streak": 4,
+      "worst_quarter": -179.6,
+      "top_month_share": 0.941,
+      "months": {
+        "2025-08": -102.84,
+        "2025-09": -37.22,
+        "2025-10": -39.55,
+        "2025-11": -40.93,
+        "2025-12": 20.32,
+        "2026-01": -26.0,
+        "2026-02": -55.24,
+        "2026-03": -36.28,
+        "2026-04": 1.28,
+        "2026-05": -35.43,
+        "2026-06": -15.37,
+        "2026-07": -0.89
+      }
+    },
+    "causal_inverse_atr_0.50%": {
+      "pnl": -368.14,
+      "trades": 1375,
+      "win_rate": 0.369,
+      "pf": 0.773,
+      "max_dd": 371.47,
+      "n_months": 12,
+      "pos_months": 2,
+      "worst_month": -102.84,
+      "best_month": 20.32,
+      "msharpe": -1.02,
+      "pos_rate": 0.167,
+      "max_loss_streak": 4,
+      "worst_quarter": -179.6,
+      "top_month_share": 0.941,
+      "months": {
+        "2025-08": -102.84,
+        "2025-09": -37.22,
+        "2025-10": -39.55,
+        "2025-11": -40.93,
+        "2025-12": 20.32,
+        "2026-01": -26.0,
+        "2026-02": -55.24,
+        "2026-03": -36.28,
+        "2026-04": 1.28,
+        "2026-05": -35.43,
+        "2026-06": -15.37,
+        "2026-07": -0.89
+      },
+      "training_median_atr": 371.15,
+      "mean_risk_multiplier": 1.0351
+    }
+  },
+  "cost_sensitivity": {
+    "0.0": {
+      "trades": 1375,
+      "points": -2707.0,
+      "mean_points": -1.9687,
+      "t": -3.599,
+      "bootstrap_95": [
+        -3.0053,
+        -0.9002
+      ],
+      "point_pf": 0.8049,
+      "sized": {
+        "pnl": -342.63,
+        "trades": 1375,
+        "win_rate": 0.369,
+        "pf": 0.79,
+        "max_dd": 348.33,
+        "n_months": 12,
+        "pos_months": 2,
+        "worst_month": -97.96,
+        "best_month": 20.97,
+        "msharpe": -0.971,
+        "pos_rate": 0.167,
+        "max_loss_streak": 4,
+        "worst_quarter": -173.37,
+        "top_month_share": 0.812,
+        "months": {
+          "2025-08": -97.96,
+          "2025-09": -36.11,
+          "2025-10": -39.3,
+          "2025-11": -35.32,
+          "2025-12": 20.97,
+          "2026-01": -22.86,
+          "2026-02": -55.55,
+          "2026-03": -34.65,
+          "2026-04": 4.86,
+          "2026-05": -31.28,
+          "2026-06": -14.59,
+          "2026-07": -0.84
+        }
+      }
+    },
+    "0.2": {
+      "trades": 1375,
+      "points": -2982.0,
+      "mean_points": -2.1687,
+      "t": -3.965,
+      "bootstrap_95": [
+        -3.2053,
+        -1.1002
+      ],
+      "point_pf": 0.7877,
+      "sized": {
+        "pnl": -368.14,
+        "trades": 1375,
+        "win_rate": 0.369,
+        "pf": 0.773,
+        "max_dd": 371.47,
+        "n_months": 12,
+        "pos_months": 2,
+        "worst_month": -102.84,
+        "best_month": 20.32,
+        "msharpe": -1.02,
+        "pos_rate": 0.167,
+        "max_loss_streak": 4,
+        "worst_quarter": -179.6,
+        "top_month_share": 0.941,
+        "months": {
+          "2025-08": -102.84,
+          "2025-09": -37.22,
+          "2025-10": -39.55,
+          "2025-11": -40.93,
+          "2025-12": 20.32,
+          "2026-01": -26.0,
+          "2026-02": -55.24,
+          "2026-03": -36.28,
+          "2026-04": 1.28,
+          "2026-05": -35.43,
+          "2026-06": -15.37,
+          "2026-07": -0.89
+        }
+      }
+    },
+    "0.25": {
+      "trades": 1375,
+      "points": -3050.75,
+      "mean_points": -2.2187,
+      "t": -4.056,
+      "bootstrap_95": [
+        -3.2553,
+        -1.1502
+      ],
+      "point_pf": 0.7835,
+      "sized": {
+        "pnl": -374.12,
+        "trades": 1375,
+        "win_rate": 0.369,
+        "pf": 0.769,
+        "max_dd": 377.92,
+        "n_months": 12,
+        "pos_months": 2,
+        "worst_month": -103.97,
+        "best_month": 20.16,
+        "msharpe": -1.027,
+        "pos_rate": 0.167,
+        "max_loss_streak": 4,
+        "worst_quarter": -182.34,
+        "top_month_share": 0.956,
+        "months": {
+          "2025-08": -103.97,
+          "2025-09": -38.19,
+          "2025-10": -40.18,
+          "2025-11": -41.6,
+          "2025-12": 20.16,
+          "2026-01": -27.77,
+          "2026-02": -56.14,
+          "2026-03": -36.66,
+          "2026-04": 0.93,
+          "2026-05": -34.75,
+          "2026-06": -15.06,
+          "2026-07": -0.9
+        }
+      }
+    },
+    "0.4": {
+      "trades": 1375,
+      "points": -3257.0,
+      "mean_points": -2.3687,
+      "t": -4.331,
+      "bootstrap_95": [
+        -3.4053,
+        -1.3002
+      ],
+      "point_pf": 0.771,
+      "sized": {
+        "pnl": -391.17,
+        "trades": 1375,
+        "win_rate": 0.369,
+        "pf": 0.757,
+        "max_dd": 394.87,
+        "n_months": 12,
+        "pos_months": 1,
+        "worst_month": -107.74,
+        "best_month": 19.4,
+        "msharpe": -1.049,
+        "pos_rate": 0.083,
+        "max_loss_streak": 7,
+        "worst_quarter": -188.91,
+        "top_month_share": 1.0,
+        "months": {
+          "2025-08": -107.74,
+          "2025-09": -39.48,
+          "2025-10": -41.7,
+          "2025-11": -45.4,
+          "2025-12": 19.4,
+          "2026-01": -27.86,
+          "2026-02": -57.28,
+          "2026-03": -37.63,
+          "2026-04": -1.31,
+          "2026-05": -35.59,
+          "2026-06": -15.67,
+          "2026-07": -0.94
+        }
+      }
+    },
+    "0.5": {
+      "trades": 1375,
+      "points": -3394.5,
+      "mean_points": -2.4687,
+      "t": -4.513,
+      "bootstrap_95": [
+        -3.5053,
+        -1.4002
+      ],
+      "point_pf": 0.7628,
+      "sized": {
+        "pnl": -403.82,
+        "trades": 1375,
+        "win_rate": 0.368,
+        "pf": 0.748,
+        "max_dd": 406.9,
+        "n_months": 12,
+        "pos_months": 1,
+        "worst_month": -110.78,
+        "best_month": 17.68,
+        "msharpe": -1.066,
+        "pos_rate": 0.083,
+        "max_loss_streak": 7,
+        "worst_quarter": -194.07,
+        "top_month_share": 1.0,
+        "months": {
+          "2025-08": -110.78,
+          "2025-09": -40.33,
+          "2025-10": -42.96,
+          "2025-11": -48.66,
+          "2025-12": 17.68,
+          "2026-01": -28.18,
+          "2026-02": -57.31,
+          "2026-03": -36.34,
+          "2026-04": -1.33,
+          "2026-05": -38.05,
+          "2026-06": -16.62,
+          "2026-07": -0.96
+        }
+      }
+    }
+  },
+  "ml": {
+    "ran": true,
+    "model": "StandardScaler + L2 LogisticRegression",
+    "C": 0.1,
+    "threshold": 0.5,
+    "feature_names": [
+      "directional_replenishment_z",
+      "opposite_replenishment_z",
+      "signed_break_points",
+      "directional_aggression",
+      "signed_top1_imbalance",
+      "signed_top5_imbalance",
+      "signed_top10_imbalance",
+      "signed_microprice_ticks",
+      "signed_trade_delta",
+      "defending_replenishment_share",
+      "toxicity",
+      "log_depth_events",
+      "spread",
+      "session_progress",
+      "weekday_sin",
+      "weekday_cos"
+    ],
+    "raw_candidates": 2083,
+    "occupied_candidates": 1733,
+    "folds": [
+      {
+        "month": "2025-08",
+        "train": 331,
+        "raw_candidates": 218,
+        "baseline_trades": 184,
+        "model_trades": 137,
+        "baseline_points": -654.3,
+        "model_points": -564.65
+      },
+      {
+        "month": "2025-09",
+        "train": 542,
+        "raw_candidates": 97,
+        "baseline_trades": 73,
+        "model_trades": 42,
+        "baseline_points": -263.85,
+        "model_points": -204.4
+      },
+      {
+        "month": "2025-10",
+        "train": 614,
+        "raw_candidates": 110,
+        "baseline_trades": 99,
+        "model_trades": 42,
+        "baseline_points": -321.8,
+        "model_points": -205.15
+      },
+      {
+        "month": "2025-11",
+        "train": 704,
+        "raw_candidates": 265,
+        "baseline_trades": 229,
+        "model_trades": 45,
+        "baseline_points": -315.55,
+        "model_points": 150.25
+      },
+      {
+        "month": "2025-12",
+        "train": 943,
+        "raw_candidates": 34,
+        "baseline_trades": 27,
+        "model_trades": 6,
+        "baseline_points": 169.35,
+        "model_points": -2.95
+      },
+      {
+        "month": "2026-01",
+        "train": 970,
+        "raw_candidates": 152,
+        "baseline_trades": 131,
+        "model_trades": 51,
+        "baseline_points": -216.7,
+        "model_points": -148.95
+      },
+      {
+        "month": "2026-02",
+        "train": 1101,
+        "raw_candidates": 126,
+        "baseline_trades": 106,
+        "model_trades": 41,
+        "baseline_points": -487.2,
+        "model_points": -425.7
+      },
+      {
+        "month": "2026-03",
+        "train": 1207,
+        "raw_candidates": 79,
+        "baseline_trades": 68,
+        "model_trades": 25,
+        "baseline_points": -329.85,
+        "model_points": -61.75
+      },
+      {
+        "month": "2026-04",
+        "train": 1268,
+        "raw_candidates": 158,
+        "baseline_trades": 126,
+        "model_trades": 35,
+        "baseline_points": 13.8,
+        "model_points": -91.0
+      },
+      {
+        "month": "2026-05",
+        "train": 1387,
+        "raw_candidates": 251,
+        "baseline_trades": 210,
+        "model_trades": 96,
+        "baseline_points": -392.75,
+        "model_points": -199.45
+      },
+      {
+        "month": "2026-06",
+        "train": 1611,
+        "raw_candidates": 153,
+        "baseline_trades": 119,
+        "model_trades": 53,
+        "baseline_points": -172.05,
+        "model_points": 74.65
+      },
+      {
+        "month": "2026-07",
+        "train": 1730,
+        "raw_candidates": 3,
+        "baseline_trades": 3,
+        "model_trades": 0,
+        "baseline_points": -11.1,
+        "model_points": 0
+      }
+    ],
+    "baseline_oos": {
+      "trades": 1375,
+      "points": -2982.0,
+      "mean_points": -2.1687,
+      "t": -3.965,
+      "bootstrap_95": [
+        -3.2053,
+        -1.1002
+      ],
+      "point_pf": 0.7877,
+      "sized": {
+        "pnl": -368.14,
+        "trades": 1375,
+        "win_rate": 0.369,
+        "pf": 0.773,
+        "max_dd": 371.47,
+        "n_months": 12,
+        "pos_months": 2,
+        "worst_month": -102.84,
+        "best_month": 20.32,
+        "msharpe": -1.02,
+        "pos_rate": 0.167,
+        "max_loss_streak": 4,
+        "worst_quarter": -179.6,
+        "top_month_share": 0.941,
+        "months": {
+          "2025-08": -102.84,
+          "2025-09": -37.22,
+          "2025-10": -39.55,
+          "2025-11": -40.93,
+          "2025-12": 20.32,
+          "2026-01": -26.0,
+          "2026-02": -55.24,
+          "2026-03": -36.28,
+          "2026-04": 1.28,
+          "2026-05": -35.43,
+          "2026-06": -15.37,
+          "2026-07": -0.89
+        }
+      }
+    },
+    "model_oos": {
+      "trades": 573,
+      "points": -1679.1,
+      "mean_points": -2.9304,
+      "t": -3.404,
+      "bootstrap_95": [
+        -4.6407,
+        -1.2515
+      ],
+      "point_pf": 0.7251,
+      "sized": {
+        "pnl": -233.87,
+        "trades": 573,
+        "win_rate": 0.346,
+        "pf": 0.702,
+        "max_dd": 248.69,
+        "n_months": 12,
+        "pos_months": 2,
+        "worst_month": -90.98,
+        "best_month": 19.63,
+        "msharpe": -0.685,
+        "pos_rate": 0.167,
+        "max_loss_streak": 6,
+        "worst_quarter": -148.54,
+        "top_month_share": 0.756,
+        "months": {
+          "2025-08": -90.98,
+          "2025-09": -29.76,
+          "2025-10": -27.79,
+          "2025-11": 19.63,
+          "2025-12": -0.38,
+          "2026-01": -19.36,
+          "2026-02": -54.67,
+          "2026-03": -7.23,
+          "2026-04": -9.65,
+          "2026-05": -20.01,
+          "2026-06": 6.34,
+          "2026-07": 0.0
+        }
+      }
+    },
+    "improved_total_points_folds": 10,
+    "positive_model_folds": 2,
+    "matched_random": {
+      "draws": 1000,
+      "p_value": 0.7393,
+      "median_points": -1433.6
+    },
+    "purged_cv": {
+      "blocks": [
+        {
+          "from": "2025-02-01",
+          "to": "2025-05-01",
+          "train": 1691,
+          "trades": 22,
+          "points": 14.6,
+          "mean_points": 0.6636,
+          "t": 0.148,
+          "bootstrap_95": [
+            -7.9614,
+            9.2545
+          ],
+          "point_pf": 1.0725
+        },
+        {
+          "from": "2025-05-01",
+          "to": "2025-08-01",
+          "train": 1397,
+          "trades": 104,
+          "points": 48.45,
+          "mean_points": 0.4659,
+          "t": 0.285,
+          "bootstrap_95": [
+            -2.688,
+            3.7615
+          ],
+          "point_pf": 1.0604
+        },
+        {
+          "from": "2025-08-01",
+          "to": "2025-11-01",
+          "train": 1350,
+          "trades": 245,
+          "points": -720.5,
+          "mean_points": -2.9408,
+          "t": -2.781,
+          "bootstrap_95": [
+            -5.0276,
+            -0.8194
+          ],
+          "point_pf": 0.6838
+        },
+        {
+          "from": "2025-11-01",
+          "to": "2026-02-01",
+          "train": 1336,
+          "trades": 168,
+          "points": -251.1,
+          "mean_points": -1.4946,
+          "t": -1.085,
+          "bootstrap_95": [
+            -4.1643,
+            1.1735
+          ],
+          "point_pf": 0.8351
+        },
+        {
+          "from": "2026-02-01",
+          "to": "2026-05-01",
+          "train": 1422,
+          "trades": 146,
+          "points": -809.2,
+          "mean_points": -5.5425,
+          "t": -3.085,
+          "bootstrap_95": [
+            -8.9757,
+            -1.9774
+          ],
+          "point_pf": 0.5586
+        },
+        {
+          "from": "2026-05-01",
+          "to": "2026-08-01",
+          "train": 1387,
+          "trades": 138,
+          "points": -146.6,
+          "mean_points": -1.0623,
+          "t": -0.529,
+          "bootstrap_95": [
+            -5.017,
+            2.8725
+          ],
+          "point_pf": 0.9027
+        }
+      ],
+      "points": -1864.35,
+      "positive_blocks": 2
+    }
+  },
+  "trial_accounting": {
+    "grid_cells": 27,
+    "cumulative_trials": 75,
+    "components": {
+      "default": 1,
+      "anchored_grid_selection": 27,
+      "purged_cv_grid_selection": 27,
+      "filter_diagnostics": 13,
+      "sizing_diagnostics": 4,
+      "ml_wf_cv_random": 3
+    }
+  },
+  "verdict": "Rejected. Do not tune more filters, thresholds, brackets, or ML models on this history."
+}

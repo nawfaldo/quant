@@ -1,0 +1,77 @@
+{
+ "forward_from": "2026-07-17",
+ "null_from": "2025-08-01",
+ "initial": 1000.0,
+ "rows": [
+  {
+   "strategy": "Hourly Delta Reversal",
+   "null_span": [
+    "2025-08-01",
+    "2026-07-17"
+   ],
+   "null": {
+    "months_observed": 12,
+    "mean_month": 28.8,
+    "sd_month": 39.01,
+    "p05": -45.33,
+    "p10": -39.47,
+    "worst_month": -45.33,
+    "median_month": 33.42
+   },
+   "forward_span": [
+    "2026-07-17",
+    "2026-08-04"
+   ],
+   "forward": {
+    "trades": 20,
+    "pnl": 23.73,
+    "pf": 1.365,
+    "win_rate": 0.55,
+    "points_per_trade": 15.231,
+    "max_dd": 29.46
+   },
+   "kill_rule": {
+    "kill_month_p10": -39.47,
+    "kill_streak_months": 3,
+    "kill_cumulative_below": -45.33,
+    "stated": "stop after 3 consecutive months below -39.47, or if cumulative forward PnL falls below -45.33"
+   }
+  },
+  {
+   "strategy": "Deep OFI Momentum",
+   "null_span": [
+    "2025-08-01",
+    "2026-07-17"
+   ],
+   "null": {
+    "months_observed": 12,
+    "mean_month": 43.55,
+    "sd_month": 92.07,
+    "p05": -112.19,
+    "p10": -30.21,
+    "worst_month": -112.19,
+    "median_month": 29.64
+   },
+   "forward_span": [
+    "2026-07-17",
+    "2026-08-04"
+   ],
+   "forward": {
+    "trades": 148,
+    "pnl": 43.13,
+    "pf": 1.083,
+    "win_rate": 0.493,
+    "points_per_trade": 1.94,
+    "max_dd": 104.9
+   },
+   "kill_rule": {
+    "kill_month_p10": -30.21,
+    "kill_streak_months": 3,
+    "kill_cumulative_below": -112.19,
+    "stated": "stop after 3 consecutive months below -30.21, or if cumulative forward PnL falls below -112.19"
+   }
+  }
+ ],
+ "power_note": "301 forward trades across three strategies. This is a status line, not evidence: Hourly Delta Reversal needs roughly 400 trades for t=2 at its measured dispersion, so the forward window can disconfirm quickly and cannot confirm for years.",
+ "trials_charged": 0
+}

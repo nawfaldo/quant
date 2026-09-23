@@ -1,0 +1,63 @@
+{
+  "families": {
+    "donchian": null,
+    "gap": null,
+    "ma_cross": null,
+    "momentum": null,
+    "orb": null,
+    "overnight": null,
+    "pdr": null,
+    "vwap": null,
+    "zscore": null
+  },
+  "holdout_benchmarks": {
+    "always_long_gross_bp_per_trade": 14.8966,
+    "always_long_max_dd_pct": 15.69,
+    "always_long_return_pct": 35.79,
+    "always_long_trades": 400,
+    "buy_and_hold_pct": 112.92
+  },
+  "protocol": {
+    "bars": "tsm_1m causally aggregated to 30m; out-of-session buckets used only for the overnight and gap anchors",
+    "benchmarks": {
+      "in_sample": {
+        "always_long_gross_bp_per_trade": 15.9036,
+        "always_long_max_dd_pct": 37.22,
+        "always_long_return_pct": 112.77,
+        "always_long_trades": 1133,
+        "buy_and_hold_pct": 247.85
+      }
+    },
+    "candidate_counts": {
+      "donchian": 2700,
+      "gap": 2700,
+      "ma_cross": 5400,
+      "momentum": 24300,
+      "orb": 7200,
+      "overnight": 3600,
+      "pdr": 3600,
+      "vwap": 5400,
+      "zscore": 16200
+    },
+    "clock": "New York wall-clock encoded as fake UTC; nothing converts",
+    "entry_spread_bp": 5.95,
+    "entry_spread_note": "measured Dukascopy median spread for tsm; the requested 0.2 USD reads as 6.958bp on this symbol and 0.2 pips as 0.0696bp; see the cost sweep in `validate`",
+    "fx": "every symbol is USD-quoted, so the FX leg is a constant 1.0",
+    "in_sample": "2020-07-01 through 2024-12-31; 2020 H1 is warm-up and 2021-2024 are the gated years",
+    "out_of_sample": "2025-01-01 through 2026-08-07, untouched by selection",
+    "quote_currency": "USD",
+    "report_balances": [
+      10000.0,
+      1000.0
+    ],
+    "select_balance": 10000.0,
+    "selection_gate": ">=3 of 4 in-sample years profitable; selected DD 3.0-15.0%; annual DD <=15.0%; >=200 trades; PF >=1.05; regime filters must refine an already profitable unfiltered cell; >=60% of numeric neighbours robust; >=80.0% of signals fillable on $1,000 in sample",
+    "session": "09:30-15:30 New York in 30m buckets; entries inside it only, forced flatten in the 15:30 bucket (the tables end 15:59, so there is no 16:00 bar)",
+    "sizing": "riskvol_1.5pct against a per-symbol volatility target of 0.340 (in-sample median realised volatility), floored to the 0.01 share step inside 0.0500 margin (Exness stocks 1:20); the step and the margin leg are both inert at these balances, the risk budget binds",
+    "split_adjustment": "prices are ratio back-adjusted; risk sizing, notional sizing and the margin ceiling are all invariant to it, the lot step is not but is inert here"
+  },
+  "seal_sha256": "d851efabf1f42dab7e15b1918800a2b7aa1413f6254550a713dec5a212c7b186",
+  "sealed": true,
+  "symbol": "tsm",
+  "validation": {}
+}

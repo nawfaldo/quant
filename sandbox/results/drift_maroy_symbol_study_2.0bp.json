@@ -1,0 +1,2648 @@
+{
+  "study": "Drift VWAP Pullback and Maroy intraday momentum, non-BTC non-NQ",
+  "in_sample": [
+    "2020-01-01",
+    "2025-01-01"
+  ],
+  "out_of_sample": [
+    "2025-01-01",
+    "2026-08-11"
+  ],
+  "account": {
+    "initial_balance": 1000.0,
+    "entry_cost": "2.0 bp of notional",
+    "point_value": 1.0,
+    "quantity_step": 0.01,
+    "margin": 0.25
+  },
+  "frozen_sizing": {
+    "drift": "1.0% equity risk per stop",
+    "maroy": "2.0x notional cap"
+  },
+  "excluded": {
+    "btc, btcjpy, btckrw, nq": "named out of scope by the request",
+    "xauaud, xaueur, xaugbp, xagaud, xageur, xaggbp": "30m only, or 1m starts 2023",
+    "ethbtc": "quoted in BTC, so the 0.2-point spread is 20% of price",
+    "vix": "an index level, not a tradeable CFD in this account"
+  },
+  "symbols": [
+    {
+      "symbol": "de40",
+      "session": [
+        180,
+        690
+      ],
+      "shift_hours": 0,
+      "note": null,
+      "drift": {
+        "real": {
+          "params": {
+            "stop_pct": 0.004,
+            "rr": 1.5,
+            "momentum": 0.0005
+          },
+          "is": {
+            "trades": 2618,
+            "final_equity": 1096.39,
+            "return_pct": 9.64,
+            "cagr_pct": 1.82,
+            "sharpe": 0.185,
+            "ann_vol_pct": 23.6,
+            "max_dd_pct": 51.48,
+            "win_rate_pct": 45.4,
+            "pf": 1.006,
+            "edge_bp": 0.353,
+            "msharpe": 0.019,
+            "pos_months": 29,
+            "n_months": 60
+          },
+          "oos": {
+            "trades": 817,
+            "final_equity": 1110.7,
+            "return_pct": 11.07,
+            "cagr_pct": 6.63,
+            "sharpe": 0.429,
+            "ann_vol_pct": 21.7,
+            "max_dd_pct": 20.95,
+            "win_rate_pct": 46.5,
+            "pf": 1.025,
+            "edge_bp": 0.72,
+            "msharpe": 0.089,
+            "pos_months": 10,
+            "n_months": 20
+          },
+          "cells": 60,
+          "is_cells_positive": 8
+        },
+        "null": {
+          "params": {
+            "stop_pct": 0.008,
+            "rr": 1.5,
+            "momentum": 0.001
+          },
+          "is": {
+            "trades": 1739,
+            "final_equity": 651.78,
+            "return_pct": -34.82,
+            "cagr_pct": -8.03,
+            "sharpe": -0.531,
+            "ann_vol_pct": 13.8,
+            "max_dd_pct": 44.03,
+            "win_rate_pct": 46.9,
+            "pf": 0.929,
+            "edge_bp": -1.904,
+            "msharpe": -0.181,
+            "pos_months": 24,
+            "n_months": 60
+          },
+          "oos": {
+            "trades": 527,
+            "final_equity": 798.21,
+            "return_pct": -20.18,
+            "cagr_pct": -12.88,
+            "sharpe": -1.036,
+            "ann_vol_pct": 12.3,
+            "max_dd_pct": 29.77,
+            "win_rate_pct": 47.4,
+            "pf": 0.861,
+            "edge_bp": -3.366,
+            "msharpe": -0.298,
+            "pos_months": 9,
+            "n_months": 20
+          },
+          "cells": 60,
+          "is_cells_positive": 0
+        },
+        "sessions": {
+          "is": 1290,
+          "oos": 413
+        },
+        "verdict": "candidate"
+      },
+      "maroy": {
+        "real": {
+          "params": {
+            "exit_kind": "time",
+            "lookback_days": 4,
+            "k_enter": 1.3,
+            "k_exit": null,
+            "frequency": 45,
+            "start_after": 1,
+            "exit_before": 15
+          },
+          "is": {
+            "trades": 865,
+            "final_equity": 1468.92,
+            "return_pct": 46.89,
+            "cagr_pct": 7.81,
+            "sharpe": 0.459,
+            "ann_vol_pct": 19.3,
+            "max_dd_pct": 22.59,
+            "win_rate_pct": 49.9,
+            "pf": 1.093,
+            "edge_bp": 2.841,
+            "msharpe": 0.127,
+            "pos_months": 33,
+            "n_months": 60
+          },
+          "oos": {
+            "trades": 246,
+            "final_equity": 1047.83,
+            "return_pct": 4.78,
+            "cagr_pct": 2.9,
+            "sharpe": 0.239,
+            "ann_vol_pct": 18.0,
+            "max_dd_pct": 27.88,
+            "win_rate_pct": 54.1,
+            "pf": 1.034,
+            "edge_bp": 1.595,
+            "msharpe": 0.041,
+            "pos_months": 12,
+            "n_months": 20
+          },
+          "cells": 216,
+          "is_cells_positive": 10
+        },
+        "null": {
+          "params": {
+            "exit_kind": "time",
+            "lookback_days": 4,
+            "k_enter": 1.3,
+            "k_exit": null,
+            "frequency": 30,
+            "start_after": 1,
+            "exit_before": 15
+          },
+          "is": {
+            "trades": 920,
+            "final_equity": 1245.29,
+            "return_pct": 24.53,
+            "cagr_pct": 4.38,
+            "sharpe": 0.288,
+            "ann_vol_pct": 20.2,
+            "max_dd_pct": 51.43,
+            "win_rate_pct": 50.5,
+            "pf": 1.033,
+            "edge_bp": 1.833,
+            "msharpe": 0.04,
+            "pos_months": 29,
+            "n_months": 60
+          },
+          "oos": {
+            "trades": 266,
+            "final_equity": 943.01,
+            "return_pct": -5.7,
+            "cagr_pct": -3.53,
+            "sharpe": -0.116,
+            "ann_vol_pct": 18.2,
+            "max_dd_pct": 27.82,
+            "win_rate_pct": 53.4,
+            "pf": 0.954,
+            "edge_bp": -0.521,
+            "msharpe": -0.078,
+            "pos_months": 13,
+            "n_months": 20
+          },
+          "cells": 216,
+          "is_cells_positive": 5
+        },
+        "sessions": {
+          "is": 1290,
+          "oos": 413
+        },
+        "verdict": "candidate"
+      }
+    },
+    {
+      "symbol": "fr40",
+      "session": [
+        180,
+        690
+      ],
+      "shift_hours": 0,
+      "note": null,
+      "drift": {
+        "real": {
+          "params": {
+            "stop_pct": 0.008,
+            "rr": 1.5,
+            "momentum": 0.002
+          },
+          "is": {
+            "trades": 1664,
+            "final_equity": 868.27,
+            "return_pct": -13.17,
+            "cagr_pct": -2.74,
+            "sharpe": -0.127,
+            "ann_vol_pct": 14.0,
+            "max_dd_pct": 36.31,
+            "win_rate_pct": 47.7,
+            "pf": 0.976,
+            "edge_bp": -0.407,
+            "msharpe": -0.045,
+            "pos_months": 33,
+            "n_months": 60
+          },
+          "oos": {
+            "trades": 483,
+            "final_equity": 710.13,
+            "return_pct": -28.99,
+            "cagr_pct": -19.1,
+            "sharpe": -1.734,
+            "ann_vol_pct": 11.5,
+            "max_dd_pct": 31.73,
+            "win_rate_pct": 43.7,
+            "pf": 0.768,
+            "edge_bp": -5.656,
+            "msharpe": -0.522,
+            "pos_months": 4,
+            "n_months": 20
+          },
+          "cells": 60,
+          "is_cells_positive": 0
+        },
+        "null": {
+          "params": {
+            "stop_pct": 0.008,
+            "rr": 1.5,
+            "momentum": 0.001
+          },
+          "is": {
+            "trades": 1736,
+            "final_equity": 441.5,
+            "return_pct": -55.85,
+            "cagr_pct": -14.85,
+            "sharpe": -1.087,
+            "ann_vol_pct": 13.9,
+            "max_dd_pct": 64.75,
+            "win_rate_pct": 46.0,
+            "pf": 0.846,
+            "edge_bp": -3.64,
+            "msharpe": -0.346,
+            "pos_months": 19,
+            "n_months": 60
+          },
+          "oos": {
+            "trades": 495,
+            "final_equity": 1003.17,
+            "return_pct": 0.32,
+            "cagr_pct": 0.2,
+            "sharpe": 0.118,
+            "ann_vol_pct": 11.2,
+            "max_dd_pct": 16.52,
+            "win_rate_pct": 49.1,
+            "pf": 1.002,
+            "edge_bp": 0.284,
+            "msharpe": 0.007,
+            "pos_months": 10,
+            "n_months": 20
+          },
+          "cells": 60,
+          "is_cells_positive": 0
+        },
+        "sessions": {
+          "is": 1283,
+          "oos": 408
+        },
+        "verdict": "OOS negative"
+      },
+      "maroy": {
+        "real": {
+          "params": {
+            "exit_kind": "time",
+            "lookback_days": 14,
+            "k_enter": 1.0,
+            "k_exit": null,
+            "frequency": 15,
+            "start_after": 1,
+            "exit_before": 15
+          },
+          "is": {
+            "trades": 1046,
+            "final_equity": 736.19,
+            "return_pct": -26.38,
+            "cagr_pct": -5.84,
+            "sharpe": -0.149,
+            "ann_vol_pct": 23.3,
+            "max_dd_pct": 37.87,
+            "win_rate_pct": 49.4,
+            "pf": 0.953,
+            "edge_bp": -0.805,
+            "msharpe": -0.078,
+            "pos_months": 28,
+            "n_months": 60
+          },
+          "oos": {
+            "trades": 327,
+            "final_equity": 617.38,
+            "return_pct": -38.26,
+            "cagr_pct": -25.81,
+            "sharpe": -1.468,
+            "ann_vol_pct": 19.1,
+            "max_dd_pct": 47.28,
+            "win_rate_pct": 45.9,
+            "pf": 0.735,
+            "edge_bp": -6.989,
+            "msharpe": -0.433,
+            "pos_months": 5,
+            "n_months": 20
+          },
+          "cells": 216,
+          "is_cells_positive": 0
+        },
+        "null": {
+          "params": {
+            "exit_kind": "time",
+            "lookback_days": 14,
+            "k_enter": 1.3,
+            "k_exit": null,
+            "frequency": 45,
+            "start_after": 1,
+            "exit_before": 15
+          },
+          "is": {
+            "trades": 814,
+            "final_equity": 1246.83,
+            "return_pct": 24.68,
+            "cagr_pct": 4.43,
+            "sharpe": 0.321,
+            "ann_vol_pct": 19.8,
+            "max_dd_pct": 31.2,
+            "win_rate_pct": 49.8,
+            "pf": 1.045,
+            "edge_bp": 2.009,
+            "msharpe": 0.058,
+            "pos_months": 28,
+            "n_months": 60
+          },
+          "oos": {
+            "trades": 245,
+            "final_equity": 1108.66,
+            "return_pct": 10.87,
+            "cagr_pct": 6.6,
+            "sharpe": 0.454,
+            "ann_vol_pct": 17.4,
+            "max_dd_pct": 23.91,
+            "win_rate_pct": 53.5,
+            "pf": 1.089,
+            "edge_bp": 2.681,
+            "msharpe": 0.088,
+            "pos_months": 10,
+            "n_months": 20
+          },
+          "cells": 216,
+          "is_cells_positive": 13
+        },
+        "sessions": {
+          "is": 1283,
+          "oos": 408
+        },
+        "verdict": "OOS negative"
+      }
+    },
+    {
+      "symbol": "stoxx50",
+      "session": [
+        180,
+        690
+      ],
+      "shift_hours": 0,
+      "note": null,
+      "drift": {
+        "real": {
+          "params": {
+            "stop_pct": 0.004,
+            "rr": 1.5,
+            "momentum": 0.0005
+          },
+          "is": {
+            "trades": 2663,
+            "final_equity": 740.22,
+            "return_pct": -25.98,
+            "cagr_pct": -5.75,
+            "sharpe": -0.127,
+            "ann_vol_pct": 24.3,
+            "max_dd_pct": 45.02,
+            "win_rate_pct": 45.5,
+            "pf": 0.978,
+            "edge_bp": -0.225,
+            "msharpe": -0.073,
+            "pos_months": 22,
+            "n_months": 60
+          },
+          "oos": {
+            "trades": 794,
+            "final_equity": 871.12,
+            "return_pct": -12.89,
+            "cagr_pct": -8.23,
+            "sharpe": -0.311,
+            "ann_vol_pct": 22.8,
+            "max_dd_pct": 34.74,
+            "win_rate_pct": 46.2,
+            "pf": 0.968,
+            "edge_bp": -0.501,
+            "msharpe": -0.088,
+            "pos_months": 7,
+            "n_months": 20
+          },
+          "cells": 60,
+          "is_cells_positive": 0
+        },
+        "null": {
+          "params": {
+            "stop_pct": 0.004,
+            "rr": 1.5,
+            "momentum": 0.0005
+          },
+          "is": {
+            "trades": 2655,
+            "final_equity": 472.43,
+            "return_pct": -52.76,
+            "cagr_pct": -13.72,
+            "sharpe": -0.499,
+            "ann_vol_pct": 24.0,
+            "max_dd_pct": 56.6,
+            "win_rate_pct": 44.2,
+            "pf": 0.939,
+            "edge_bp": -0.907,
+            "msharpe": -0.198,
+            "pos_months": 25,
+            "n_months": 60
+          },
+          "oos": {
+            "trades": 796,
+            "final_equity": 1068.36,
+            "return_pct": 6.84,
+            "cagr_pct": 4.2,
+            "sharpe": 0.348,
+            "ann_vol_pct": 23.5,
+            "max_dd_pct": 24.98,
+            "win_rate_pct": 47.0,
+            "pf": 1.02,
+            "edge_bp": 0.579,
+            "msharpe": 0.051,
+            "pos_months": 7,
+            "n_months": 20
+          },
+          "cells": 60,
+          "is_cells_positive": 0
+        },
+        "sessions": {
+          "is": 1281,
+          "oos": 406
+        },
+        "verdict": "OOS negative"
+      },
+      "maroy": {
+        "real": {
+          "params": {
+            "exit_kind": "time",
+            "lookback_days": 4,
+            "k_enter": 0.85,
+            "k_exit": null,
+            "frequency": 15,
+            "start_after": 1,
+            "exit_before": 15
+          },
+          "is": {
+            "trades": 1110,
+            "final_equity": 1192.18,
+            "return_pct": 19.22,
+            "cagr_pct": 3.53,
+            "sharpe": 0.252,
+            "ann_vol_pct": 23.9,
+            "max_dd_pct": 39.08,
+            "win_rate_pct": 51.3,
+            "pf": 1.028,
+            "edge_bp": 1.482,
+            "msharpe": 0.046,
+            "pos_months": 31,
+            "n_months": 60
+          },
+          "oos": {
+            "trades": 350,
+            "final_equity": 877.63,
+            "return_pct": -12.24,
+            "cagr_pct": -7.8,
+            "sharpe": -0.309,
+            "ann_vol_pct": 20.2,
+            "max_dd_pct": 40.68,
+            "win_rate_pct": 49.1,
+            "pf": 0.927,
+            "edge_bp": -1.461,
+            "msharpe": -0.108,
+            "pos_months": 8,
+            "n_months": 20
+          },
+          "cells": 216,
+          "is_cells_positive": 6
+        },
+        "null": {
+          "params": {
+            "exit_kind": "time",
+            "lookback_days": 4,
+            "k_enter": 1.0,
+            "k_exit": null,
+            "frequency": 30,
+            "start_after": 1,
+            "exit_before": 39
+          },
+          "is": {
+            "trades": 1014,
+            "final_equity": 1573.47,
+            "return_pct": 57.35,
+            "cagr_pct": 9.35,
+            "sharpe": 0.503,
+            "ann_vol_pct": 21.9,
+            "max_dd_pct": 41.31,
+            "win_rate_pct": 48.5,
+            "pf": 1.07,
+            "edge_bp": 2.858,
+            "msharpe": 0.092,
+            "pos_months": 28,
+            "n_months": 60
+          },
+          "oos": {
+            "trades": 321,
+            "final_equity": 672.47,
+            "return_pct": -32.75,
+            "cagr_pct": -21.88,
+            "sharpe": -1.143,
+            "ann_vol_pct": 20.0,
+            "max_dd_pct": 44.2,
+            "win_rate_pct": 48.0,
+            "pf": 0.736,
+            "edge_bp": -5.693,
+            "msharpe": -0.312,
+            "pos_months": 7,
+            "n_months": 20
+          },
+          "cells": 216,
+          "is_cells_positive": 27
+        },
+        "sessions": {
+          "is": 1279,
+          "oos": 406
+        },
+        "verdict": "OOS negative"
+      }
+    },
+    {
+      "symbol": "uk100",
+      "session": [
+        180,
+        690
+      ],
+      "shift_hours": 0,
+      "note": null,
+      "drift": {
+        "real": {
+          "params": {
+            "stop_pct": 0.008,
+            "rr": 1.5,
+            "momentum": 0.002
+          },
+          "is": {
+            "trades": 1491,
+            "final_equity": 678.42,
+            "return_pct": -32.16,
+            "cagr_pct": -7.34,
+            "sharpe": -0.58,
+            "ann_vol_pct": 11.9,
+            "max_dd_pct": 42.2,
+            "win_rate_pct": 45.9,
+            "pf": 0.92,
+            "edge_bp": -1.98,
+            "msharpe": -0.172,
+            "pos_months": 29,
+            "n_months": 60
+          },
+          "oos": {
+            "trades": 422,
+            "final_equity": 874.7,
+            "return_pct": -12.53,
+            "cagr_pct": -7.88,
+            "sharpe": -0.854,
+            "ann_vol_pct": 9.2,
+            "max_dd_pct": 16.84,
+            "win_rate_pct": 45.7,
+            "pf": 0.859,
+            "edge_bp": -2.442,
+            "msharpe": -0.284,
+            "pos_months": 5,
+            "n_months": 20
+          },
+          "cells": 60,
+          "is_cells_positive": 0
+        },
+        "null": {
+          "params": {
+            "stop_pct": 0.008,
+            "rr": 1.5,
+            "momentum": 0.0005
+          },
+          "is": {
+            "trades": 1582,
+            "final_equity": 560.23,
+            "return_pct": -43.98,
+            "cagr_pct": -10.76,
+            "sharpe": -0.912,
+            "ann_vol_pct": 11.7,
+            "max_dd_pct": 53.0,
+            "win_rate_pct": 46.3,
+            "pf": 0.885,
+            "edge_bp": -2.883,
+            "msharpe": -0.26,
+            "pos_months": 23,
+            "n_months": 60
+          },
+          "oos": {
+            "trades": 461,
+            "final_equity": 1102.91,
+            "return_pct": 10.29,
+            "cagr_pct": 6.19,
+            "sharpe": 0.622,
+            "ann_vol_pct": 10.0,
+            "max_dd_pct": 9.75,
+            "win_rate_pct": 51.6,
+            "pf": 1.1,
+            "edge_bp": 1.976,
+            "msharpe": 0.192,
+            "pos_months": 11,
+            "n_months": 20
+          },
+          "cells": 60,
+          "is_cells_positive": 0
+        },
+        "sessions": {
+          "is": 1284,
+          "oos": 412
+        },
+        "verdict": "OOS negative"
+      },
+      "maroy": {
+        "real": {
+          "params": {
+            "exit_kind": "time",
+            "lookback_days": 4,
+            "k_enter": 1.3,
+            "k_exit": null,
+            "frequency": 45,
+            "start_after": 1,
+            "exit_before": 39
+          },
+          "is": {
+            "trades": 834,
+            "final_equity": 801.94,
+            "return_pct": -19.81,
+            "cagr_pct": -4.25,
+            "sharpe": -0.174,
+            "ann_vol_pct": 17.1,
+            "max_dd_pct": 43.83,
+            "win_rate_pct": 45.1,
+            "pf": 0.956,
+            "edge_bp": -0.914,
+            "msharpe": -0.06,
+            "pos_months": 26,
+            "n_months": 60
+          },
+          "oos": {
+            "trades": 265,
+            "final_equity": 826.27,
+            "return_pct": -17.37,
+            "cagr_pct": -11.04,
+            "sharpe": -0.731,
+            "ann_vol_pct": 14.3,
+            "max_dd_pct": 24.04,
+            "win_rate_pct": 43.8,
+            "pf": 0.824,
+            "edge_bp": -3.323,
+            "msharpe": -0.284,
+            "pos_months": 6,
+            "n_months": 20
+          },
+          "cells": 216,
+          "is_cells_positive": 0
+        },
+        "null": {
+          "params": {
+            "exit_kind": "time",
+            "lookback_days": 14,
+            "k_enter": 1.0,
+            "k_exit": null,
+            "frequency": 45,
+            "start_after": 1,
+            "exit_before": 39
+          },
+          "is": {
+            "trades": 932,
+            "final_equity": 962.61,
+            "return_pct": -3.74,
+            "cagr_pct": -0.75,
+            "sharpe": 0.056,
+            "ann_vol_pct": 18.5,
+            "max_dd_pct": 35.84,
+            "win_rate_pct": 49.4,
+            "pf": 0.992,
+            "edge_bp": 0.298,
+            "msharpe": -0.011,
+            "pos_months": 30,
+            "n_months": 60
+          },
+          "oos": {
+            "trades": 288,
+            "final_equity": 959.46,
+            "return_pct": -4.05,
+            "cagr_pct": -2.51,
+            "sharpe": -0.085,
+            "ann_vol_pct": 16.3,
+            "max_dd_pct": 23.57,
+            "win_rate_pct": 46.9,
+            "pf": 0.962,
+            "edge_bp": -0.319,
+            "msharpe": -0.054,
+            "pos_months": 8,
+            "n_months": 20
+          },
+          "cells": 216,
+          "is_cells_positive": 0
+        },
+        "sessions": {
+          "is": 1281,
+          "oos": 412
+        },
+        "verdict": "OOS negative"
+      }
+    },
+    {
+      "symbol": "aus200",
+      "session": [
+        60,
+        480
+      ],
+      "shift_hours": 6,
+      "note": null,
+      "drift": {
+        "real": {
+          "params": {
+            "stop_pct": 0.008,
+            "rr": 1.5,
+            "momentum": 0.002
+          },
+          "is": {
+            "trades": 1243,
+            "final_equity": 1021.95,
+            "return_pct": 2.19,
+            "cagr_pct": 0.43,
+            "sharpe": 0.079,
+            "ann_vol_pct": 9.4,
+            "max_dd_pct": 35.3,
+            "win_rate_pct": 46.1,
+            "pf": 1.007,
+            "edge_bp": 0.281,
+            "msharpe": 0.006,
+            "pos_months": 25,
+            "n_months": 61
+          },
+          "oos": {
+            "trades": 369,
+            "final_equity": 966.95,
+            "return_pct": -3.31,
+            "cagr_pct": -2.06,
+            "sharpe": -0.352,
+            "ann_vol_pct": 5.9,
+            "max_dd_pct": 10.07,
+            "win_rate_pct": 50.7,
+            "pf": 0.945,
+            "edge_bp": -0.727,
+            "msharpe": -0.116,
+            "pos_months": 10,
+            "n_months": 20
+          },
+          "cells": 60,
+          "is_cells_positive": 1
+        },
+        "null": {
+          "params": {
+            "stop_pct": 0.008,
+            "rr": 1.5,
+            "momentum": 0.002
+          },
+          "is": {
+            "trades": 1242,
+            "final_equity": 816.23,
+            "return_pct": -18.38,
+            "cagr_pct": -3.95,
+            "sharpe": -0.465,
+            "ann_vol_pct": 8.2,
+            "max_dd_pct": 24.57,
+            "win_rate_pct": 46.7,
+            "pf": 0.923,
+            "edge_bp": -1.228,
+            "msharpe": -0.191,
+            "pos_months": 24,
+            "n_months": 61
+          },
+          "oos": {
+            "trades": 369,
+            "final_equity": 946.12,
+            "return_pct": -5.39,
+            "cagr_pct": -3.37,
+            "sharpe": -0.534,
+            "ann_vol_pct": 6.3,
+            "max_dd_pct": 12.31,
+            "win_rate_pct": 49.9,
+            "pf": 0.908,
+            "edge_bp": -1.11,
+            "msharpe": -0.16,
+            "pos_months": 9,
+            "n_months": 20
+          },
+          "cells": 60,
+          "is_cells_positive": 0
+        },
+        "sessions": {
+          "is": 1270,
+          "oos": 408
+        },
+        "verdict": "OOS negative"
+      },
+      "maroy": {
+        "real": {
+          "params": {
+            "exit_kind": "time",
+            "lookback_days": 4,
+            "k_enter": 1.3,
+            "k_exit": null,
+            "frequency": 45,
+            "start_after": 1,
+            "exit_before": 13
+          },
+          "is": {
+            "trades": 719,
+            "final_equity": 1093.84,
+            "return_pct": 9.38,
+            "cagr_pct": 1.82,
+            "sharpe": 0.195,
+            "ann_vol_pct": 14.6,
+            "max_dd_pct": 37.24,
+            "win_rate_pct": 44.6,
+            "pf": 1.029,
+            "edge_bp": 1.013,
+            "msharpe": 0.019,
+            "pos_months": 22,
+            "n_months": 61
+          },
+          "oos": {
+            "trades": 194,
+            "final_equity": 928.38,
+            "return_pct": -7.16,
+            "cagr_pct": -4.54,
+            "sharpe": -0.472,
+            "ann_vol_pct": 7.9,
+            "max_dd_pct": 13.23,
+            "win_rate_pct": 46.4,
+            "pf": 0.872,
+            "edge_bp": -1.843,
+            "msharpe": -0.165,
+            "pos_months": 9,
+            "n_months": 20
+          },
+          "cells": 216,
+          "is_cells_positive": 2
+        },
+        "null": {
+          "params": {
+            "exit_kind": "time",
+            "lookback_days": 14,
+            "k_enter": 1.3,
+            "k_exit": null,
+            "frequency": 45,
+            "start_after": 1,
+            "exit_before": 13
+          },
+          "is": {
+            "trades": 656,
+            "final_equity": 1650.71,
+            "return_pct": 65.07,
+            "cagr_pct": 10.6,
+            "sharpe": 0.638,
+            "ann_vol_pct": 18.3,
+            "max_dd_pct": 16.95,
+            "win_rate_pct": 51.5,
+            "pf": 1.181,
+            "edge_bp": 4.486,
+            "msharpe": 0.13,
+            "pos_months": 34,
+            "n_months": 61
+          },
+          "oos": {
+            "trades": 176,
+            "final_equity": 972.42,
+            "return_pct": -2.76,
+            "cagr_pct": -1.73,
+            "sharpe": -0.263,
+            "ann_vol_pct": 7.7,
+            "max_dd_pct": 13.81,
+            "win_rate_pct": 50.6,
+            "pf": 0.945,
+            "edge_bp": -0.583,
+            "msharpe": -0.078,
+            "pos_months": 10,
+            "n_months": 20
+          },
+          "cells": 216,
+          "is_cells_positive": 18
+        },
+        "sessions": {
+          "is": 1255,
+          "oos": 404
+        },
+        "verdict": "OOS negative"
+      }
+    },
+    {
+      "symbol": "jp225",
+      "session": [
+        60,
+        480
+      ],
+      "shift_hours": 6,
+      "note": null,
+      "drift": {
+        "real": {
+          "params": {
+            "stop_pct": 0.0055,
+            "rr": 1.5,
+            "momentum": 0.002
+          },
+          "is": {
+            "trades": 1902,
+            "final_equity": 901.36,
+            "return_pct": -9.86,
+            "cagr_pct": -2.01,
+            "sharpe": -0.056,
+            "ann_vol_pct": 15.3,
+            "max_dd_pct": 41.26,
+            "win_rate_pct": 46.1,
+            "pf": 0.982,
+            "edge_bp": -0.155,
+            "msharpe": -0.038,
+            "pos_months": 27,
+            "n_months": 61
+          },
+          "oos": {
+            "trades": 689,
+            "final_equity": 869.49,
+            "return_pct": -13.05,
+            "cagr_pct": -8.18,
+            "sharpe": -0.409,
+            "ann_vol_pct": 16.7,
+            "max_dd_pct": 30.57,
+            "win_rate_pct": 43.4,
+            "pf": 0.936,
+            "edge_bp": -1.261,
+            "msharpe": -0.166,
+            "pos_months": 10,
+            "n_months": 20
+          },
+          "cells": 60,
+          "is_cells_positive": 0
+        },
+        "null": {
+          "params": {
+            "stop_pct": 0.008,
+            "rr": 1.5,
+            "momentum": 0.0005
+          },
+          "is": {
+            "trades": 1667,
+            "final_equity": 828.95,
+            "return_pct": -17.11,
+            "cagr_pct": -3.6,
+            "sharpe": -0.235,
+            "ann_vol_pct": 12.2,
+            "max_dd_pct": 34.75,
+            "win_rate_pct": 49.1,
+            "pf": 0.959,
+            "edge_bp": -0.776,
+            "msharpe": -0.096,
+            "pos_months": 26,
+            "n_months": 61
+          },
+          "oos": {
+            "trades": 598,
+            "final_equity": 781.74,
+            "return_pct": -21.83,
+            "cagr_pct": -13.95,
+            "sharpe": -1.226,
+            "ann_vol_pct": 11.5,
+            "max_dd_pct": 23.85,
+            "win_rate_pct": 44.5,
+            "pf": 0.845,
+            "edge_bp": -4.722,
+            "msharpe": -0.405,
+            "pos_months": 7,
+            "n_months": 20
+          },
+          "cells": 60,
+          "is_cells_positive": 0
+        },
+        "sessions": {
+          "is": 1291,
+          "oos": 414
+        },
+        "verdict": "OOS negative"
+      },
+      "maroy": {
+        "real": {
+          "params": {
+            "exit_kind": "time",
+            "lookback_days": 4,
+            "k_enter": 1.0,
+            "k_exit": null,
+            "frequency": 45,
+            "start_after": 1,
+            "exit_before": 13
+          },
+          "is": {
+            "trades": 915,
+            "final_equity": 1676.82,
+            "return_pct": 67.68,
+            "cagr_pct": 10.63,
+            "sharpe": 0.582,
+            "ann_vol_pct": 21.2,
+            "max_dd_pct": 26.79,
+            "win_rate_pct": 51.5,
+            "pf": 1.087,
+            "edge_bp": 3.562,
+            "msharpe": 0.138,
+            "pos_months": 31,
+            "n_months": 61
+          },
+          "oos": {
+            "trades": 283,
+            "final_equity": 789.08,
+            "return_pct": -21.09,
+            "cagr_pct": -13.49,
+            "sharpe": -0.658,
+            "ann_vol_pct": 19.2,
+            "max_dd_pct": 27.46,
+            "win_rate_pct": 49.1,
+            "pf": 0.843,
+            "edge_bp": -3.827,
+            "msharpe": -0.345,
+            "pos_months": 6,
+            "n_months": 20
+          },
+          "cells": 216,
+          "is_cells_positive": 79
+        },
+        "null": {
+          "params": {
+            "exit_kind": "time",
+            "lookback_days": 4,
+            "k_enter": 1.0,
+            "k_exit": null,
+            "frequency": 30,
+            "start_after": 1,
+            "exit_before": 13
+          },
+          "is": {
+            "trades": 975,
+            "final_equity": 733.66,
+            "return_pct": -26.63,
+            "cagr_pct": -5.88,
+            "sharpe": -0.183,
+            "ann_vol_pct": 20.9,
+            "max_dd_pct": 51.65,
+            "win_rate_pct": 48.6,
+            "pf": 0.939,
+            "edge_bp": -0.884,
+            "msharpe": -0.082,
+            "pos_months": 29,
+            "n_months": 61
+          },
+          "oos": {
+            "trades": 293,
+            "final_equity": 709.04,
+            "return_pct": -29.1,
+            "cagr_pct": -18.97,
+            "sharpe": -0.935,
+            "ann_vol_pct": 20.3,
+            "max_dd_pct": 38.7,
+            "win_rate_pct": 45.7,
+            "pf": 0.814,
+            "edge_bp": -6.453,
+            "msharpe": -0.277,
+            "pos_months": 10,
+            "n_months": 20
+          },
+          "cells": 216,
+          "is_cells_positive": 0
+        },
+        "sessions": {
+          "is": 1290,
+          "oos": 413
+        },
+        "verdict": "OOS negative"
+      }
+    },
+    {
+      "symbol": "hk50",
+      "session": [
+        180,
+        600
+      ],
+      "shift_hours": 6,
+      "note": null,
+      "drift": {
+        "real": {
+          "params": {
+            "stop_pct": 0.008,
+            "rr": 1.5,
+            "momentum": 0.001
+          },
+          "is": {
+            "trades": 1691,
+            "final_equity": 1266.45,
+            "return_pct": 26.65,
+            "cagr_pct": 4.97,
+            "sharpe": 0.436,
+            "ann_vol_pct": 13.3,
+            "max_dd_pct": 21.93,
+            "win_rate_pct": 49.1,
+            "pf": 1.052,
+            "edge_bp": 1.395,
+            "msharpe": 0.122,
+            "pos_months": 31,
+            "n_months": 61
+          },
+          "oos": {
+            "trades": 504,
+            "final_equity": 849.09,
+            "return_pct": -15.09,
+            "cagr_pct": -10.01,
+            "sharpe": -0.796,
+            "ann_vol_pct": 11.8,
+            "max_dd_pct": 21.05,
+            "win_rate_pct": 44.6,
+            "pf": 0.888,
+            "edge_bp": -2.862,
+            "msharpe": -0.341,
+            "pos_months": 6,
+            "n_months": 20
+          },
+          "cells": 60,
+          "is_cells_positive": 10
+        },
+        "null": {
+          "params": {
+            "stop_pct": 0.008,
+            "rr": 1.5,
+            "momentum": 0.0005
+          },
+          "is": {
+            "trades": 1739,
+            "final_equity": 781.91,
+            "return_pct": -21.81,
+            "cagr_pct": -4.92,
+            "sharpe": -0.317,
+            "ann_vol_pct": 13.3,
+            "max_dd_pct": 33.63,
+            "win_rate_pct": 47.3,
+            "pf": 0.951,
+            "edge_bp": -1.009,
+            "msharpe": -0.136,
+            "pos_months": 25,
+            "n_months": 61
+          },
+          "oos": {
+            "trades": 502,
+            "final_equity": 809.0,
+            "return_pct": -19.1,
+            "cagr_pct": -12.77,
+            "sharpe": -1.298,
+            "ann_vol_pct": 10.7,
+            "max_dd_pct": 25.14,
+            "win_rate_pct": 44.6,
+            "pf": 0.839,
+            "edge_bp": -3.289,
+            "msharpe": -0.338,
+            "pos_months": 9,
+            "n_months": 20
+          },
+          "cells": 60,
+          "is_cells_positive": 0
+        },
+        "sessions": {
+          "is": 1229,
+          "oos": 392
+        },
+        "verdict": "OOS negative"
+      },
+      "maroy": {
+        "real": {
+          "params": {
+            "exit_kind": "boundary",
+            "lookback_days": 14,
+            "k_enter": 1.0,
+            "k_exit": 0.78,
+            "frequency": 30,
+            "start_after": 1,
+            "exit_before": 32
+          },
+          "is": {
+            "trades": 1471,
+            "final_equity": 2330.77,
+            "return_pct": 133.08,
+            "cagr_pct": 19.2,
+            "sharpe": 1.072,
+            "ann_vol_pct": 17.9,
+            "max_dd_pct": 19.01,
+            "win_rate_pct": 28.4,
+            "pf": 1.265,
+            "edge_bp": 3.204,
+            "msharpe": 0.263,
+            "pos_months": 34,
+            "n_months": 61
+          },
+          "oos": {
+            "trades": 493,
+            "final_equity": 890.8,
+            "return_pct": -10.92,
+            "cagr_pct": -7.27,
+            "sharpe": -0.445,
+            "ann_vol_pct": 14.5,
+            "max_dd_pct": 16.49,
+            "win_rate_pct": 25.2,
+            "pf": 0.904,
+            "edge_bp": -1.126,
+            "msharpe": -0.19,
+            "pos_months": 6,
+            "n_months": 20
+          },
+          "cells": 216,
+          "is_cells_positive": 195
+        },
+        "null": {
+          "params": {
+            "exit_kind": "vwap",
+            "lookback_days": 8,
+            "k_enter": 1.0,
+            "k_exit": null,
+            "frequency": 15,
+            "start_after": 1,
+            "exit_before": 32
+          },
+          "is": {
+            "trades": 3391,
+            "final_equity": 1134.72,
+            "return_pct": 13.47,
+            "cagr_pct": 2.66,
+            "sharpe": 0.242,
+            "ann_vol_pct": 16.9,
+            "max_dd_pct": 40.74,
+            "win_rate_pct": 32.8,
+            "pf": 1.028,
+            "edge_bp": 0.283,
+            "msharpe": 0.046,
+            "pos_months": 30,
+            "n_months": 61
+          },
+          "oos": {
+            "trades": 1175,
+            "final_equity": 593.58,
+            "return_pct": -40.64,
+            "cagr_pct": -28.86,
+            "sharpe": -2.481,
+            "ann_vol_pct": 13.3,
+            "max_dd_pct": 40.64,
+            "win_rate_pct": 29.4,
+            "pf": 0.698,
+            "edge_bp": -2.39,
+            "msharpe": -0.85,
+            "pos_months": 3,
+            "n_months": 20
+          },
+          "cells": 216,
+          "is_cells_positive": 17
+        },
+        "sessions": {
+          "is": 1215,
+          "oos": 387
+        },
+        "verdict": "OOS negative"
+      }
+    },
+    {
+      "symbol": "xagusd",
+      "session": [
+        480,
+        960
+      ],
+      "shift_hours": 0,
+      "note": null,
+      "drift": {
+        "real": {
+          "params": {
+            "stop_pct": 0.0055,
+            "rr": 1.5,
+            "momentum": 0.0005
+          },
+          "is": {
+            "trades": 3079,
+            "final_equity": 514.5,
+            "return_pct": -48.55,
+            "cagr_pct": -12.17,
+            "sharpe": -0.328,
+            "ann_vol_pct": 27.4,
+            "max_dd_pct": 56.64,
+            "win_rate_pct": 43.1,
+            "pf": 0.955,
+            "edge_bp": -0.848,
+            "msharpe": -0.167,
+            "pos_months": 24,
+            "n_months": 60
+          },
+          "oos": {
+            "trades": 1029,
+            "final_equity": 435.9,
+            "return_pct": -56.41,
+            "cagr_pct": -39.82,
+            "sharpe": -1.718,
+            "ann_vol_pct": 27.7,
+            "max_dd_pct": 59.46,
+            "win_rate_pct": 40.5,
+            "pf": 0.862,
+            "edge_bp": -4.073,
+            "msharpe": -0.547,
+            "pos_months": 6,
+            "n_months": 20
+          },
+          "cells": 60,
+          "is_cells_positive": 0
+        },
+        "null": {
+          "params": {
+            "stop_pct": 0.0055,
+            "rr": 1.5,
+            "momentum": 0.002
+          },
+          "is": {
+            "trades": 3050,
+            "final_equity": 493.9,
+            "return_pct": -50.61,
+            "cagr_pct": -12.87,
+            "sharpe": -0.391,
+            "ann_vol_pct": 26.5,
+            "max_dd_pct": 54.97,
+            "win_rate_pct": 43.5,
+            "pf": 0.956,
+            "edge_bp": -0.934,
+            "msharpe": -0.144,
+            "pos_months": 26,
+            "n_months": 60
+          },
+          "oos": {
+            "trades": 1013,
+            "final_equity": 499.61,
+            "return_pct": -50.04,
+            "cagr_pct": -34.59,
+            "sharpe": -1.379,
+            "ann_vol_pct": 27.9,
+            "max_dd_pct": 53.1,
+            "win_rate_pct": 41.1,
+            "pf": 0.885,
+            "edge_bp": -3.397,
+            "msharpe": -0.357,
+            "pos_months": 7,
+            "n_months": 20
+          },
+          "cells": 60,
+          "is_cells_positive": 0
+        },
+        "sessions": {
+          "is": 1291,
+          "oos": 413
+        },
+        "verdict": "OOS negative"
+      },
+      "maroy": {
+        "real": {
+          "params": {
+            "exit_kind": "time",
+            "lookback_days": 4,
+            "k_enter": 1.3,
+            "k_exit": null,
+            "frequency": 45,
+            "start_after": 1,
+            "exit_before": 15
+          },
+          "is": {
+            "trades": 860,
+            "final_equity": 1567.72,
+            "return_pct": 56.77,
+            "cagr_pct": 9.18,
+            "sharpe": 0.422,
+            "ann_vol_pct": 34.5,
+            "max_dd_pct": 58.19,
+            "win_rate_pct": 48.7,
+            "pf": 1.058,
+            "edge_bp": 4.372,
+            "msharpe": 0.091,
+            "pos_months": 33,
+            "n_months": 60
+          },
+          "oos": {
+            "trades": 280,
+            "final_equity": 1030.83,
+            "return_pct": 3.08,
+            "cagr_pct": 1.87,
+            "sharpe": 0.268,
+            "ann_vol_pct": 48.1,
+            "max_dd_pct": 34.68,
+            "win_rate_pct": 47.5,
+            "pf": 1.008,
+            "edge_bp": 3.761,
+            "msharpe": 0.013,
+            "pos_months": 9,
+            "n_months": 20
+          },
+          "cells": 216,
+          "is_cells_positive": 3
+        },
+        "null": {
+          "params": {
+            "exit_kind": "time",
+            "lookback_days": 4,
+            "k_enter": 0.85,
+            "k_exit": null,
+            "frequency": 15,
+            "start_after": 1,
+            "exit_before": 15
+          },
+          "is": {
+            "trades": 1157,
+            "final_equity": 3927.0,
+            "return_pct": 292.7,
+            "cagr_pct": 30.63,
+            "sharpe": 0.852,
+            "ann_vol_pct": 41.9,
+            "max_dd_pct": 32.52,
+            "win_rate_pct": 52.6,
+            "pf": 1.098,
+            "edge_bp": 7.857,
+            "msharpe": 0.137,
+            "pos_months": 36,
+            "n_months": 60
+          },
+          "oos": {
+            "trades": 363,
+            "final_equity": 471.28,
+            "return_pct": -52.87,
+            "cagr_pct": -36.88,
+            "sharpe": -0.575,
+            "ann_vol_pct": 54.9,
+            "max_dd_pct": 69.12,
+            "win_rate_pct": 44.9,
+            "pf": 0.826,
+            "edge_bp": -7.087,
+            "msharpe": -0.239,
+            "pos_months": 9,
+            "n_months": 20
+          },
+          "cells": 216,
+          "is_cells_positive": 47
+        },
+        "sessions": {
+          "is": 1291,
+          "oos": 413
+        },
+        "verdict": "candidate"
+      }
+    },
+    {
+      "symbol": "ukoil",
+      "session": [
+        540,
+        870
+      ],
+      "shift_hours": 0,
+      "note": null,
+      "drift": {
+        "real": {
+          "params": {
+            "stop_pct": 0.008,
+            "rr": 1.5,
+            "momentum": 0.002
+          },
+          "is": {
+            "trades": 2373,
+            "final_equity": 958.42,
+            "return_pct": -4.16,
+            "cagr_pct": -0.83,
+            "sharpe": 0.069,
+            "ann_vol_pct": 21.4,
+            "max_dd_pct": 38.54,
+            "win_rate_pct": 45.6,
+            "pf": 0.996,
+            "edge_bp": 0.266,
+            "msharpe": -0.012,
+            "pos_months": 29,
+            "n_months": 60
+          },
+          "oos": {
+            "trades": 697,
+            "final_equity": 862.51,
+            "return_pct": -13.75,
+            "cagr_pct": -8.65,
+            "sharpe": -0.372,
+            "ann_vol_pct": 18.6,
+            "max_dd_pct": 41.71,
+            "win_rate_pct": 44.8,
+            "pf": 0.944,
+            "edge_bp": -1.322,
+            "msharpe": -0.141,
+            "pos_months": 8,
+            "n_months": 20
+          },
+          "cells": 60,
+          "is_cells_positive": 0
+        },
+        "null": {
+          "params": {
+            "stop_pct": 0.008,
+            "rr": 1.5,
+            "momentum": 0.0005
+          },
+          "is": {
+            "trades": 2376,
+            "final_equity": 2779.6,
+            "return_pct": 177.96,
+            "cagr_pct": 22.1,
+            "sharpe": 1.019,
+            "ann_vol_pct": 21.9,
+            "max_dd_pct": 26.28,
+            "win_rate_pct": 48.2,
+            "pf": 1.112,
+            "edge_bp": 3.857,
+            "msharpe": 0.285,
+            "pos_months": 37,
+            "n_months": 60
+          },
+          "oos": {
+            "trades": 730,
+            "final_equity": 903.73,
+            "return_pct": -9.63,
+            "cagr_pct": -6.0,
+            "sharpe": -0.228,
+            "ann_vol_pct": 20.0,
+            "max_dd_pct": 16.91,
+            "win_rate_pct": 45.3,
+            "pf": 0.968,
+            "edge_bp": -0.718,
+            "msharpe": -0.146,
+            "pos_months": 8,
+            "n_months": 20
+          },
+          "cells": 60,
+          "is_cells_positive": 8
+        },
+        "sessions": {
+          "is": 1291,
+          "oos": 413
+        },
+        "verdict": "OOS negative"
+      },
+      "maroy": {
+        "real": {
+          "params": {
+            "exit_kind": "time",
+            "lookback_days": 14,
+            "k_enter": 1.3,
+            "k_exit": null,
+            "frequency": 30,
+            "start_after": 1,
+            "exit_before": 25
+          },
+          "is": {
+            "trades": 751,
+            "final_equity": 1516.48,
+            "return_pct": 51.65,
+            "cagr_pct": 8.47,
+            "sharpe": 0.408,
+            "ann_vol_pct": 37.8,
+            "max_dd_pct": 49.5,
+            "win_rate_pct": 51.7,
+            "pf": 1.05,
+            "edge_bp": 5.194,
+            "msharpe": 0.058,
+            "pos_months": 33,
+            "n_months": 60
+          },
+          "oos": {
+            "trades": 246,
+            "final_equity": 625.8,
+            "return_pct": -37.42,
+            "cagr_pct": -24.93,
+            "sharpe": -0.692,
+            "ann_vol_pct": 33.5,
+            "max_dd_pct": 41.65,
+            "win_rate_pct": 47.6,
+            "pf": 0.791,
+            "edge_bp": -7.645,
+            "msharpe": -0.328,
+            "pos_months": 8,
+            "n_months": 20
+          },
+          "cells": 216,
+          "is_cells_positive": 30
+        },
+        "null": {
+          "params": {
+            "exit_kind": "time",
+            "lookback_days": 4,
+            "k_enter": 1.3,
+            "k_exit": null,
+            "frequency": 15,
+            "start_after": 1,
+            "exit_before": 10
+          },
+          "is": {
+            "trades": 897,
+            "final_equity": 3816.56,
+            "return_pct": 281.66,
+            "cagr_pct": 29.91,
+            "sharpe": 0.849,
+            "ann_vol_pct": 40.4,
+            "max_dd_pct": 62.68,
+            "win_rate_pct": 52.4,
+            "pf": 1.115,
+            "edge_bp": 9.763,
+            "msharpe": 0.12,
+            "pos_months": 29,
+            "n_months": 60
+          },
+          "oos": {
+            "trades": 288,
+            "final_equity": 314.21,
+            "return_pct": -68.58,
+            "cagr_pct": -50.74,
+            "sharpe": -1.851,
+            "ann_vol_pct": 34.8,
+            "max_dd_pct": 73.4,
+            "win_rate_pct": 43.4,
+            "pf": 0.613,
+            "edge_bp": -18.337,
+            "msharpe": -1.089,
+            "pos_months": 3,
+            "n_months": 20
+          },
+          "cells": 216,
+          "is_cells_positive": 7
+        },
+        "sessions": {
+          "is": 1291,
+          "oos": 413
+        },
+        "verdict": "OOS negative"
+      }
+    },
+    {
+      "symbol": "xngusd",
+      "session": [
+        540,
+        870
+      ],
+      "shift_hours": 0,
+      "note": null,
+      "drift": {
+        "real": {
+          "params": {
+            "stop_pct": 0.008,
+            "rr": 1.5,
+            "momentum": 0.001
+          },
+          "is": {
+            "trades": 2909,
+            "final_equity": 1533.56,
+            "return_pct": 53.36,
+            "cagr_pct": 8.71,
+            "sharpe": 0.426,
+            "ann_vol_pct": 27.7,
+            "max_dd_pct": 49.11,
+            "win_rate_pct": 43.6,
+            "pf": 1.023,
+            "edge_bp": 1.73,
+            "msharpe": 0.077,
+            "pos_months": 30,
+            "n_months": 60
+          },
+          "oos": {
+            "trades": 951,
+            "final_equity": 1164.03,
+            "return_pct": 16.4,
+            "cagr_pct": 9.74,
+            "sharpe": 0.481,
+            "ann_vol_pct": 28.4,
+            "max_dd_pct": 21.45,
+            "win_rate_pct": 44.1,
+            "pf": 1.03,
+            "edge_bp": 1.799,
+            "msharpe": 0.113,
+            "pos_months": 11,
+            "n_months": 20
+          },
+          "cells": 60,
+          "is_cells_positive": 3
+        },
+        "null": {
+          "params": {
+            "stop_pct": 0.008,
+            "rr": 1.0,
+            "momentum": 0.0005
+          },
+          "is": {
+            "trades": 3263,
+            "final_equity": 295.58,
+            "return_pct": -70.44,
+            "cagr_pct": -21.19,
+            "sharpe": -0.809,
+            "ann_vol_pct": 25.0,
+            "max_dd_pct": 78.69,
+            "win_rate_pct": 49.6,
+            "pf": 0.897,
+            "edge_bp": -2.594,
+            "msharpe": -0.324,
+            "pos_months": 21,
+            "n_months": 60
+          },
+          "oos": {
+            "trades": 1116,
+            "final_equity": 744.69,
+            "return_pct": -25.53,
+            "cagr_pct": -16.5,
+            "sharpe": -0.625,
+            "ann_vol_pct": 25.5,
+            "max_dd_pct": 43.75,
+            "win_rate_pct": 49.7,
+            "pf": 0.947,
+            "edge_bp": -1.742,
+            "msharpe": -0.194,
+            "pos_months": 6,
+            "n_months": 20
+          },
+          "cells": 60,
+          "is_cells_positive": 0
+        },
+        "sessions": {
+          "is": 1291,
+          "oos": 413
+        },
+        "verdict": "candidate"
+      },
+      "maroy": {
+        "real": {
+          "params": {
+            "exit_kind": "boundary",
+            "lookback_days": 8,
+            "k_enter": 1.3,
+            "k_exit": 0.78,
+            "frequency": 15,
+            "start_after": 1,
+            "exit_before": 25
+          },
+          "is": {
+            "trades": 1467,
+            "final_equity": 2518.4,
+            "return_pct": 151.84,
+            "cagr_pct": 19.77,
+            "sharpe": 0.635,
+            "ann_vol_pct": 39.6,
+            "max_dd_pct": 48.82,
+            "win_rate_pct": 29.8,
+            "pf": 1.083,
+            "edge_bp": 4.471,
+            "msharpe": 0.121,
+            "pos_months": 34,
+            "n_months": 60
+          },
+          "oos": {
+            "trades": 482,
+            "final_equity": 900.76,
+            "return_pct": -9.92,
+            "cagr_pct": -6.19,
+            "sharpe": 0.038,
+            "ann_vol_pct": 37.3,
+            "max_dd_pct": 33.12,
+            "win_rate_pct": 25.7,
+            "pf": 0.961,
+            "edge_bp": -0.04,
+            "msharpe": -0.074,
+            "pos_months": 10,
+            "n_months": 20
+          },
+          "cells": 216,
+          "is_cells_positive": 66
+        },
+        "null": {
+          "params": {
+            "exit_kind": "boundary",
+            "lookback_days": 8,
+            "k_enter": 1.3,
+            "k_exit": 0.78,
+            "frequency": 15,
+            "start_after": 1,
+            "exit_before": 25
+          },
+          "is": {
+            "trades": 2046,
+            "final_equity": 1542.51,
+            "return_pct": 54.25,
+            "cagr_pct": 8.84,
+            "sharpe": 0.408,
+            "ann_vol_pct": 35.4,
+            "max_dd_pct": 50.57,
+            "win_rate_pct": 38.4,
+            "pf": 1.042,
+            "edge_bp": 1.824,
+            "msharpe": 0.063,
+            "pos_months": 29,
+            "n_months": 60
+          },
+          "oos": {
+            "trades": 682,
+            "final_equity": 798.67,
+            "return_pct": -20.13,
+            "cagr_pct": -12.85,
+            "sharpe": -0.254,
+            "ann_vol_pct": 30.2,
+            "max_dd_pct": 31.16,
+            "win_rate_pct": 35.8,
+            "pf": 0.917,
+            "edge_bp": -1.122,
+            "msharpe": -0.171,
+            "pos_months": 9,
+            "n_months": 20
+          },
+          "cells": 216,
+          "is_cells_positive": 4
+        },
+        "sessions": {
+          "is": 1291,
+          "oos": 413
+        },
+        "verdict": "OOS negative"
+      }
+    },
+    {
+      "symbol": "xcuusd",
+      "session": [
+        480,
+        870
+      ],
+      "shift_hours": 0,
+      "note": "QuestDB quote scale (2.8-6.6) differs from live MT5 (~14,000)",
+      "drift": {
+        "real": {
+          "params": {
+            "stop_pct": 0.008,
+            "rr": 1.5,
+            "momentum": 0.002
+          },
+          "is": {
+            "trades": 1727,
+            "final_equity": 605.36,
+            "return_pct": -39.46,
+            "cagr_pct": -9.34,
+            "sharpe": -0.6,
+            "ann_vol_pct": 14.3,
+            "max_dd_pct": 39.46,
+            "win_rate_pct": 46.1,
+            "pf": 0.91,
+            "edge_bp": -2.075,
+            "msharpe": -0.209,
+            "pos_months": 26,
+            "n_months": 60
+          },
+          "oos": {
+            "trades": 604,
+            "final_equity": 998.14,
+            "return_pct": -0.19,
+            "cagr_pct": -0.11,
+            "sharpe": 0.052,
+            "ann_vol_pct": 15.2,
+            "max_dd_pct": 15.24,
+            "win_rate_pct": 48.5,
+            "pf": 0.999,
+            "edge_bp": 0.262,
+            "msharpe": -0.002,
+            "pos_months": 10,
+            "n_months": 20
+          },
+          "cells": 60,
+          "is_cells_positive": 0
+        },
+        "null": {
+          "params": {
+            "stop_pct": 0.008,
+            "rr": 1.5,
+            "momentum": 0.0005
+          },
+          "is": {
+            "trades": 1785,
+            "final_equity": 737.62,
+            "return_pct": -26.24,
+            "cagr_pct": -5.77,
+            "sharpe": -0.333,
+            "ann_vol_pct": 15.0,
+            "max_dd_pct": 42.76,
+            "win_rate_pct": 47.3,
+            "pf": 0.949,
+            "edge_bp": -1.105,
+            "msharpe": -0.115,
+            "pos_months": 32,
+            "n_months": 60
+          },
+          "oos": {
+            "trades": 641,
+            "final_equity": 859.21,
+            "return_pct": -14.08,
+            "cagr_pct": -8.86,
+            "sharpe": -0.498,
+            "ann_vol_pct": 16.3,
+            "max_dd_pct": 23.26,
+            "win_rate_pct": 45.6,
+            "pf": 0.935,
+            "edge_bp": -1.596,
+            "msharpe": -0.181,
+            "pos_months": 9,
+            "n_months": 20
+          },
+          "cells": 60,
+          "is_cells_positive": 0
+        },
+        "sessions": {
+          "is": 1291,
+          "oos": 413
+        },
+        "verdict": "OOS negative"
+      },
+      "maroy": {
+        "real": {
+          "params": {
+            "exit_kind": "time",
+            "lookback_days": 14,
+            "k_enter": 1.0,
+            "k_exit": null,
+            "frequency": 30,
+            "start_after": 1,
+            "exit_before": 30
+          },
+          "is": {
+            "trades": 933,
+            "final_equity": 906.77,
+            "return_pct": -9.32,
+            "cagr_pct": -1.89,
+            "sharpe": 0.028,
+            "ann_vol_pct": 23.2,
+            "max_dd_pct": 44.22,
+            "win_rate_pct": 49.1,
+            "pf": 0.985,
+            "edge_bp": 0.213,
+            "msharpe": -0.023,
+            "pos_months": 28,
+            "n_months": 60
+          },
+          "oos": {
+            "trades": 304,
+            "final_equity": 502.89,
+            "return_pct": -49.71,
+            "cagr_pct": -34.32,
+            "sharpe": -1.155,
+            "ann_vol_pct": 31.7,
+            "max_dd_pct": 61.12,
+            "win_rate_pct": 46.4,
+            "pf": 0.725,
+            "edge_bp": -9.883,
+            "msharpe": -0.474,
+            "pos_months": 9,
+            "n_months": 20
+          },
+          "cells": 216,
+          "is_cells_positive": 0
+        },
+        "null": {
+          "params": {
+            "exit_kind": "time",
+            "lookback_days": 14,
+            "k_enter": 0.85,
+            "k_exit": null,
+            "frequency": 30,
+            "start_after": 1,
+            "exit_before": 12
+          },
+          "is": {
+            "trades": 1001,
+            "final_equity": 2461.85,
+            "return_pct": 146.18,
+            "cagr_pct": 19.24,
+            "sharpe": 0.852,
+            "ann_vol_pct": 24.3,
+            "max_dd_pct": 28.26,
+            "win_rate_pct": 51.7,
+            "pf": 1.143,
+            "edge_bp": 5.254,
+            "msharpe": 0.164,
+            "pos_months": 30,
+            "n_months": 60
+          },
+          "oos": {
+            "trades": 330,
+            "final_equity": 333.03,
+            "return_pct": -66.7,
+            "cagr_pct": -48.96,
+            "sharpe": -1.35,
+            "ann_vol_pct": 42.3,
+            "max_dd_pct": 75.88,
+            "win_rate_pct": 47.6,
+            "pf": 0.583,
+            "edge_bp": -14.168,
+            "msharpe": -0.473,
+            "pos_months": 8,
+            "n_months": 20
+          },
+          "cells": 216,
+          "is_cells_positive": 41
+        },
+        "sessions": {
+          "is": 1291,
+          "oos": 413
+        },
+        "verdict": "OOS negative"
+      }
+    },
+    {
+      "symbol": "xpdusd",
+      "session": [
+        480,
+        960
+      ],
+      "shift_hours": 0,
+      "note": null,
+      "drift": {
+        "real": {
+          "params": {
+            "stop_pct": 0.0055,
+            "rr": 1.5,
+            "momentum": 0.002
+          },
+          "is": {
+            "trades": 2553,
+            "final_equity": 194.9,
+            "return_pct": -80.51,
+            "cagr_pct": -36.67,
+            "sharpe": -1.295,
+            "ann_vol_pct": 31.4,
+            "max_dd_pct": 83.59,
+            "win_rate_pct": 40.7,
+            "pf": 0.899,
+            "edge_bp": -3.157,
+            "msharpe": -0.303,
+            "pos_months": 14,
+            "n_months": 60
+          },
+          "oos": {
+            "trades": 1104,
+            "final_equity": 511.52,
+            "return_pct": -48.85,
+            "cagr_pct": -33.64,
+            "sharpe": -1.113,
+            "ann_vol_pct": 31.9,
+            "max_dd_pct": 62.59,
+            "win_rate_pct": 40.7,
+            "pf": 0.926,
+            "edge_bp": -2.983,
+            "msharpe": -0.224,
+            "pos_months": 8,
+            "n_months": 20
+          },
+          "cells": 60,
+          "is_cells_positive": 0
+        },
+        "null": {
+          "params": {
+            "stop_pct": 0.004,
+            "rr": 1.5,
+            "momentum": 0.002
+          },
+          "is": {
+            "trades": 2723,
+            "final_equity": 901.65,
+            "return_pct": -9.83,
+            "cagr_pct": -2.85,
+            "sharpe": 0.099,
+            "ann_vol_pct": 36.2,
+            "max_dd_pct": 44.35,
+            "win_rate_pct": 43.2,
+            "pf": 0.994,
+            "edge_bp": 0.191,
+            "msharpe": -0.02,
+            "pos_months": 20,
+            "n_months": 60
+          },
+          "oos": {
+            "trades": 1167,
+            "final_equity": 291.11,
+            "return_pct": -70.89,
+            "cagr_pct": -52.99,
+            "sharpe": -2.072,
+            "ann_vol_pct": 33.5,
+            "max_dd_pct": 71.11,
+            "win_rate_pct": 39.4,
+            "pf": 0.829,
+            "edge_bp": -3.935,
+            "msharpe": -0.858,
+            "pos_months": 3,
+            "n_months": 20
+          },
+          "cells": 60,
+          "is_cells_positive": 0
+        },
+        "sessions": {
+          "is": 903,
+          "oos": 413
+        },
+        "verdict": "OOS negative"
+      },
+      "maroy": {
+        "real": {
+          "params": {
+            "exit_kind": "time",
+            "lookback_days": 4,
+            "k_enter": 1.0,
+            "k_exit": null,
+            "frequency": 15,
+            "start_after": 1,
+            "exit_before": 36
+          },
+          "is": {
+            "trades": 709,
+            "final_equity": 5116.79,
+            "return_pct": 411.68,
+            "cagr_pct": 58.19,
+            "sharpe": 1.133,
+            "ann_vol_pct": 52.9,
+            "max_dd_pct": 52.34,
+            "win_rate_pct": 53.6,
+            "pf": 1.179,
+            "edge_bp": 15.105,
+            "msharpe": 0.164,
+            "pos_months": 24,
+            "n_months": 60
+          },
+          "oos": {
+            "trades": 342,
+            "final_equity": 502.58,
+            "return_pct": -49.74,
+            "cagr_pct": -34.42,
+            "sharpe": -0.504,
+            "ann_vol_pct": 53.9,
+            "max_dd_pct": 65.66,
+            "win_rate_pct": 48.8,
+            "pf": 0.877,
+            "edge_bp": -6.562,
+            "msharpe": -0.153,
+            "pos_months": 9,
+            "n_months": 20
+          },
+          "cells": 216,
+          "is_cells_positive": 44
+        },
+        "null": {
+          "params": {
+            "exit_kind": "time",
+            "lookback_days": 4,
+            "k_enter": 0.85,
+            "k_exit": null,
+            "frequency": 15,
+            "start_after": 1,
+            "exit_before": 15
+          },
+          "is": {
+            "trades": 747,
+            "final_equity": 384.31,
+            "return_pct": -61.57,
+            "cagr_pct": -23.56,
+            "sharpe": -0.204,
+            "ann_vol_pct": 55.5,
+            "max_dd_pct": 78.01,
+            "win_rate_pct": 49.0,
+            "pf": 0.897,
+            "edge_bp": -2.647,
+            "msharpe": -0.144,
+            "pos_months": 20,
+            "n_months": 60
+          },
+          "oos": {
+            "trades": 353,
+            "final_equity": 225.6,
+            "return_pct": -77.44,
+            "cagr_pct": -59.87,
+            "sharpe": -1.309,
+            "ann_vol_pct": 57.0,
+            "max_dd_pct": 78.26,
+            "win_rate_pct": 45.9,
+            "pf": 0.714,
+            "edge_bp": -17.356,
+            "msharpe": -0.474,
+            "pos_months": 8,
+            "n_months": 20
+          },
+          "cells": 216,
+          "is_cells_positive": 0
+        },
+        "sessions": {
+          "is": 898,
+          "oos": 412
+        },
+        "verdict": "OOS negative"
+      }
+    },
+    {
+      "symbol": "xptusd",
+      "session": [
+        480,
+        960
+      ],
+      "shift_hours": 0,
+      "note": null,
+      "drift": {
+        "real": {
+          "params": {
+            "stop_pct": 0.004,
+            "rr": 1.0,
+            "momentum": 0.002
+          },
+          "is": {
+            "trades": 2561,
+            "final_equity": 694.9,
+            "return_pct": -30.51,
+            "cagr_pct": -10.63,
+            "sharpe": -0.327,
+            "ann_vol_pct": 27.0,
+            "max_dd_pct": 39.38,
+            "win_rate_pct": 52.0,
+            "pf": 0.973,
+            "edge_bp": -0.376,
+            "msharpe": -0.096,
+            "pos_months": 14,
+            "n_months": 60
+          },
+          "oos": {
+            "trades": 1266,
+            "final_equity": 207.61,
+            "return_pct": -79.24,
+            "cagr_pct": -61.77,
+            "sharpe": -3.308,
+            "ann_vol_pct": 27.5,
+            "max_dd_pct": 79.24,
+            "win_rate_pct": 46.7,
+            "pf": 0.815,
+            "edge_bp": -4.797,
+            "msharpe": -0.836,
+            "pos_months": 5,
+            "n_months": 20
+          },
+          "cells": 60,
+          "is_cells_positive": 0
+        },
+        "null": {
+          "params": {
+            "stop_pct": 0.008,
+            "rr": 1.0,
+            "momentum": 0.001
+          },
+          "is": {
+            "trades": 1779,
+            "final_equity": 887.57,
+            "return_pct": -11.24,
+            "cagr_pct": -3.62,
+            "sharpe": -0.126,
+            "ann_vol_pct": 19.6,
+            "max_dd_pct": 45.25,
+            "win_rate_pct": 50.0,
+            "pf": 0.98,
+            "edge_bp": -0.266,
+            "msharpe": -0.039,
+            "pos_months": 18,
+            "n_months": 60
+          },
+          "oos": {
+            "trades": 1068,
+            "final_equity": 876.19,
+            "return_pct": -12.38,
+            "cagr_pct": -7.77,
+            "sharpe": -0.231,
+            "ann_vol_pct": 22.9,
+            "max_dd_pct": 27.52,
+            "win_rate_pct": 49.5,
+            "pf": 0.97,
+            "edge_bp": -0.67,
+            "msharpe": -0.109,
+            "pos_months": 9,
+            "n_months": 20
+          },
+          "cells": 60,
+          "is_cells_positive": 0
+        },
+        "sessions": {
+          "is": 817,
+          "oos": 413
+        },
+        "verdict": "OOS negative"
+      },
+      "maroy": {
+        "real": {
+          "params": {
+            "exit_kind": "boundary",
+            "lookback_days": 4,
+            "k_enter": 1.3,
+            "k_exit": 0.78,
+            "frequency": 45,
+            "start_after": 1,
+            "exit_before": 36
+          },
+          "is": {
+            "trades": 811,
+            "final_equity": 1834.89,
+            "return_pct": 83.49,
+            "cagr_pct": 20.62,
+            "sharpe": 1.068,
+            "ann_vol_pct": 19.3,
+            "max_dd_pct": 12.66,
+            "win_rate_pct": 37.1,
+            "pf": 1.215,
+            "edge_bp": 4.115,
+            "msharpe": 0.324,
+            "pos_months": 25,
+            "n_months": 60
+          },
+          "oos": {
+            "trades": 416,
+            "final_equity": 1060.85,
+            "return_pct": 6.09,
+            "cagr_pct": 3.68,
+            "sharpe": 0.286,
+            "ann_vol_pct": 27.4,
+            "max_dd_pct": 40.34,
+            "win_rate_pct": 29.8,
+            "pf": 1.026,
+            "edge_bp": 1.437,
+            "msharpe": 0.028,
+            "pos_months": 14,
+            "n_months": 20
+          },
+          "cells": 216,
+          "is_cells_positive": 90
+        },
+        "null": {
+          "params": {
+            "exit_kind": "time",
+            "lookback_days": 4,
+            "k_enter": 1.0,
+            "k_exit": null,
+            "frequency": 15,
+            "start_after": 1,
+            "exit_before": 15
+          },
+          "is": {
+            "trades": 673,
+            "final_equity": 3833.65,
+            "return_pct": 283.36,
+            "cagr_pct": 51.44,
+            "sharpe": 1.356,
+            "ann_vol_pct": 35.2,
+            "max_dd_pct": 36.84,
+            "win_rate_pct": 51.4,
+            "pf": 1.228,
+            "edge_bp": 11.499,
+            "msharpe": 0.248,
+            "pos_months": 23,
+            "n_months": 60
+          },
+          "oos": {
+            "trades": 348,
+            "final_equity": 536.98,
+            "return_pct": -46.3,
+            "cagr_pct": -31.64,
+            "sharpe": -0.55,
+            "ann_vol_pct": 48.8,
+            "max_dd_pct": 56.84,
+            "win_rate_pct": 47.4,
+            "pf": 0.852,
+            "edge_bp": -6.122,
+            "msharpe": -0.153,
+            "pos_months": 7,
+            "n_months": 20
+          },
+          "cells": 216,
+          "is_cells_positive": 70
+        },
+        "sessions": {
+          "is": 817,
+          "oos": 413
+        },
+        "verdict": "candidate"
+      }
+    },
+    {
+      "symbol": "ethusd",
+      "session": [
+        570,
+        960
+      ],
+      "shift_hours": 0,
+      "note": null,
+      "drift": {
+        "real": {
+          "params": {
+            "stop_pct": 0.0055,
+            "rr": 1.5,
+            "momentum": 0.002
+          },
+          "is": {
+            "trades": 4846,
+            "final_equity": 3070.68,
+            "return_pct": 207.07,
+            "cagr_pct": 25.14,
+            "sharpe": 0.759,
+            "ann_vol_pct": 40.8,
+            "max_dd_pct": 42.62,
+            "win_rate_pct": 43.4,
+            "pf": 1.04,
+            "edge_bp": 1.729,
+            "msharpe": 0.178,
+            "pos_months": 37,
+            "n_months": 60
+          },
+          "oos": {
+            "trades": 1562,
+            "final_equity": 1722.27,
+            "return_pct": 72.23,
+            "cagr_pct": 40.63,
+            "sharpe": 1.134,
+            "ann_vol_pct": 37.3,
+            "max_dd_pct": 36.15,
+            "win_rate_pct": 44.4,
+            "pf": 1.052,
+            "edge_bp": 2.322,
+            "msharpe": 0.235,
+            "pos_months": 12,
+            "n_months": 20
+          },
+          "cells": 60,
+          "is_cells_positive": 9
+        },
+        "null": {
+          "params": {
+            "stop_pct": 0.0055,
+            "rr": 1.5,
+            "momentum": 0.002
+          },
+          "is": {
+            "trades": 4726,
+            "final_equity": 105.88,
+            "return_pct": -89.41,
+            "cagr_pct": -36.16,
+            "sharpe": -1.042,
+            "ann_vol_pct": 36.4,
+            "max_dd_pct": 90.13,
+            "win_rate_pct": 41.7,
+            "pf": 0.91,
+            "edge_bp": -2.242,
+            "msharpe": -0.264,
+            "pos_months": 22,
+            "n_months": 60
+          },
+          "oos": {
+            "trades": 1497,
+            "final_equity": 530.49,
+            "return_pct": -46.95,
+            "cagr_pct": -32.81,
+            "sharpe": -0.947,
+            "ann_vol_pct": 35.1,
+            "max_dd_pct": 60.83,
+            "win_rate_pct": 41.8,
+            "pf": 0.925,
+            "edge_bp": -1.964,
+            "msharpe": -0.287,
+            "pos_months": 8,
+            "n_months": 20
+          },
+          "cells": 60,
+          "is_cells_positive": 0
+        },
+        "sessions": {
+          "is": 1827,
+          "oos": 583
+        },
+        "verdict": "candidate"
+      },
+      "maroy": {
+        "real": {
+          "params": {
+            "exit_kind": "time",
+            "lookback_days": 4,
+            "k_enter": 1.3,
+            "k_exit": null,
+            "frequency": 30,
+            "start_after": 1,
+            "exit_before": 30
+          },
+          "is": {
+            "trades": 1188,
+            "final_equity": 3693.38,
+            "return_pct": 269.34,
+            "cagr_pct": 29.84,
+            "sharpe": 0.724,
+            "ann_vol_pct": 66.5,
+            "max_dd_pct": 63.68,
+            "win_rate_pct": 49.7,
+            "pf": 1.057,
+            "edge_bp": 10.144,
+            "msharpe": 0.097,
+            "pos_months": 36,
+            "n_months": 60
+          },
+          "oos": {
+            "trades": 368,
+            "final_equity": 10341.26,
+            "return_pct": 934.13,
+            "cagr_pct": 332.8,
+            "sharpe": 2.411,
+            "ann_vol_pct": 71.0,
+            "max_dd_pct": 49.24,
+            "win_rate_pct": 50.8,
+            "pf": 1.315,
+            "edge_bp": 37.164,
+            "msharpe": 0.33,
+            "pos_months": 12,
+            "n_months": 20
+          },
+          "cells": 216,
+          "is_cells_positive": 8
+        },
+        "null": {
+          "params": {
+            "exit_kind": "boundary",
+            "lookback_days": 14,
+            "k_enter": 1.0,
+            "k_exit": 0.78,
+            "frequency": 45,
+            "start_after": 1,
+            "exit_before": 30
+          },
+          "is": {
+            "trades": 2601,
+            "final_equity": 1091.32,
+            "return_pct": 9.13,
+            "cagr_pct": 1.76,
+            "sharpe": 0.224,
+            "ann_vol_pct": 36.5,
+            "max_dd_pct": 56.63,
+            "win_rate_pct": 36.4,
+            "pf": 1.009,
+            "edge_bp": 0.809,
+            "msharpe": 0.017,
+            "pos_months": 30,
+            "n_months": 60
+          },
+          "oos": {
+            "trades": 813,
+            "final_equity": 2899.03,
+            "return_pct": 189.9,
+            "cagr_pct": 94.94,
+            "sharpe": 1.826,
+            "ann_vol_pct": 41.0,
+            "max_dd_pct": 16.06,
+            "win_rate_pct": 33.8,
+            "pf": 1.344,
+            "edge_bp": 7.375,
+            "msharpe": 0.466,
+            "pos_months": 12,
+            "n_months": 20
+          },
+          "cells": 216,
+          "is_cells_positive": 2
+        },
+        "sessions": {
+          "is": 1827,
+          "oos": 583
+        },
+        "verdict": "candidate"
+      }
+    }
+  ]
+}

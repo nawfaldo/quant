@@ -1,0 +1,291 @@
+{
+  "rule": "session VWAP band sweep + reclaim, VWAP target, ATR stop",
+  "source": "https://www.youtube.com/watch?v=XWJlBBikUc0",
+  "table": "es_1m (New York wall clock, ratio back-adjusted)",
+  "cost": {
+    "spread_bp": 0.3,
+    "slippage_points": 0.2,
+    "account": "Exness Pro 416209807 (proxy: measured NQ in-session spread)",
+    "contract": "Exness US500 CFD, USD 1/point/lot, 0.01 step, 0.03 min, 0.25% margin"
+  },
+  "windows": {
+    "is": [
+      "2018-01-01",
+      "2024-01-01"
+    ],
+    "oos": [
+      "2024-01-01",
+      "2026-07-01"
+    ]
+  },
+  "grid_cells": 144,
+  "best_params": {
+    "band_k": 2.5,
+    "stop_atr": 0.15,
+    "warmup_minutes": 15,
+    "max_trades_per_session": 1,
+    "side_mode": "long"
+  },
+  "is": {
+    "pnl": -195.21,
+    "final": 804.79,
+    "return_pct": -19.52,
+    "trades": 1145,
+    "pf": 0.954,
+    "win_rate": 0.609,
+    "max_dd_pct": 29.06,
+    "monthly_sharpe": -0.086,
+    "positive_months": 29,
+    "n_months": 72,
+    "annual": {
+      "2018": {
+        "pnl": 63.12,
+        "return_pct": 6.31,
+        "max_dd_pct": 5.82,
+        "trades": 193
+      },
+      "2019": {
+        "pnl": -76.8,
+        "return_pct": -7.22,
+        "max_dd_pct": 11.14,
+        "trades": 189
+      },
+      "2020": {
+        "pnl": -5.14,
+        "return_pct": -0.52,
+        "max_dd_pct": 8.39,
+        "trades": 197
+      },
+      "2021": {
+        "pnl": 78.09,
+        "return_pct": 7.96,
+        "max_dd_pct": 10.33,
+        "trades": 185
+      },
+      "2022": {
+        "pnl": -164.93,
+        "return_pct": -15.57,
+        "max_dd_pct": 18.16,
+        "trades": 191
+      },
+      "2023": {
+        "pnl": -89.56,
+        "return_pct": -10.01,
+        "max_dd_pct": 15.94,
+        "trades": 190
+      }
+    },
+    "consistency": {
+      "worst_year_return_pct": -15.57,
+      "median_year_return_pct": -3.87,
+      "annual_return_std_pct": 8.54,
+      "annual_return_cv": 999.0,
+      "years_above_5pct": 2,
+      "max_single_year_return_share": 0.558
+    }
+  },
+  "oos": {
+    "pnl": -272.77,
+    "final": 727.23,
+    "return_pct": -27.28,
+    "trades": 477,
+    "pf": 0.816,
+    "win_rate": 0.6,
+    "max_dd_pct": 32.65,
+    "monthly_sharpe": -0.365,
+    "positive_months": 11,
+    "n_months": 30,
+    "annual": {
+      "2024": {
+        "pnl": -140.64,
+        "return_pct": -14.06,
+        "max_dd_pct": 16.9,
+        "trades": 204
+      },
+      "2025": {
+        "pnl": -96.03,
+        "return_pct": -11.17,
+        "max_dd_pct": 17.11,
+        "trades": 192
+      },
+      "2026": {
+        "pnl": -36.1,
+        "return_pct": -4.73,
+        "max_dd_pct": 11.55,
+        "trades": 81
+      }
+    },
+    "consistency": {
+      "worst_year_return_pct": -14.06,
+      "median_year_return_pct": -11.17,
+      "annual_return_std_pct": 3.9,
+      "annual_return_cv": 999.0,
+      "years_above_5pct": 0,
+      "max_single_year_return_share": 1.0
+    }
+  },
+  "controls": {
+    "coin_flip_is": {
+      "draws": 200,
+      "mean_return_pct": -95.87,
+      "p05": -97.13,
+      "p50": -96.05,
+      "p95": -93.87,
+      "max": -93.11,
+      "strategy_percentile": 100.0
+    },
+    "coin_flip_oos": {
+      "draws": 200,
+      "mean_return_pct": -76.51,
+      "p05": -81.52,
+      "p50": -76.81,
+      "p95": -70.34,
+      "max": -66.53,
+      "strategy_percentile": 100.0
+    },
+    "buy_and_hold_is": {
+      "return_pct": 70.96,
+      "final": 1709.64,
+      "quantity": 0.32,
+      "max_dd_pct": 35.93
+    },
+    "buy_and_hold_oos": {
+      "return_pct": 41.08,
+      "final": 1410.78,
+      "quantity": 0.19,
+      "max_dd_pct": 21.96
+    }
+  },
+  "top_is_cells": [
+    {
+      "params": {
+        "band_k": 2.5,
+        "stop_atr": 0.15,
+        "warmup_minutes": 15,
+        "max_trades_per_session": 1,
+        "side_mode": "long"
+      },
+      "return_pct": -19.52,
+      "pf": 0.954,
+      "trades": 1145,
+      "max_dd_pct": 29.06
+    },
+    {
+      "params": {
+        "band_k": 3.0,
+        "stop_atr": 0.1,
+        "warmup_minutes": 30,
+        "max_trades_per_session": 1,
+        "side_mode": "short"
+      },
+      "return_pct": -20.74,
+      "pf": 0.957,
+      "trades": 867,
+      "max_dd_pct": 34.92
+    },
+    {
+      "params": {
+        "band_k": 2.5,
+        "stop_atr": 0.25,
+        "warmup_minutes": 15,
+        "max_trades_per_session": 1,
+        "side_mode": "long"
+      },
+      "return_pct": -24.66,
+      "pf": 0.909,
+      "trades": 1145,
+      "max_dd_pct": 33.92
+    },
+    {
+      "params": {
+        "band_k": 3.0,
+        "stop_atr": 0.25,
+        "warmup_minutes": 15,
+        "max_trades_per_session": 1,
+        "side_mode": "long"
+      },
+      "return_pct": -26.62,
+      "pf": 0.894,
+      "trades": 939,
+      "max_dd_pct": 35.18
+    },
+    {
+      "params": {
+        "band_k": 3.0,
+        "stop_atr": 0.25,
+        "warmup_minutes": 30,
+        "max_trades_per_session": 1,
+        "side_mode": "long"
+      },
+      "return_pct": -28.86,
+      "pf": 0.882,
+      "trades": 846,
+      "max_dd_pct": 38.5
+    },
+    {
+      "params": {
+        "band_k": 2.5,
+        "stop_atr": 0.25,
+        "warmup_minutes": 30,
+        "max_trades_per_session": 1,
+        "side_mode": "long"
+      },
+      "return_pct": -31.19,
+      "pf": 0.888,
+      "trades": 1048,
+      "max_dd_pct": 43.23
+    },
+    {
+      "params": {
+        "band_k": 2.0,
+        "stop_atr": 0.25,
+        "warmup_minutes": 30,
+        "max_trades_per_session": 1,
+        "side_mode": "long"
+      },
+      "return_pct": -31.37,
+      "pf": 0.88,
+      "trades": 1204,
+      "max_dd_pct": 34.17
+    },
+    {
+      "params": {
+        "band_k": 3.0,
+        "stop_atr": 0.15,
+        "warmup_minutes": 30,
+        "max_trades_per_session": 1,
+        "side_mode": "short"
+      },
+      "return_pct": -32.52,
+      "pf": 0.912,
+      "trades": 867,
+      "max_dd_pct": 38.5
+    },
+    {
+      "params": {
+        "band_k": 2.5,
+        "stop_atr": 0.1,
+        "warmup_minutes": 15,
+        "max_trades_per_session": 1,
+        "side_mode": "long"
+      },
+      "return_pct": -34.04,
+      "pf": 0.933,
+      "trades": 1145,
+      "max_dd_pct": 41.62
+    },
+    {
+      "params": {
+        "band_k": 3.0,
+        "stop_atr": 0.1,
+        "warmup_minutes": 15,
+        "max_trades_per_session": 1,
+        "side_mode": "short"
+      },
+      "return_pct": -34.63,
+      "pf": 0.923,
+      "trades": 940,
+      "max_dd_pct": 44.99
+    }
+  ]
+}
