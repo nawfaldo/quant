@@ -24,12 +24,19 @@ use super::contracts::Instrument;
 use super::family::Params;
 
 mod audusd_zscore;
+mod ethusd_break_retest;
 mod ethusd_confluence;
 mod ethusd_kalman;
+mod ethusd_level_confluence;
 mod ethusd_obv_break;
 mod ethusd_pullback;
+mod ethusd_roofing;
+mod ethusd_efficiency;
+mod ethusd_cci;
+mod ethusd_linreg_trend;
 mod ethusd_volatility_breakout;
 mod eurjpy_gated_orb;
+mod eurjpy_swing_ma;
 mod eurjpy_two_stage;
 mod gbpjpy_trap;
 mod jp225_break_retest;
@@ -42,10 +49,12 @@ mod jp225_volatility_breakout;
 mod jp225_volume_thrust;
 mod ukoil_level_confluence;
 mod ukoil_xma_cross;
+mod usdjpy_aroon;
 mod usdjpy_fracdiff;
 mod usdjpy_half_life;
 mod usdjpy_kendall;
 mod usdjpy_pullback;
+mod usdjpy_rvol;
 mod usdjpy_volume_thrust;
 
 /// Everything the book knows about one sleeve.
@@ -113,6 +122,11 @@ pub(super) struct SleeveSpec {
     /// does not merely round differently, it eats the gross-exposure budget and
     /// crowds other sleeves out.
     pub(super) sized_as_import: bool,
+    /// Weekdays a NEW entry may be taken on, Monday = bit 0; `None` for every
+    /// day. `exness_combined_strategies.WEEKEND_ONLY` cells carry `WEEKEND`.
+    /// It gates the signal only, as `cfd_families.ENTRY_DAYS` gates
+    /// `tradeable`, so a position still exits by its own rules.
+    pub(super) entry_days: Option<u8>,
     /// Which machine trades it.
     pub(super) engine: EngineKind,
 }
@@ -121,10 +135,13 @@ pub(super) struct SleeveSpec {
 ///
 /// ONE ARM, AND THE ENUM IS KEPT ANYWAY. It carried `Ofi` and `Drift` until
 /// 2026-09-04 -- two hand-written NQ implementations that were never
-/// `exness_families` cells -- and both left with the symbol. Keeping the enum
+/// `cfd_families` cells -- and both left with the symbol. Keeping the enum
 /// costs nothing and is what makes `params()` return an `Option` rather than a
 /// bare `Params`, which is the shape a future import needs; collapsing it to a
 /// bare field would have to be undone the first time one is seated.
+/// Saturday and Sunday: bits 5 and 6 with Monday at bit 0.
+pub(super) const WEEKEND: u8 = 0b0110_0000;
+
 pub(super) enum EngineKind {
     Family(Params),
 }
@@ -170,5 +187,14 @@ pub(super) const fn spec(sleeve: super::Sleeve) -> &'static SleeveSpec {
         S::Jp225BreakRetest => &jp225_break_retest::SPEC,
         S::Jp225VolatilityBreakout => &jp225_volatility_breakout::SPEC,
         S::EthusdPullback => &ethusd_pullback::SPEC,
+        S::UsdjpyAroon => &usdjpy_aroon::SPEC,
+        S::EthusdBreakRetest => &ethusd_break_retest::SPEC,
+        S::EurjpySwingMa => &eurjpy_swing_ma::SPEC,
+        S::EthusdRoofing => &ethusd_roofing::SPEC,
+        S::EthusdLevelConfluence => &ethusd_level_confluence::SPEC,
+        S::UsdjpyRvol => &usdjpy_rvol::SPEC,
+        S::EthusdEfficiency => &ethusd_efficiency::SPEC,
+        S::EthusdCci => &ethusd_cci::SPEC,
+        S::EthusdLinregTrend => &ethusd_linreg_trend::SPEC,
     }
 }

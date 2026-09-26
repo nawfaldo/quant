@@ -841,7 +841,7 @@ def broker_fill_bars(bars, symbol="nq", bar_minutes=1):
     if not BROKER_FILLS or not bars:
         return None
     from sandbox.research import exness_broker_fills as bf
-    from sandbox.research import exness_families as ef
+    from sandbox.research import cfd_families as ef
 
     if not bf.has_fills(symbol):
         return None

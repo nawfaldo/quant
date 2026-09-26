@@ -1,8 +1,8 @@
-"""Indicator math for `exness_families`. Pure functions over plain lists.
+"""Indicator math for `cfd_families`. Pure functions over plain lists.
 
 WHY THIS IS A SEPARATE MODULE.
 
-`exness_families` is the protocol -- resolution, cost, sizing, the engine, the
+`cfd_families` is the protocol -- resolution, cost, sizing, the engine, the
 selection gates. What an indicator IS has nothing to do with any of that, and
 mixing the two would push the one file that has to be read carefully in order to
 trust a result past four thousand lines. Everything here is arithmetic on a list

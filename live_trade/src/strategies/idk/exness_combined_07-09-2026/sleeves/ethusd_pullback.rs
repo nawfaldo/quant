@@ -1,4 +1,4 @@
-//! `ethusd:pullback`, one `exness_families` cell.
+//! `ethusd:pullback`, one `cfd_families` cell.
 //!
 //! A retracement of at most half a daily range from a four-session extreme,
 //! inside a twenty-session trend.
@@ -36,6 +36,7 @@ pub(super) const SPEC: SleeveSpec = SleeveSpec {
     scale: 1.0,
     shown_equity: 1.0,
     sized_as_import: false,
+    entry_days: None,
     engine: EngineKind::Family(Params {
         family: Family::Pullback {
             channel: 4 * SESSION,

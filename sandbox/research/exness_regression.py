@@ -31,7 +31,7 @@ import json
 import os
 import random
 
-from sandbox.research import exness_families as ef
+from sandbox.research import cfd_families as ef
 
 BASELINE = os.path.join(os.path.dirname(__file__), "..", "results",
                         "regression_baseline_30m.json")

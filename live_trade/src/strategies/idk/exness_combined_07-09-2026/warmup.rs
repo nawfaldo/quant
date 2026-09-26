@@ -168,6 +168,30 @@ fn family_candles(family: Family, session_bars: usize) -> usize {
         Family::HalfLife {
             period, multiple, ..
         } => (period + 1).max((multiple * period as f64).ceil() as usize),
+        // A full window, plus one bar so the PREVIOUS reading the cross is
+        // measured against exists too.
+        Family::Aroon { period, .. } => period + 1,
+        // Two seeded EMAs; the slower one bounds the convergence.
+        Family::SwingMa { fast, slow } => ema_convergence(fast.max(slow)),
+        // Python withholds the first `3 * high_period` outputs. That is its
+        // allowance for the transient and is NOT a convergence guarantee for a
+        // warm-up started mid-series, so the double highpass pole (about
+        // `1 / alpha` bars per e-fold, alpha ~ 4.4 / high_period) is given the
+        // same EFOLDS budget as everything else, plus the 21-reading amplitude
+        // window the gate scans.
+        Family::Roofing { high_period, .. } => {
+            let convergence = (2.0 * EFOLDS * high_period as f64 / 4.4).ceil() as usize;
+            (3 * high_period).max(convergence) + 21
+        }
+        // Twenty earlier sessions of every clock minute, the deque's full
+        // length; five is only when it starts answering.
+        Family::Rvol { .. } => 20 * session_bars + 1,
+        // Exact once the window is full: `er` and `cci` over `period`, the
+        // regression's running sums over `period` closes, plus one bar for the
+        // close `er` differences against.
+        Family::Efficiency { period, .. } => period + 1,
+        Family::Cci { period, .. } => period,
+        Family::LinregTrend { period, .. } => period,
     }
 }
 

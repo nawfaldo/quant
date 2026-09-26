@@ -1,4 +1,4 @@
-//! `jp225:break_retest`, one `exness_families` cell.
+//! `jp225:break_retest`, one `cfd_families` cell.
 //!
 //! A Donchian level breaks, price comes back to the SESSION VWAP, and it holds.
 //!
@@ -35,6 +35,7 @@ pub(super) const SPEC: SleeveSpec = SleeveSpec {
     scale: 1.0,
     shown_equity: 1.0,
     sized_as_import: false,
+    entry_days: None,
     engine: EngineKind::Family(Params {
         family: Family::BreakRetest {
             // How long the break is allowed to take to come back. The ONLY

@@ -25,7 +25,7 @@ import subprocess
 import sys
 import time
 
-from sandbox.research import exness_families as ef
+from sandbox.research import cfd_families as ef
 
 #: The order the queue runs in. Everything not named here follows, alphabetically.
 PRIORITY = ("ethusd", "btc", "jp225", "de40", "usdjpy", "nq", "es", "xaueur",
@@ -73,7 +73,7 @@ def main():
         clock = time.time()
         result = subprocess.run(
             [sys.executable, "-X", "utf8", "-m",
-             "sandbox.research.exness_families", "select",
+             "sandbox.research.cfd_families", "select",
              "--symbols", symbol, "--bar-minutes", str(args.bar_minutes),
              "--groups", "sixth", "--workers", str(args.workers),
              "--stale-spreads"],

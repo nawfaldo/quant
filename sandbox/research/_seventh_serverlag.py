@@ -37,16 +37,16 @@ import math
 import os
 
 from sandbox.research import exness_combined_strategies as cs
-from sandbox.research import exness_families as ef
+from sandbox.research import cfd_families as ef
 from sandbox.research import exness_latency as lat
-from sandbox.research import exness_live_execution as le
+from sandbox.research.fill_models import exness as le
 
 #: The feed daemon's tick, copied from `idk_market_live_data_feeds`.
 TICK_OFFSET_SECONDS = 5.0
 TICK_PERIOD_SECONDS = 60.0
 
-SERVER_MAPS = os.path.join(os.path.dirname(__file__),
-                           "exness_live_execution_maps_serverlag.json")
+SERVER_MAPS = os.path.join(os.path.dirname(le.__file__),
+                           "exness_maps_serverlag.json")
 
 
 #: MEASURED 2026-09-07 by `_seventh_publish` at 2-second resolution, gbpjpy,

@@ -51,7 +51,7 @@ import subprocess
 import sys
 import time
 
-from sandbox.research import exness_families as ef
+from sandbox.research import cfd_families as ef
 from sandbox.research._sixth_sweep import queue
 
 SIXTH = set(ef.ALIASES["sixth"])
@@ -115,7 +115,7 @@ def run(args_list, label):
     clock = time.time()
     result = subprocess.run(
         [sys.executable, "-X", "utf8", "-m",
-         "sandbox.research.exness_families"] + args_list,
+         "sandbox.research.cfd_families"] + args_list,
         cwd=ROOT, capture_output=True, text=True,
         encoding="utf-8", errors="replace")
     took = (time.time() - clock) / 60.0

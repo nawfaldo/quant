@@ -1,4 +1,4 @@
-//! `audusd:zscore`, one `exness_families` cell.
+//! `audusd:zscore`, one `cfd_families` cell.
 //!
 //! Fade a 1.5-sigma stretch of the 5-session close distribution.
 
@@ -21,6 +21,7 @@ pub(super) const SPEC: SleeveSpec = SleeveSpec {
     scale: 1.0,
     shown_equity: 1.0,
     sized_as_import: false,
+    entry_days: None,
     engine: EngineKind::Family(Params {
         family: Family::Zscore {
             period: 5 * SESSION,

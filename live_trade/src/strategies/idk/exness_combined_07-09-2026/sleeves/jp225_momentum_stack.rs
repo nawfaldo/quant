@@ -1,4 +1,4 @@
-//! `jp225:momentum_stack`, one `exness_families` cell.
+//! `jp225:momentum_stack`, one `cfd_families` cell.
 //!
 //! Three horizons of momentum -- one, five and twenty sessions -- each divided
 //! by its own dispersion, summed, and traded past three sigma.
@@ -40,6 +40,7 @@ pub(super) const SPEC: SleeveSpec = SleeveSpec {
     scale: 1.0,
     shown_equity: 1.0,
     sized_as_import: false,
+    entry_days: None,
     engine: EngineKind::Family(Params {
         family: Family::MomentumStack {
             threshold: 3.0,

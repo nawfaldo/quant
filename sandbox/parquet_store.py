@@ -365,7 +365,7 @@ def read_bars(table, bar_minutes=1, start=None, end=None, shift_hours=0,
     the Asian indices land one cash session to a day.
 
     Aggregating to a FINER bar than the table's own is refused upstream, in
-    `exness_families.all_bars`, which knows the table's native resolution.
+    `cfd_families.all_bars`, which knows the table's native resolution.
     """
     volume = volume_column(table, volume_col)
     columns = ["open", "high", "low", "close", volume]

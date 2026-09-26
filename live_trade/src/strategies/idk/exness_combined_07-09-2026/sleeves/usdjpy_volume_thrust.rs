@@ -1,4 +1,4 @@
-//! `usdjpy:volume_thrust`, one `exness_families` cell.
+//! `usdjpy:volume_thrust`, one `cfd_families` cell.
 //!
 //! A directional bar on twice the 20-session average volume.
 
@@ -21,6 +21,7 @@ pub(super) const SPEC: SleeveSpec = SleeveSpec {
     scale: 1.0,
     shown_equity: 1.0,
     sized_as_import: false,
+    entry_days: None,
     engine: EngineKind::Family(Params {
         family: Family::VolumeThrust {
             volume_period: 20 * SESSION,

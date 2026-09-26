@@ -64,7 +64,6 @@ fn every_sleeve_passes_its_quantity_through_untouched() {
 #[test]
 fn minimum_lots_match_the_frozen_specs() {
     assert_eq!(lot_spec("ethusd_confluence").min_lots, 0.10);
-    assert_eq!(lot_spec("jp225_cusum").min_lots, 3.0);
     assert_eq!(lot_spec("usdjpy_volume_thrust").min_lots, 0.01);
     assert_eq!(lot_spec("usdjpy_volume_thrust").contract_size, 100_000.0);
     // Every sleeve's floor is the one its own `Instrument` sizes against.
@@ -86,23 +85,25 @@ fn minimum_lots_match_the_frozen_specs() {
 /// resolved to a 0.05 floor against a real minimum of three lots.
 #[test]
 fn the_lot_floor_ignores_how_the_symbol_was_spelled() {
-    let mut slot = slot_for("jp225_cusum");
-    for spelling in ["jp225", "JP225", " Jp225 "] {
+    // ETHUSD since 2026-09-23: its 0.10 floor is the highest in the book now
+    // that JP225's three lots have left, and still ten times the FX step.
+    let mut slot = slot_for("ethusd_pullback");
+    for spelling in ["ethusd", "ETHUSD", " Ethusd "] {
         slot.target.symbol = spelling.into();
         assert_eq!(
             lot_spec(&slot.target.strategy).min_lots,
-            3.0,
-            "spelling {spelling} changed the JP225 floor"
+            0.10,
+            "spelling {spelling} changed the ETHUSD floor"
         );
-        let two_lots = Action::Enter {
+        let under_floor = Action::Enter {
             side: Side::Long,
-            price: 40_000.0,
-            quantity: 2.0,
+            price: 2_500.0,
+            quantity: 0.05,
         };
         assert_eq!(
-            slot.entry_refusal(two_lots, true),
+            slot.entry_refusal(under_floor, true),
             Some("strategy volume is below the broker minimum"),
-            "spelling {spelling} admitted an order JP225 rejects"
+            "spelling {spelling} admitted an order ETHUSD rejects"
         );
     }
 }
@@ -134,7 +135,7 @@ fn the_two_spellings_agree_on_every_market() {
 
 #[test]
 fn warmup_loads_only_active_markets() {
-    let plan = WarmupPlan::for_targets(&[warmup_target(1, "ukoil_xma_cross")]);
+    let plan = WarmupPlan::for_targets(&[warmup_target(1, "ukoil_level_confluence")]);
     assert_eq!(plan.calendar_days.len(), 1);
     assert!(plan.calendar_days.contains_key("ukoil"));
     assert!(!plan.calendar_days.contains_key(SYMBOL));
@@ -144,27 +145,27 @@ fn warmup_loads_only_active_markets() {
 #[test]
 fn warmup_uses_longest_requirement_per_active_symbol() {
     let plan = WarmupPlan::for_targets(&[
-        warmup_target(1, "jp225_cusum"),
-        warmup_target(2, "jp225_kalman"),
-        warmup_target(3, "usdjpy_kendall"),
+        warmup_target(1, "ethusd_pullback"),
+        warmup_target(2, "ethusd_kalman"),
+        warmup_target(3, "usdjpy_rvol"),
     ]);
     // Sleeves sharing a feed collapse into ONE requirement -- the deepest of
     // them -- and a second market gets its own. The requirement is the sleeve's
     // own answer rather than a number written here, so a re-fitted cell moves
     // this test with it instead of silently outgrowing it.
-    let jp225 = Sleeve::from_id("jp225_cusum")
+    let ethusd = Sleeve::from_id("ethusd_pullback")
         .unwrap()
         .warmup_sessions()
-        .max(Sleeve::from_id("jp225_kalman").unwrap().warmup_sessions());
+        .max(Sleeve::from_id("ethusd_kalman").unwrap().warmup_sessions());
     assert_eq!(
-        plan.calendar_days["jp225"],
-        warmup_calendar_days("jp225", jp225)
+        plan.calendar_days["ethusd"],
+        warmup_calendar_days("ethusd", ethusd)
     );
     assert_eq!(
         plan.calendar_days["usdjpy"],
         warmup_calendar_days(
             "usdjpy",
-            Sleeve::from_id("usdjpy_kendall").unwrap().warmup_sessions()
+            Sleeve::from_id("usdjpy_rvol").unwrap().warmup_sessions()
         )
     );
 }
@@ -203,8 +204,8 @@ fn requested_strategies_are_live_capable() {
 /// property that matters most in this file.
 #[test]
 fn every_live_strategy_routes_to_exactly_one_market() {
-    assert_eq!(strategy_symbol("jp225_cusum"), "jp225");
-    assert_eq!(strategy_symbol("usdjpy_kendall"), "usdjpy");
+    assert_eq!(strategy_symbol("usdjpy_rvol"), "usdjpy");
+    assert_eq!(strategy_symbol("usdjpy_rvol"), "usdjpy");
     assert_eq!(strategy_symbol("ethusd_confluence"), ETHUSD_SYMBOL);
     let markets = crate::strategies::known_markets();
     for strategy in LIVE_STRATEGIES {
@@ -255,7 +256,7 @@ fn no_live_strategy_reads_the_level_two_feed() {
     // The rule itself is unchanged: an NQ id would still be routed to the
     // level-two feed if one were ever seated again.
     assert_eq!(strategy_feed("nq_ofi"), LiveFeed::Ohlcv);
-    assert_eq!(strategy_feed("jp225_cusum"), LiveFeed::Ohlcv);
+    assert_eq!(strategy_feed("usdjpy_rvol"), LiveFeed::Ohlcv);
 }
 
 #[test]
@@ -390,11 +391,9 @@ pub(super) fn test_slot() -> LiveSlot {
 /// ever flattened. JP225 is the only wrapping session left in the book,
 /// which is why this test outlived the sleeves it was written for.
 #[test]
+#[ignore = "no wrapping-session market is live since 2026-09-23, when every jp225 sleeve left; re-enable if jp225 or hk50 is re-seated"]
 fn wrapping_sessions_do_not_flatten_all_evening() {
-    for (strategy, trading_minute) in [
-        ("jp225_volume_thrust", 21 * 60),
-        ("jp225_cusum", 22 * 60),
-    ] {
+    for (strategy, trading_minute) in [("jp225_volume_thrust", 21 * 60), ("jp225_cusum", 22 * 60)] {
         let slot = slot_for(strategy);
         assert!(
             !slot.in_session_end_window(bar_at_minute(trading_minute)),
@@ -412,6 +411,7 @@ fn wrapping_sessions_do_not_flatten_all_evening() {
 /// 19:00-02:00, so its start (1140) is ABOVE its end (120) and the plain
 /// range test is false for every minute it actually trades.
 #[test]
+#[ignore = "no wrapping-session market is live since 2026-09-23, when every jp225 sleeve left; re-enable if jp225 or hk50 is re-seated"]
 fn a_wrapping_session_contains_the_minutes_it_trades() {
     let slot = slot_for("jp225_cusum");
     assert_eq!(slot.strategy.session_start_minute(), Some(19 * 60));
@@ -499,7 +499,7 @@ fn self_flattening_strategies_are_left_alone() {
 /// set to, and with the feed's own few seconds of lag rounded away.
 #[test]
 fn the_new_york_offset_is_learned_from_a_bar_and_outlives_it() {
-    let mut runtime = runtime_holding("usdjpy_kendall", 0);
+    let mut runtime = runtime_holding("usdjpy_rvol", 0);
     assert!(
         runtime.ny_second_of_day().is_none(),
         "a runtime that has seen no bar must not claim to know the time"
@@ -554,7 +554,7 @@ fn a_position_left_past_its_session_close_is_flattened_on_the_clock() {
                 volume: 3.0,
             },
         );
-        // One bar past the close is the instant `exness_live_execution` prices
+        // One bar past the close is the instant `fill_models.exness` prices
         // the exit at; the few seconds of grace only let a healthy feed's own
         // exit land first.
         assert!(
@@ -761,14 +761,14 @@ fn runtime_holding(strategy: &str, last_bar_minute: i64) -> PortfolioRuntime {
 /// the book's 2023 trough ([[swing-donchian-is-load-bearing-for-drawdown]]).
 #[test]
 fn a_scheduled_market_close_is_not_a_dead_feed() {
-    // 16:00 New York: JP225's daily break, hours outside its 19:00-02:00
-    // session. Nothing to flatten.
-    let closed = runtime_holding("jp225_cusum", 16 * 60);
-    assert!(!closed.has_unmanaged_positions("jp225", LiveFeed::Ohlcv));
+    // UKOIL since 2026-09-23. 16:00 New York is after its 09:00-14:30
+    // session: a scheduled close, nothing to flatten.
+    let closed = runtime_holding("ukoil_level_confluence", 16 * 60);
+    assert!(!closed.has_unmanaged_positions("ukoil", LiveFeed::Ohlcv));
 
-    // 22:00, mid-session: the feed really did stop early.
-    let stalled = runtime_holding("jp225_cusum", 22 * 60);
-    assert!(stalled.has_unmanaged_positions("jp225", LiveFeed::Ohlcv));
+    // 12:00, mid-session: the feed really did stop early.
+    let stalled = runtime_holding("ukoil_level_confluence", 12 * 60);
+    assert!(stalled.has_unmanaged_positions("ukoil", LiveFeed::Ohlcv));
 }
 
 /// A FEED THAT DIES DURING ITS MARKET'S SCHEDULED CLOSE MUST STILL BE
@@ -779,15 +779,15 @@ fn a_scheduled_market_close_is_not_a_dead_feed() {
 /// The other eleven streams keep printing, and they are the clock.
 #[test]
 fn a_feed_that_never_returns_from_a_close_is_caught_at_the_reopen() {
-    let mut runtime = runtime_holding("jp225_cusum", 16 * 60);
-    // JP225 is still parked at its 16:00 break...
-    assert!(!runtime.has_unmanaged_positions("jp225", LiveFeed::Ohlcv));
-    // ...but ETHUSD, which quotes every minute of every day, says 21:00 --
-    // an hour into the JP225 session that never printed.
+    // UKOIL since 2026-09-23, parked at 16:00 after its 14:30 close...
+    let mut runtime = runtime_holding("ukoil_level_confluence", 16 * 60);
+    assert!(!runtime.has_unmanaged_positions("ukoil", LiveFeed::Ohlcv));
+    // ...but ETHUSD, which quotes every minute of every day, says 10:00 the
+    // NEXT day -- an hour into the UKOIL session that never printed.
     runtime
         .market_histories
-        .insert(ETHUSD_SYMBOL, vec![bar_at_minute(21 * 60)]);
-    assert!(runtime.has_unmanaged_positions("jp225", LiveFeed::Ohlcv));
+        .insert(ETHUSD_SYMBOL, vec![bar_at_minute(24 * 60 + 10 * 60)]);
+    assert!(runtime.has_unmanaged_positions("ukoil", LiveFeed::Ohlcv));
 }
 
 /// The watchdog must still protect an intraday sleeve that is holding
@@ -810,7 +810,7 @@ fn a_stalled_feed_still_arms_the_watchdog_in_session() {
 /// and a watchdog that guessed would be flattening on no evidence.
 #[test]
 fn a_stream_with_no_bars_never_arms_the_watchdog() {
-    let mut runtime = runtime_holding("ukoil_xma_cross", 10 * 60);
+    let mut runtime = runtime_holding("ukoil_level_confluence", 10 * 60);
     runtime.market_histories.clear();
     assert!(!runtime.has_unmanaged_positions("ukoil", LiveFeed::Ohlcv));
 }
@@ -820,8 +820,11 @@ fn a_stream_with_no_bars_never_arms_the_watchdog() {
 /// bars and send its real orders to Brent.
 #[test]
 fn a_live_row_must_name_its_sleeve_s_instrument() {
-    assert_eq!(required_symbol("jp225_kalman"), Some("JP225"));
-    assert_eq!(required_symbol("ukoil_xma_cross"), Some("UKOIL"));
+    assert_eq!(required_symbol("ethusd_pullback"), Some("ETHUSD"));
+    assert_eq!(required_symbol("ukoil_level_confluence"), Some("UKOIL"));
+    // Dropped 2026-09-23, so they must resolve to nothing as well.
+    assert_eq!(required_symbol("jp225_kalman"), None);
+    assert_eq!(required_symbol("ukoil_xma_cross"), None);
     assert_eq!(required_symbol("btc_donchian"), None);
     // A sleeve the book DROPPED resolves to nothing, so a stale live row cannot
     // pass the symbol check by naming an instrument nothing trades any more.
@@ -833,12 +836,12 @@ fn a_live_row_must_name_its_sleeve_s_instrument() {
         assert!(symbol_matches_strategy(sleeve.id(), &symbol.to_lowercase()));
     }
     // Case is not part of it.
-    assert!(symbol_matches_strategy("ukoil_xma_cross", "ukoil"));
-    assert!(symbol_matches_strategy("ukoil_xma_cross", "UKOIL"));
+    assert!(symbol_matches_strategy("ukoil_level_confluence", "ukoil"));
+    assert!(symbol_matches_strategy("ukoil_level_confluence", "UKOIL"));
     // A different instrument, and a symbol nothing in the book trades.
-    assert!(!symbol_matches_strategy("ukoil_xma_cross", "JP225"));
+    assert!(!symbol_matches_strategy("ukoil_level_confluence", "ETHUSD"));
     assert!(!symbol_matches_strategy("ethusd_confluence", "BTCUSD"));
-    assert!(!symbol_matches_strategy("jp225_cusum", "DE40"));
+    assert!(!symbol_matches_strategy("usdjpy_rvol", "DE40"));
 }
 
 /// `blocked` stops new risk; it must never stop an exit.
@@ -1109,4 +1112,49 @@ async fn an_agreeing_book_is_left_alone() {
     assert_eq!(blocked, None);
     assert_eq!(left, 1);
     assert_eq!(abandons, 0);
+}
+
+// --------------------------------------------------------------------------- //
+// the strategy's own close is not an external one
+// --------------------------------------------------------------------------- //
+
+/// `usdjpy_rvol` closed itself at 17:30Z on 2026-09-24 and the terminal said
+/// "closed externally". The durable row goes the moment the close fills, and
+/// the per-refresh reconciler reached it before `retry_pending_exits` did.
+#[test]
+fn an_exit_in_flight_is_not_reported_as_an_external_close() {
+    let abandons = Rc::new(RefCell::new(0usize));
+    let mut slot = test_slot();
+    slot.strategy = Box::new(AbandonSpy(Rc::clone(&abandons)));
+    for key in ["mine", "theirs"] {
+        slot.positions.insert(
+            key.to_owned(),
+            LogicalPosition {
+                side: Side::Long,
+                volume: 1.0,
+            },
+        );
+    }
+    slot.pending_exits.insert(
+        "mine".to_owned(),
+        super::slot::PendingExit {
+            price: 1.0,
+            fraction: 1.0,
+        },
+    );
+
+    let flattened = slot.reconcile_external_closes(&HashSet::new());
+
+    assert_eq!(
+        flattened,
+        vec!["theirs".to_owned()],
+        "only the unasked-for close"
+    );
+    assert!(
+        slot.positions.contains_key("mine"),
+        "left for retry_pending_exits to acknowledge"
+    );
+    assert!(slot.pending_exits.contains_key("mine"));
+    drop(slot);
+    assert_eq!(*abandons.borrow(), 1);
 }

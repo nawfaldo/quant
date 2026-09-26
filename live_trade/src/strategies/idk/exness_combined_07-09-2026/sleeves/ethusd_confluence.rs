@@ -1,4 +1,4 @@
-//! `ethusd:confluence`, one `exness_families` cell.
+//! `ethusd:confluence`, one `cfd_families` cell.
 //!
 //! Five exhaustion readings vote; fade a margin of three or more.
 
@@ -21,6 +21,7 @@ pub(super) const SPEC: SleeveSpec = SleeveSpec {
     scale: 1.0,
     shown_equity: 3.0,
     sized_as_import: false,
+    entry_days: None,
     engine: EngineKind::Family(Params {
         family: Family::Confluence {
             votes: 3,

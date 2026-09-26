@@ -1,4 +1,4 @@
-"""Consolidate every sealed `exness_families` run into one readable table.
+"""Consolidate every sealed `cfd_families` run into one readable table.
 
 `select`, `validate` and `why` each write JSON, and JSON is not readable by eye.
 This turns the whole set into a markdown file and prints the same thing, so the
@@ -170,7 +170,7 @@ def main():
                         help="show only these thesis groups, comma separated")
     args = parser.parse_args()
 
-    from sandbox.research import exness_families as ef
+    from sandbox.research import cfd_families as ef
     symbols = ef.expand(args.symbols)
     groups = set(args.groups.replace(" ", "").split(",")) if args.groups else None
     if groups:

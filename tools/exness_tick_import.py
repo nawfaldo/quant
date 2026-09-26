@@ -2,7 +2,7 @@
 """Import Exness MT5 BID/ASK tick history as `exness_<broker>_ticks`.
 
 WHY THIS EXISTS. The book prices every sleeve on ONE spread constant per
-symbol -- a median that `exness_families.tick_spreads` takes over the last
+symbol -- a median that `cfd_families.tick_spreads` takes over the last
 seven days of terminal history and stores in the spec file. That constant is
 charged identically at 03:00 and at the New York open, on a quiet Tuesday and
 through a payroll print. It is the only cost the study charges, so its shape

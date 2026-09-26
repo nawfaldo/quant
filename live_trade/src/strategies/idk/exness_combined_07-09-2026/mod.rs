@@ -5,7 +5,7 @@
 //! move with membership -- see the note on it below.
 //!
 //! ONE ACCOUNT, TWENTY-TWO SLEEVES, SEVEN MARKETS. Each sleeve is an
-//! `exness_families` cell whose parameters were fitted on data ending
+//! `cfd_families` cell whose parameters were fitted on data ending
 //! 2024-12-31 and then measured on the 2025-01-01..2026-08-20 holdout. They are
 //! run together against a single compounding balance, so a JP225 trade taken
 //! after ETHUSD has drawn the account down is a smaller trade than it was
@@ -97,7 +97,7 @@
 //! first-come-first-served QUEUE rather than a risk control.
 //!
 //! ALL TWENTY-TWO SHARE ONE ENGINE. `FamilyEngine` below is a streaming port
-//! of `exness_families.backtest`: 30-minute candles built from the `<symbol>_1m`
+//! of `cfd_families.backtest`: 30-minute candles built from the `<symbol>_1m`
 //! table, filtered to the symbol's session, one entry a day, a signal read on
 //! bar `i`'s close filling at bar `i + 1`'s OPEN. Consuming the same bar's close
 //! manufactures the fake edge recorded in [[entry-must-be-next-bar-open]], so
@@ -182,7 +182,7 @@
 //! same risk at every timeframe ([[bar-size-confound-is-stop-distance]]). ATR
 //! still exists, but only as a signal input -- nothing sizes off it.
 //!
-//! SIZING IS THE BOOK'S, NOT THE FAMILY'S. `exness_families.quantity` throttles
+//! SIZING IS THE BOOK'S, NOT THE FAMILY'S. `cfd_families.quantity` throttles
 //! with a one-sided `min(1, vol_target/realized)`; the book replaces that with
 //! the engine's two-sided EWMA multiplier and adds two knobs the standalone cell
 //! has no concept of:
@@ -237,7 +237,7 @@
 //! nothing here worsens its own fill.
 //!
 //! THE SESSIONS WERE DERIVED, NOT GUESSED. `ukoil`, `jp225` and `ethusd` are
-//! pinned by `exness_families.SESSION`; the rest come from `derive_session`, the
+//! pinned by `cfd_families.SESSION`; the rest come from `derive_session`, the
 //! shortest contiguous run of 30-minute buckets holding 70% of 2024's volume.
 //! Every cell's `last_entry_minute` lands on `{close - 120, close - 60}`, which
 //! is what the parameter grid can produce and is the cross-check that these
@@ -257,11 +257,11 @@ use crate::backtest::types::{Action, Bar, Side, Strategy};
 // book constants
 // -------------------------------------------------------------------------- //
 
-/// `exness_families.RISK_FRACTION`. The per-trade stop risk a sleeve asks for
+/// `cfd_families.RISK_FRACTION`. The per-trade stop risk a sleeve asks for
 /// before any book-level dial is applied.
 const RISK_FRACTION: f64 = 0.015;
 
-/// `exness_families.MARGIN_FRACTION`: a self-imposed 4x notional ceiling. It
+/// `cfd_families.MARGIN_FRACTION`: a self-imposed 4x notional ceiling. It
 /// reads REAL equity rather than the scaled or capped figure, because margin is
 /// a broker constraint on the account and does not shrink because the book chose
 /// to bet less ([[shown-equity-cannot-fix-a-margin-refusal]]).
@@ -303,7 +303,7 @@ pub const CANON_GROSS_CAP: Option<f64> = None;
 
 /// The balance the book is funded with, RAISED $400 -> $500 by operator decision
 /// on 2026-09-03. Canon is sized and reported on this and NOT on
-/// `exness_families.INITIAL_BALANCE`: on a small balance the broker's lot floor
+/// `cfd_families.INITIAL_BALANCE`: on a small balance the broker's lot floor
 /// makes each fill a large share of equity, so a book validated at $1,000 is a
 /// different strategy from the same book at $500, and every affordability result
 /// measured at $400 had to be re-run rather than re-scaled
@@ -335,11 +335,11 @@ const FORCE_MINIMUM_LOT: bool = true;
 #[allow(clippy::assertions_on_constants, reason = "pinning a policy constant")]
 const _: () = assert!(FORCE_MINIMUM_LOT);
 
-/// `exness_families.INITIAL_BALANCE`, and the equity that decides WHICH TRADES
+/// `cfd_families.INITIAL_BALANCE`, and the equity that decides WHICH TRADES
 /// EXIST rather than how large they are.
 ///
 /// THE BOOK IS SIZED IN TWO STAGES AND THIS IS THE FIRST. `sleeve_trades` builds
-/// each cell's log by running `exness_families.backtest` at this balance with
+/// each cell's log by running `cfd_families.backtest` at this balance with
 /// the FAMILY sizing rule -- plain `RISK_FRACTION`, a one-sided volatility
 /// throttle, no book scale -- and `quantity` returns 0 for any order that lands
 /// under `volume_min`. Such a trade never enters the log at all. The portfolio
@@ -378,11 +378,11 @@ const _: () = assert!(FORCE_MINIMUM_LOT);
 /// before the replay sees it.
 const ADMISSION_BALANCE: f64 = 1_000.0;
 
-/// `exness_families.DAILY_RANGE_BARS`: days behind the average true daily range
+/// `cfd_families.DAILY_RANGE_BARS`: days behind the average true daily range
 /// that every stop, target and trail is quoted in.
 const DAILY_RANGE_DAYS: usize = 14;
 
-/// `exness_families.SLIPPAGE_BP`, the conservative allowance added to every
+/// `cfd_families.SLIPPAGE_BP`, the conservative allowance added to every
 /// quoted spread. The engine folds the same 0.2 into `sleeve_spread_bp`.
 const SLIPPAGE_BP: f64 = 0.2;
 
@@ -442,9 +442,26 @@ pub enum Sleeve {
     Jp225Cusum,
     Jp225ObvDivergence,
     Jp225Kalman,
+    /// SEATED 2026-09-22 into the freed jp225 seats.
+    UsdjpyAroon,
+    EthusdBreakRetest,
+    EurjpySwingMa,
+    /// SEATED 2026-09-23 after `ukoil:xma_cross` left on decay.
+    EthusdRoofing,
+    EthusdLevelConfluence,
+    UsdjpyRvol,
+    EthusdEfficiency,
+    EthusdCci,
+    EthusdLinregTrend,
 }
 
 /// The canon book, in the order `exness_combined_strategies.BOOK` records it.
+///
+/// TWENTY-ONE SINCE 2026-09-23: every jp225 cell and `ukoil:xma_cross` left;
+/// `usdjpy:aroon`, `ethusd:break_retest`, `eurjpy:swing_ma`,
+/// `ethusd:roofing`, `ethusd:level_confluence` and `usdjpy:rvol` joined. The
+/// departed variants stay in `Sleeve` as code, with their fixtures, per the
+/// precedent below. The history that follows describes earlier books.
 ///
 /// TWENTY-TWO SLEEVES, SET 2026-09-07, on a $500 account at risk 0.130 with the
 /// gross cap OFF.
@@ -503,23 +520,23 @@ pub const BOOK: [Sleeve; 22] = [
     Sleeve::EthusdConfluence,
     Sleeve::EthusdVolatilityBreakout,
     Sleeve::GbpjpyTrap,
-    Sleeve::UkoilXmaCross,
     Sleeve::EurjpyTwoStage,
     Sleeve::UsdjpyPullback,
     Sleeve::EthusdObvBreak,
-    Sleeve::Jp225VolumeThrust,
     Sleeve::UkoilLevelConfluence,
-    Sleeve::Jp225VolRegime,
-    Sleeve::Jp225MomentumStack,
-    Sleeve::UsdjpyKendall,
-    Sleeve::Jp225Cusum,
-    Sleeve::Jp225ObvDivergence,
-    Sleeve::Jp225Kalman,
     Sleeve::EurjpyGatedOrb,
+    Sleeve::UsdjpyAroon,
+    Sleeve::EthusdBreakRetest,
     Sleeve::UsdjpyFracdiff,
     Sleeve::EthusdPullback,
     Sleeve::EthusdKalman,
     Sleeve::UsdjpyHalfLife,
+    Sleeve::EthusdRoofing,
+    Sleeve::EthusdLevelConfluence,
+    Sleeve::UsdjpyRvol,
+    Sleeve::EthusdEfficiency,
+    Sleeve::EthusdCci,
+    Sleeve::EthusdLinregTrend,
 ];
 
 /// The book's own name, for the one place it is a THING rather than a list.
@@ -625,7 +642,12 @@ impl Sleeve {
         self.spec().shown_equity
     }
 
-    /// Hours `exness_families.all_bars` adds to this market's timestamps as it
+    /// `WEEKEND_ONLY`: the weekdays this sleeve may ENTER on, `None` for all.
+    fn entry_days(self) -> Option<u8> {
+        self.spec().entry_days
+    }
+
+    /// Hours `cfd_families.all_bars` adds to this market's timestamps as it
     /// loads them, before anything else sees them.
     ///
     /// The Asian cash sessions straddle New York midnight, so without the shift
@@ -638,14 +660,14 @@ impl Sleeve {
     }
 
     /// `(open, close)` in minutes past New York midnight on the SHIFTED clock,
-    /// inclusive of both ends -- the window `exness_families.in_session` keeps.
+    /// inclusive of both ends -- the window `cfd_families.in_session` keeps.
     pub fn session(self) -> (i64, i64) {
         self.spec().contract.session
     }
 
     /// Whether a timestamp falls in this sleeve's session, shift applied.
     ///
-    /// `exness_families.in_session`: `opened <= ts % 86400 // 60 <= closed`,
+    /// `cfd_families.in_session`: `opened <= ts % 86400 // 60 <= closed`,
     /// against bars `all_bars` has ALREADY shifted. Rust loads unshifted, so the
     /// shift is applied here.
     pub fn in_session(self, ts: i64) -> bool {
@@ -751,6 +773,7 @@ mod indicators;
 mod sleeves;
 pub mod warmup;
 
+use crate::backtest::fills::FillCoverage;
 use contracts::Instrument;
 use family::*;
 use indicators::*;
@@ -795,6 +818,26 @@ impl ExnessCombined {
     #[allow(dead_code)]
     pub(crate) fn sleeve(&self) -> Sleeve {
         self.sleeve
+    }
+
+    /// Research only: new signals on these weekdays alone (Monday = bit 0).
+    pub(crate) fn restrict_entry_days(&mut self, mask: u8) {
+        self.engine.restrict_entry_days(mask);
+    }
+
+    /// Sends entries on the fill candle's first minute; the live runtime's
+    /// setting, see `FamilyEngine::enable_early_fills`.
+    pub(crate) fn enable_early_fills(&mut self) {
+        self.engine.enable_early_fills();
+    }
+
+    /// Prices this sleeve's fills the way the account gets them. See
+    /// `backtest::fills`; the live runtime never calls this.
+    pub(crate) fn install_fills(
+        &mut self,
+        fills: std::sync::Arc<crate::backtest::fills::MarketFills>,
+    ) {
+        self.engine.install_fills(fills);
     }
 
     /// Steps the sleeve on one bar, for callers outside the crate.
@@ -850,6 +893,14 @@ impl Strategy for ExnessCombined {
 
     fn reset_trading_state(&mut self) {
         self.engine.reset_trading_state();
+    }
+
+    fn entry_cost_bp(&self) -> Option<f64> {
+        self.engine.entry_cost_bp()
+    }
+
+    fn fill_coverage(&self) -> Option<FillCoverage> {
+        Some(self.engine.coverage)
     }
 
     fn abandon_open_position(&mut self) {

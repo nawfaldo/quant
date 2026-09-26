@@ -1,7 +1,7 @@
-"""Export a Rust parity fixture for one sealed `exness_families` cell.
+"""Export a Rust parity fixture for one sealed `cfd_families` cell.
 
 The Rust port in `live_trade/src/strategies/idk/exness_combined_8-23-2026.rs`
-reimplements `exness_families.backtest` as a streaming engine. Structure tests
+reimplements `cfd_families.backtest` as a streaming engine. Structure tests
 cannot show that the two agree bar for bar; this can. It writes the SAME 30-minute
 bars the Python indexes, plus the trades that cell produced over them, so the
 Rust side can replay the bars and compare entry timestamps, sides and stop
@@ -17,7 +17,7 @@ import os
 import sys
 from datetime import datetime, timezone
 
-from sandbox.research import exness_families as ef
+from sandbox.research import cfd_families as ef
 
 # The sealed cells, transcribed from `exness_combined_strategies.json`.
 CELLS = {

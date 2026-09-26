@@ -395,3 +395,64 @@ sweep, the trading session and how it was chosen, every null seed it beat,
 and the sha256 of the sealed file it came from. `SURVIVORS.json` is the
 machine-readable index. Everything that died stays in the sealed per-symbol
 files under `results/`.
+
+### family_study_2026-09-24 (45)
+
+Swing-bar (60m/240m/1d) and fast-bar (5m) winners from the 2026-09-24
+family study, promoted from `NULL_VERDICTS_2026-09-24.md`. `null` column:
+**PASS** beat the best coin-flip seed; **PASS\*** means no seed produced
+an in-sample cell, so it passed by default rather than by beating a null.
+
+NOT SEATABLE AS-IS. The file names carry the bar so `candidates()`, which
+reads `_30m.json` only, does not pick them up: the book, the replay and the
+Rust engine are all 30m. Swing cells hold overnight (`EXNESS_FULL_DAY=1`).
+Tested inside canon on 2026-09-24: only ustec 1d sb_williams qualified,
+and it was not seated.
+
+| symbol | family | tf | OOS % | dd % | n | PF | BE bp | null | best flip |
+|---|---|---|---|---|---|---|---|---|---|
+| ethusd | sb_bollinger | 240m | +118.4 | 13.9 | 45 | 2.38 | 273.4 | PASS | +33.4 |
+| ethusd | sb_roc | 240m | +97.3 | 8.7 | 45 | 2.13 | 253.2 | PASS* | - |
+| us500 | fb_camarilla | 5m | +59.4 | 10.8 | 350 | 1.31 | 5.0 | PASS* | - |
+| ethusd | sb_keltner | 240m | +48.3 | 15.8 | 60 | 1.69 | 103.5 | PASS* | - |
+| us500 | fb_trix | 5m | +42.0 | 10.0 | 188 | 1.53 | 6.0 | PASS | +14.7 |
+| us500 | fb_macd | 5m | +40.8 | 8.0 | 211 | 1.54 | 5.1 | PASS* | - |
+| de40 | sb_volume_breakout | 60m | +39.6 | 7.8 | 61 | 2.05 | 25.6 | PASS | +0.6 |
+| de40 | sb_roc | 240m | +38.8 | 7.9 | 43 | 2.02 | 33.2 | PASS* | - |
+| ethusd | sb_ma_zoo | 240m | +35.7 | 11.3 | 59 | 1.61 | 98.7 | PASS* | - |
+| ustec | sb_eom | 240m | +34.3 | 9.3 | 53 | 1.97 | 44.3 | PASS | +4.5 |
+| de40 | sb_trend_pullback | 60m | +34.1 | 11.8 | 115 | 1.31 | 15.1 | PASS | -14.3 |
+| ustec | sb_williams | 1d | +31.0 | 7.2 | 29 | 1.98 | 78.5 | PASS* | - |
+| us500 | fb_heikin | 5m | +29.7 | 6.1 | 210 | 1.46 | 4.1 | PASS* | - |
+| de40 | sb_trend_pullback | 240m | +28.9 | 6.6 | 53 | 1.76 | 21.2 | PASS | -3.0 |
+| ustec | sb_aroon | 60m | +26.8 | 10.6 | 43 | 1.62 | 33.4 | PASS | -4.1 |
+| ethusd | sb_vote | 240m | +26.2 | 6.4 | 53 | 2.44 | 132.6 | PASS* | - |
+| ethusd | sb_squeeze | 240m | +25.2 | 17.9 | 57 | 1.31 | 63.9 | PASS* | - |
+| us500 | fb_candle | 5m | +22.7 | 3.2 | 111 | 1.63 | 5.7 | PASS | +9.8 |
+| us500 | sb_mfi | 60m | +21.9 | 8.8 | 79 | 1.33 | 18.9 | PASS | -1.1 |
+| us500 | sb_obv_ema | 240m | +21.6 | 17.2 | 83 | 1.29 | 5.3 | PASS | -15.1 |
+| us500 | fb_triple_screen | 5m | +21.3 | 10.2 | 209 | 1.19 | 3.8 | PASS* | - |
+| ustec | fb_adx | 5m | +20.0 | 7.6 | 138 | 1.38 | 5.6 | PASS | +3.0 |
+| ethusd | sb_linreg_channel | 240m | +19.0 | 19.4 | 72 | 1.21 | -3.8 | PASS* | - |
+| ustec | sb_chop | 240m | +18.5 | 11.4 | 88 | 1.30 | 12.6 | PASS | +4.8 |
+| us500 | sb_cmo | 240m | +18.4 | 7.7 | 58 | 1.37 | 15.6 | PASS | -10.5 |
+| ustec | sb_roc | 240m | +16.7 | 15.2 | 69 | 1.34 | 23.8 | PASS | +2.9 |
+| ustec | fb_aroon | 5m | +16.2 | 6.8 | 85 | 1.38 | 5.8 | PASS | -4.5 |
+| uk100 | sb_volume_breakout | 60m | +16.1 | 14.5 | 81 | 1.20 | 10.3 | PASS | -16.7 |
+| de40 | sb_vote | 240m | +15.8 | 14.5 | 68 | 1.28 | 10.2 | PASS* | - |
+| ustec | fb_rvi | 5m | +15.7 | 13.4 | 398 | 1.08 | 1.8 | PASS | -12.3 |
+| us500 | fb_tsi | 5m | +15.3 | 10.3 | 210 | 1.16 | 2.5 | PASS* | - |
+| ustec | sb_awesome | 240m | +15.3 | 12.2 | 38 | 1.37 | 28.9 | PASS | +13.7 |
+| ethusd | sb_cmo | 240m | +14.9 | 6.6 | 49 | 1.47 | 23.1 | PASS* | - |
+| us500 | fb_trend_pullback | 5m | +14.4 | 12.0 | 266 | 1.13 | 2.6 | PASS | -0.7 |
+| us500 | fb_rsi | 5m | +13.8 | 5.8 | 54 | 1.60 | 3.9 | PASS | -6.5 |
+| us500 | sb_ema_cross | 240m | +13.8 | 10.2 | 68 | 1.21 | 6.4 | PASS | -8.2 |
+| us500 | sb_vwap_band | 240m | +12.6 | 21.5 | 112 | 1.12 | 13.6 | PASS | -5.0 |
+| de40 | sb_aroon | 60m | +12.5 | 14.7 | 89 | 1.21 | 7.8 | PASS* | - |
+| us500 | fb_roc | 5m | +12.4 | 16.2 | 286 | 1.08 | 2.4 | PASS* | - |
+| ustec | fb_williams | 5m | +11.7 | 17.6 | 182 | 1.12 | 2.9 | PASS | +3.3 |
+| de40 | fb_adx | 5m | +11.7 | 10.6 | 156 | 1.15 | 4.3 | PASS* | - |
+| uk100 | sb_macd | 240m | +11.2 | 2.4 | 107 | 1.51 | 13.3 | PASS | -3.3 |
+| de40 | sb_macd | 240m | +10.7 | 9.2 | 67 | 1.19 | 10.3 | PASS* | - |
+| ethusd | sb_eom | 240m | +10.7 | 11.5 | 58 | 1.40 | 66.9 | PASS* | - |
+| us500 | sb_candle | 240m | +10.1 | 11.0 | 66 | 1.23 | 21.7 | PASS | -16.8 |

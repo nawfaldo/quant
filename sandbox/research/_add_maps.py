@@ -1,8 +1,8 @@
 """Add one symbol's spread/entry/exit maps to the existing bars maps file."""
 import json, os, sys
-from sandbox.research import exness_live_execution as le
+from sandbox.research.fill_models import exness as le
 from sandbox.research import exness_latency as lat
-from sandbox.research import exness_families as ef
+from sandbox.research import cfd_families as ef
 
 SOURCE = "bars"
 targets = sys.argv[1:]

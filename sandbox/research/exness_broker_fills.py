@@ -65,7 +65,7 @@ import os
 import statistics
 
 from sandbox import data
-from sandbox.research import exness_families as ef
+from sandbox.research import cfd_families as ef
 from sandbox.research import exness_combined_strategies as cs
 
 

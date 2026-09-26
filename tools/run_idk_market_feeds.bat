@@ -5,7 +5,7 @@ REM ONE SCRIPT, ONE WINDOW. `idk_market_live_data_feeds.py` feeds every canon
 REM table and supervises both legs itself -- it polls Dukascopy on an interval
 REM and keeps the Binance websocket alive, restarting it if it dies.
 REM
-REM     dukascopy   audusd eurjpy gbpjpy jp225 ukoil usdjpy
+REM     dukascopy   audusd eurjpy gbpjpy ukoil usdjpy   (jp225 dropped 2026-09-23)
 REM     binance     ethusd (ETHUSDT)
 REM
 REM THAT LIST IS NOT AUTHORITATIVE AND IS NOT CHECKED AGAINST ANYTHING HERE.

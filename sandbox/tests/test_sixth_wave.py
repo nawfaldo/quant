@@ -32,7 +32,7 @@ import math
 import random
 import unittest
 
-from sandbox.research import exness_families as ef
+from sandbox.research import cfd_families as ef
 from sandbox.research import exness_indicators as ind
 
 SIXTH = ef.ALIASES["sixth"]

@@ -1,4 +1,4 @@
-//! `ukoil:xma_cross`, one `exness_families` cell.
+//! `ukoil:xma_cross`, one `cfd_families` cell.
 //!
 //! A fast/slow TEMA cross, taken in the direction of the cross.
 
@@ -21,6 +21,7 @@ pub(super) const SPEC: SleeveSpec = SleeveSpec {
     scale: 1.0,
     shown_equity: 1.0,
     sized_as_import: false,
+    entry_days: None,
     engine: EngineKind::Family(Params {
         family: Family::XmaCross {
             fast: SESSION,

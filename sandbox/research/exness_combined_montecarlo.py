@@ -83,7 +83,7 @@ import time
 from datetime import datetime, timezone
 
 from sandbox.research import exness_combined_strategies as ecs
-from sandbox.research import exness_families as ef
+from sandbox.research import cfd_families as ef
 
 RESULTS = ecs.RESULTS
 CACHE = os.path.join(ecs.CACHE_DIR, "montecarlo_canon_inputs.pkl")

@@ -32,7 +32,7 @@ import json
 import os
 import statistics
 
-from sandbox.research import exness_families as ef
+from sandbox.research import cfd_families as ef
 
 SIXTH = set(ef.ALIASES["sixth"])
 

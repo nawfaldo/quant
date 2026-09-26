@@ -1,4 +1,4 @@
-//! `usdjpy:half_life`, one `exness_families` cell.
+//! `usdjpy:half_life`, one `cfd_families` cell.
 //!
 //! A z-score whose LOOKBACK the market decides, followed rather than faded.
 //!
@@ -53,6 +53,7 @@ pub(super) const SPEC: SleeveSpec = SleeveSpec {
     scale: 1.0,
     shown_equity: 1.0,
     sized_as_import: false,
+    entry_days: None,
     engine: EngineKind::Family(Params {
         family: Family::HalfLife {
             // `p["halflife"][0]`, which is `max(60, 10 * per_session)` and on

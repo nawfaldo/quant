@@ -1,4 +1,4 @@
-//! `ethusd:kalman`, one `exness_families` cell.
+//! `ethusd:kalman`, one `cfd_families` cell.
 //!
 //! The state-space RESIDUAL, faded: price's distance from the filtered level.
 //!
@@ -37,6 +37,7 @@ pub(super) const SPEC: SleeveSpec = SleeveSpec {
     scale: 1.0,
     shown_equity: 1.0,
     sized_as_import: false,
+    entry_days: None,
     engine: EngineKind::Family(Params {
         family: Family::Kalman {
             // The RESIDUAL, in ATRs. `slope` is the other arm and is a trend

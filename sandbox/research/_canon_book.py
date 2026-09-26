@@ -22,7 +22,7 @@ import json
 import os
 
 from sandbox.research import exness_combined_strategies as cb
-from sandbox.research import exness_families as ef
+from sandbox.research import cfd_families as ef
 
 
 def main():

@@ -1,4 +1,4 @@
-//! `usdjpy:kendall`, one `exness_families` cell.
+//! `usdjpy:kendall`, one `cfd_families` cell.
 //!
 //! FADE a Mann-Kendall trend z past two sigma, over 270 half-hours.
 //!
@@ -35,6 +35,7 @@ pub(super) const SPEC: SleeveSpec = SleeveSpec {
     scale: 1.0,
     shown_equity: 1.0,
     sized_as_import: false,
+    entry_days: None,
     engine: EngineKind::Family(Params {
         family: Family::Kendall {
             // `p["kendall"][1]`, which is `max(100, 10 * session)`. On USDJPY

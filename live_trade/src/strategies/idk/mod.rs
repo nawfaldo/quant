@@ -8,7 +8,7 @@
 //!
 //! `nq_ofi_momentum.rs` and `nq_drift_vwap.rs` were carried INTO that directory
 //! rather than retired with the other seventeen, and then left with the symbol.
-//! Every member is now an `exness_families` cell, so the directory holds one
+//! Every member is now an `cfd_families` cell, so the directory holds one
 //! engine rather than three.
 //!
 //! THE DIRECTORY NAME IS NOT A VALID MODULE PATH, which is why `#[path]` is

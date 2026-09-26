@@ -65,7 +65,7 @@ import random
 import statistics
 import time
 
-from sandbox.research import exness_families as ef
+from sandbox.research import cfd_families as ef
 from sandbox.research import exness_combined_strategies as cs
 
 
@@ -87,7 +87,7 @@ def load_pool(min_trades=None, forced=(), quiet=False, only=()):
         # The guard here used to be `name not in by_key`, which silently did
         # nothing when the pool already carried a cell by that name -- and
         # nq:volatility_breakout is exactly that case: it is a real
-        # `exness_families` cell AND the canon runs it through
+        # `cfd_families` cell AND the canon runs it through
         # `external_trades`, on fixed `units_per_dollar` sizing rather than the
         # ATR-scaled lots the native path derives. So the canon quietly ran a
         # DIFFERENT sleeve from the one it names: $762 instead of $831, and a

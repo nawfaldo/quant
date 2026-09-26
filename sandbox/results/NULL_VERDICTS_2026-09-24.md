@@ -1,0 +1,54 @@
+| symbol | bar | family | real OOS | OOS dd | OOS n | coin-flip seeds OOS | best flip | verdict |
+|---|---|---|---|---|---|---|---|---|
+| ethusd | 240m | sb_bollinger | **+118.4%** | 13.9% | 45 | +33.4% / +13.2% / +19.9% | +33.4% | **PASS** |
+| ethusd | 240m | sb_roc | **+97.3%** | 8.7% | 45 | none / none / none | - | **PASS*** |
+| us500 | 5m | fb_camarilla | **+59.4%** | 10.8% | 350 | none / none / none | - | **PASS*** |
+| ethusd | 240m | sb_keltner | **+48.3%** | 15.8% | 60 | none / none / none | - | **PASS*** |
+| us500 | 5m | fb_trix | **+42.0%** | 10.0% | 188 | none / +14.7% / none | +14.7% | **PASS** |
+| us500 | 5m | fb_macd | **+40.8%** | 8.0% | 211 | none / none / none | - | **PASS*** |
+| de40 | 60m | sb_volume_breakout | **+39.6%** | 7.8% | 61 | +0.6% / -23.5% / -17.6% | +0.6% | **PASS** |
+| de40 | 240m | sb_roc | **+38.8%** | 7.9% | 43 | none / none / none | - | **PASS*** |
+| ethusd | 240m | sb_ma_zoo | **+35.7%** | 11.3% | 59 | none / none / none | - | **PASS*** |
+| ustec | 240m | sb_eom | **+34.3%** | 9.3% | 53 | +2.7% / +4.5% / none | +4.5% | **PASS** |
+| de40 | 60m | sb_trend_pullback | **+34.1%** | 11.8% | 115 | -19.8% / -26.8% / -14.3% | -14.3% | **PASS** |
+| ustec | 1d | sb_williams | **+31.0%** | 7.2% | 29 | none / none / none | - | **PASS*** |
+| us500 | 5m | fb_heikin | **+29.7%** | 6.1% | 210 | none / none / none | - | **PASS*** |
+| de40 | 240m | sb_trend_pullback | **+28.9%** | 6.6% | 53 | -30.3% / -3.0% / -3.9% | -3.0% | **PASS** |
+| ustec | 60m | sb_aroon | **+26.8%** | 10.6% | 43 | none / -11.3% / -4.1% | -4.1% | **PASS** |
+| ethusd | 240m | sb_vote | **+26.2%** | 6.4% | 53 | none / none / none | - | **PASS*** |
+| ethusd | 240m | sb_squeeze | **+25.2%** | 17.9% | 57 | none / none / none | - | **PASS*** |
+| us500 | 5m | fb_candle | **+22.7%** | 3.2% | 111 | +9.8% / -1.4% / +9.6% | +9.8% | **PASS** |
+| us500 | 60m | sb_mfi | **+21.9%** | 8.8% | 79 | -14.7% / -1.1% / none | -1.1% | **PASS** |
+| us500 | 240m | sb_obv_ema | **+21.6%** | 17.2% | 83 | none / none / -15.1% | -15.1% | **PASS** |
+| us500 | 5m | fb_triple_screen | **+21.3%** | 10.2% | 209 | none / none / none | - | **PASS*** |
+| ustec | 5m | fb_adx | **+20.0%** | 7.6% | 138 | +3.0% / none / -20.9% | +3.0% | **PASS** |
+| ethusd | 240m | sb_linreg_channel | **+19.0%** | 19.4% | 72 | none / none / none | - | **PASS*** |
+| ustec | 240m | sb_chop | **+18.5%** | 11.4% | 88 | +4.8% / -11.3% / none | +4.8% | **PASS** |
+| us500 | 240m | sb_cmo | **+18.4%** | 7.7% | 58 | none / -26.3% / -10.5% | -10.5% | **PASS** |
+| ustec | 240m | sb_roc | **+16.7%** | 15.2% | 69 | +2.9% / -0.5% / -21.4% | +2.9% | **PASS** |
+| ustec | 5m | fb_aroon | **+16.2%** | 6.8% | 85 | -4.5% / -23.7% / none | -4.5% | **PASS** |
+| uk100 | 60m | sb_volume_breakout | **+16.1%** | 14.5% | 81 | none / -16.7% / none | -16.7% | **PASS** |
+| de40 | 240m | sb_vote | **+15.8%** | 14.5% | 68 | none / none / none | - | **PASS*** |
+| ustec | 5m | fb_rvi | **+15.7%** | 13.4% | 398 | -12.3% / none / none | -12.3% | **PASS** |
+| us500 | 5m | fb_tsi | **+15.3%** | 10.3% | 210 | none / none / none | - | **PASS*** |
+| ustec | 240m | sb_awesome | **+15.3%** | 12.2% | 38 | +11.7% / +13.7% / -8.5% | +13.7% | **PASS** |
+| ethusd | 240m | sb_cmo | **+14.9%** | 6.6% | 49 | none / none / none | - | **PASS*** |
+| us500 | 5m | fb_trend_pullback | **+14.4%** | 12.0% | 266 | -14.7% / -0.7% / -3.6% | -0.7% | **PASS** |
+| us500 | 5m | fb_rsi | **+13.8%** | 5.8% | 54 | none / none / -6.5% | -6.5% | **PASS** |
+| us500 | 240m | sb_ema_cross | **+13.8%** | 10.2% | 68 | -8.2% / -11.0% / -17.7% | -8.2% | **PASS** |
+| us500 | 240m | sb_vwap_band | **+12.6%** | 21.5% | 112 | -19.3% / -5.0% / -14.0% | -5.0% | **PASS** |
+| de40 | 60m | sb_aroon | **+12.5%** | 14.7% | 89 | none / none / none | - | **PASS*** |
+| us500 | 5m | fb_roc | **+12.4%** | 16.2% | 286 | none / none / none | - | **PASS*** |
+| ustec | 5m | fb_williams | **+11.7%** | 17.6% | 182 | +3.3% / none / -11.2% | +3.3% | **PASS** |
+| de40 | 5m | fb_adx | **+11.7%** | 10.6% | 156 | none / none / none | - | **PASS*** |
+| uk100 | 240m | sb_macd | **+11.2%** | 2.4% | 107 | none / none / -3.3% | -3.3% | **PASS** |
+| de40 | 240m | sb_macd | **+10.7%** | 9.2% | 67 | none / none / none | - | **PASS*** |
+| ethusd | 240m | sb_eom | **+10.7%** | 11.5% | 58 | none / none / none | - | **PASS*** |
+| us500 | 240m | sb_candle | **+10.1%** | 11.0% | 66 | -27.9% / -18.7% / -16.8% | -16.8% | **PASS** |
+| ustec | 240m | sb_ichimoku | **+23.2%** | 10.3% | 64 | +39.4% / -24.1% / none | +39.4% | **fail** |
+| ustec | 60m | sb_stoch | **+15.9%** | 10.0% | 64 | -1.8% / -0.3% / +17.5% | +17.5% | **fail** |
+| ustec | 60m | sb_dual_osc | **+15.2%** | 9.8% | 41 | +45.5% / -20.3% / -14.4% | +45.5% | **fail** |
+| ustec | 5m | fb_klinger | **+10.6%** | 14.4% | 186 | +16.2% / none / none | +16.2% | **fail** |
+| us500 | 60m | sb_bop | **+10.3%** | 9.0% | 65 | none / none / +15.5% | +15.5% | **fail** |
+
+passed 45 of 50 checked; 0 still running

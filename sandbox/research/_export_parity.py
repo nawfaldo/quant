@@ -2,7 +2,7 @@
 
 WHY THIS EXISTS. `exness_combined_07-09-2026/parity.rs` replays a frozen bar list
 through the streaming Rust engine and asserts it produces the SAME TRADES as
-`exness_families.backtest` did over the same bars. That is the only property
+`cfd_families.backtest` did over the same bars. That is the only property
 that matters about the port: a sealed cell whose reimplementation fires on
 different bars is a different strategy wearing a validated name.
 
@@ -40,7 +40,7 @@ import os
 import sys
 from datetime import datetime, timezone
 
-from sandbox.research import exness_families as ef
+from sandbox.research import cfd_families as ef
 from sandbox.research import exness_combined_strategies as cb
 
 TS, O, H, L, C, V = range(6)
@@ -92,9 +92,17 @@ def export(key, rows):
     # trade list the book never runs -- on `jp225:swing_donchian` that is 52
     # trades against 81.
     shown = cb.SHOWN_EQUITY.get(key, 1.0)
-    result = ef.backtest(family, bars, ctx, row["params"], lo=lo, hi=hi,
-                         initial=ef.INITIAL_BALANCE * shown,
-                         include_trades=True)
+    # A `WEEKEND_ONLY` cell is frozen with the weekend gate on, exactly as
+    # `sleeve_trades` runs it; the Rust sleeve carries the same mask.
+    saved_days = ef.ENTRY_DAYS
+    if key in cb.WEEKEND_ONLY:
+        ef.ENTRY_DAYS = frozenset({5, 6})
+    try:
+        result = ef.backtest(family, bars, ctx, row["params"], lo=lo, hi=hi,
+                             initial=ef.INITIAL_BALANCE * shown,
+                             include_trades=True)
+    finally:
+        ef.ENTRY_DAYS = saved_days
     trades = [{"entry_ts": t["entry_ts"], "exit_ts": t["exit_ts"],
                "side": t["side"], "entry": t["entry"],
                "distance": t["distance"], "reason": t["reason"]}
@@ -105,6 +113,7 @@ def export(key, rows):
         "params": row["params"],
         "session": list(ctx["cfg"]["session"]),
         "per_session": ctx["periods"]["session"],
+        "entry_days": [5, 6] if key in cb.WEEKEND_ONLY else None,
         "shift_hours": ctx["cfg"]["shift_hours"],
         "warm_from": warm, "from": lo, "to": hi,
         "bars": [encode(b) for b in kept],
@@ -123,7 +132,7 @@ def main():
     wanted = sys.argv[1:]
     # EVERY MEMBER IS A CELL SINCE 2026-09-04, so the whole book is exported.
     # The exclusion this used to carry was for the two true IMPORTS -- `nq:ofi`
-    # and `nq:drift_vwap`, which were never `exness_families` cells and had no
+    # and `nq:drift_vwap`, which were never `cfd_families` cells and had no
     # sealed row to reproduce -- and both left with the NQ symbol. The filter is
     # kept so a future import does not silently produce an empty fixture.
     keys = [k for k in cb.BOOK if k not in ("nq:ofi", "nq:drift_vwap")]

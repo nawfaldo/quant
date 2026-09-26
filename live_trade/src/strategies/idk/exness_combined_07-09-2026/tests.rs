@@ -17,7 +17,7 @@ fn candle(ts: i64, open: f64, high: f64, low: f64, close: f64, volume: f64) -> C
 /// `replay` offers pending entries in `python_key` order, so a book that offers
 /// them differently refuses a different set whenever a cap is on.
 #[test]
-fn the_book_is_the_twenty_two_sealed_members() {
+fn the_book_is_the_twenty_one_sealed_members() {
     let ids: Vec<&str> = BOOK.iter().map(|sleeve| sleeve.id()).collect();
     assert_eq!(
         ids,
@@ -27,23 +27,23 @@ fn the_book_is_the_twenty_two_sealed_members() {
             "ethusd_confluence",
             "ethusd_volatility_breakout",
             "gbpjpy_trap",
-            "ukoil_xma_cross",
             "eurjpy_two_stage",
             "usdjpy_pullback",
             "ethusd_obv_break",
-            "jp225_volume_thrust",
             "ukoil_level_confluence",
-            "jp225_vol_regime",
-            "jp225_momentum_stack",
-            "usdjpy_kendall",
-            "jp225_cusum",
-            "jp225_obv_divergence",
-            "jp225_kalman",
             "eurjpy_gated_orb",
+            "usdjpy_aroon",
+            "ethusd_break_retest",
             "usdjpy_fracdiff",
             "ethusd_pullback",
             "ethusd_kalman",
             "usdjpy_half_life",
+            "ethusd_roofing",
+            "ethusd_level_confluence",
+            "usdjpy_rvol",
+            "ethusd_efficiency",
+            "ethusd_cci",
+            "ethusd_linreg_trend",
         ]
     );
 }
@@ -197,6 +197,12 @@ fn every_entry_cutoff_is_reachable_from_its_session() {
         let Some(params) = sleeve.params() else {
             continue;
         };
+        // `swing_ma` is the one member whose Python has NO cutoff axis at all
+        // -- the swing grid carries none -- so there is nothing to have been
+        // reachable. Its signal never reads the field.
+        if matches!(params.family, super::family::Family::SwingMa { .. }) {
+            continue;
+        }
         let close = sleeve.contract().session.1;
         assert!(
             params.last_entry_minute == close - 60 || params.last_entry_minute == close - 120,
@@ -430,7 +436,7 @@ fn the_canon_book_sizes_against_the_whole_balance() {
 /// `SHOWN_EQUITY` scales the risk REQUEST and nothing else. The three
 /// sleeves that carry one are the ETHUSD pair and the JP225 thrust.
 #[test]
-fn only_three_sleeves_are_shown_a_larger_balance() {
+fn only_two_sleeves_are_shown_a_larger_balance() {
     let shown: Vec<(&str, f64)> = BOOK
         .into_iter()
         .filter(|sleeve| sleeve.shown_equity() != 1.0)
@@ -441,7 +447,6 @@ fn only_three_sleeves_are_shown_a_larger_balance() {
         vec![
             ("ETHUSD Confluence", 3.0),
             ("ETHUSD Volatility Breakout", 3.0),
-            ("JP225 Volume Thrust", 2.0),
         ]
     );
 }
@@ -722,7 +727,9 @@ fn the_swap_did_not_deepen_any_market_s_warmup() {
             .max()
             .unwrap()
     };
-    let usdjpy = Sleeve::from_id("usdjpy_half_life").unwrap().warmup_sessions();
+    let usdjpy = Sleeve::from_id("usdjpy_half_life")
+        .unwrap()
+        .warmup_sessions();
     let ethusd = Sleeve::from_id("ethusd_kalman").unwrap().warmup_sessions();
     assert!(
         usdjpy <= deepest("usdjpy"),

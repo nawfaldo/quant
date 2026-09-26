@@ -24,7 +24,7 @@ import json
 import os
 import sys
 
-from sandbox.research import exness_families as f
+from sandbox.research import cfd_families as f
 
 RESULTS = os.path.join(os.path.dirname(__file__), "..", "results")
 SWAPS = os.path.join(os.path.dirname(__file__), "..", "..", "swaps_raw.json")

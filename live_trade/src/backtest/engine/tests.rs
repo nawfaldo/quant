@@ -231,7 +231,7 @@ fn the_pro_model_is_a_proportional_spread_and_nothing_else() {
     );
     // The widest quote in the book, by a factor of two.
     assert_eq!(sleeve_spread_bp("ETHUSD Confluence"), Some(3.721_1 + 0.2));
-    assert_eq!(sleeve_spread_bp("JP225 Kalman"), Some(0.349_9 + 0.2));
+    assert_eq!(sleeve_spread_bp("USDJPY Rvol"), Some(0.439_8 + 0.2));
     // An unregistered name has no market and so no charge to look up.
     assert_eq!(sleeve_spread_bp("ETHUSD VWAP"), None);
     assert_eq!(market_spread_bp("unlisted"), None);
@@ -489,7 +489,7 @@ fn financing_nights_are_counted_on_the_sleeve_s_own_clock() {
         point_value: 1_000.0,
         ..position
     };
-    let charged = net_pnl_after_financing(&ukoil, 86.5, exit, "UKOIL XMA Cross");
+    let charged = net_pnl_after_financing(&ukoil, 86.5, exit, "UKOIL Level Confluence");
     assert!(
         charged < net_pnl(&ukoil, 86.5),
         "an unshifted market over the same stamps is charged, so this test is          about the clock rather than about the charge being switched off"

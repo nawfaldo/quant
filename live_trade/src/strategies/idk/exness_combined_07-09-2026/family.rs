@@ -3,12 +3,14 @@
 //!
 //! ONE ENGINE FOR THE WHOLE BOOK SINCE 2026-09-04. The 29-08 book carried two
 //! hand-written imports beside this -- `nq:ofi` and `nq:drift_vwap`, neither an
-//! `exness_families` cell, both on one-minute bars and one of them on the
+//! `cfd_families` cell, both on one-minute bars and one of them on the
 //! level-two feature table. NQ was barred as a symbol on 2026-09-03 and the
 //! decay screen took the rest, so every member now IS a cell of this grid and
 //! the two second engines are gone rather than idle.
 
 use super::*;
+use crate::backtest::fills::{FillCoverage, MarketFills};
+use std::sync::Arc;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum Direction {
@@ -269,6 +271,70 @@ pub(super) enum Family {
         multiple: f64,
         threshold_z: f64,
     },
+    /// Aroon-up crossing Aroon-down: which extreme is more RECENT.
+    ///
+    /// Denominated in TIME, not price -- the only reading in the book that is.
+    /// Seated 2026-09-22 as `usdjpy:aroon`.
+    Aroon {
+        period: usize,
+        /// `max(up, down)` must reach this before a cross counts.
+        min_strength: f64,
+    },
+    /// A multi-day EMA cross (`es.ema`, seeded at the first close).
+    ///
+    /// Declared `swing` in the study, but canon runs `SESSION_ONLY`, so it is
+    /// flattened at the close and admitted once a day like every other cell.
+    /// It has NO `last_entry_minute` in Python and calls no `_late`, so the
+    /// signal below never asks. Seated 2026-09-22 as `eurjpy:swing_ma`.
+    SwingMa {
+        fast: usize,
+        slow: usize,
+    },
+    /// A zero crossing of Ehlers' roofing BANDPASS, gated on the band's own
+    /// recent amplitude in ATRs. Seated 2026-09-23 as `ethusd:roofing`.
+    Roofing {
+        high_period: usize,
+        low_period: usize,
+        amplitude_atr: f64,
+    },
+    /// A directional bar on volume unusual FOR ITS CLOCK MINUTE. Seated
+    /// 2026-09-23 as `usdjpy:rvol`.
+    Rvol {
+        rvol: f64,
+        threshold_atr: f64,
+    },
+    /// Kaufman's efficiency ratio: the move is traded only when its PATH was
+    /// clean (or, on the other arm, noisy). Seated 2026-09-26 as the
+    /// weekend-only `ethusd:efficiency`.
+    Efficiency {
+        period: usize,
+        min_er: f64,
+        regime: ErRegime,
+    },
+    /// CCI past a threshold -- a z-score with a mean-ABSOLUTE denominator.
+    /// Python's raw side is the FADE (short above +threshold) and `follow`
+    /// inverts it, so `Direction::Follow` here means Python's `follow`.
+    /// Seated 2026-09-26 as the weekend-only `ethusd:cci`.
+    Cci {
+        period: usize,
+        threshold: f64,
+    },
+    /// A least-squares slope that is both steep enough (in daily risk) and well
+    /// fitted enough. Seated 2026-09-26 as the weekend-only
+    /// `ethusd:linreg_trend`.
+    LinregTrend {
+        period: usize,
+        slope: f64,
+        min_fit: f64,
+    },
+}
+
+/// `efficiency`'s `regime` axis: trade a clean path, or a noisy one.
+#[allow(dead_code, reason = "the unreached arm is what the reached one means")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum ErRegime {
+    Clean,
+    Noisy,
 }
 
 /// `LEVEL_PAIRS`: which two level systems `level_confluence` asks to agree.
@@ -433,6 +499,12 @@ pub(super) struct Position {
     /// the same bars in the same order, which is what makes the two agree.
     pub(super) entry_candle: u64,
     pub(super) best: f64,
+    /// The spread this position crossed at entry, in bp WITHOUT the slippage
+    /// allowance: the broker's quote in the entry minute where the fill model
+    /// reaches it, the sealed constant where it does not. RESOLVED AT ENTRY --
+    /// `cfd_families.backtest` stores it on the position for the same reason:
+    /// a quote read at exit would be hours later, on the wrong side of the move.
+    pub(super) spread_bp: f64,
 }
 
 /// One bar of the history `trap` walks backwards over: what the level WAS when
@@ -465,7 +537,7 @@ pub(super) struct LevelHistory {
     pub(super) span_min: Option<f64>,
 }
 
-/// The streaming port of `exness_families.backtest` for one sealed cell.
+/// The streaming port of `cfd_families.backtest` for one sealed cell.
 ///
 /// ORDERING MATCHES THE PYTHON AND THE RUST ENGINE: session flatten first, then
 /// the stop, then the target, then the trail ratchet. An ambiguous candle is
@@ -568,6 +640,22 @@ pub(super) struct FamilyEngine {
     pub(super) current_width: Option<f64>,
     pub(super) current_width_min: Option<f64>,
     pub(super) current_span_min: Option<f64>,
+    /// `ctx["aroon_up"]` / `ctx["aroon_down"]`, current and previous.
+    pub(super) aroon: Option<Aroon>,
+    /// `ctx["fast"][n]` / `ctx["slow"][n]`: plain seeded EMAs, NOT the TEMAs
+    /// `xma_cross` reads. The cross itself goes through `previous_cross`.
+    pub(super) fast_ema: Option<Ema>,
+    pub(super) slow_ema: Option<Ema>,
+    /// `ctx["roofing"][band]`.
+    pub(super) roofing: Option<Roofing>,
+    /// `ctx["rvol"]`.
+    pub(super) relative_volume: Option<RelativeVolume>,
+    /// `ctx["er"][period]`, with the net move it was measured over.
+    pub(super) efficiency: Option<EfficiencyRatio>,
+    /// `ctx["cci"][period]`.
+    pub(super) cci: Option<Cci>,
+    /// `ctx["slope"][period]` / `ctx["fit"][period]`.
+    pub(super) linreg: Option<LinearRegression>,
 
     // ---- trading state ----
     /// How many in-session candles this engine has stepped, which is Python's
@@ -580,6 +668,30 @@ pub(super) struct FamilyEngine {
     /// The standalone account that decides which trades EXIST. See
     /// `ADMISSION_BALANCE`; it never touches the live book's balance.
     pub(super) shadow_equity: f64,
+
+    // ---- the Exness live-fill model (`backtest::fills`) ----
+    /// The broker's minute series for this sleeve's market. Installed by the
+    /// backtest and never by the live runtime, which is filled by the broker
+    /// itself and has no future minute to read.
+    pub(super) fills: Option<Arc<MarketFills>>,
+    /// The whole entry charge, bp of the fill, for the fill just emitted --
+    /// `Some` only when the broker table priced its spread, so the engine keeps
+    /// its constant whenever this sleeve fell back to it.
+    pub(super) entry_cost_bp: Option<f64>,
+    pub(super) coverage: FillCoverage,
+
+    // ---- live execution ----
+    /// Fill a pending signal on the FIRST MINUTE of its fill candle instead of
+    /// once that candle has closed. LIVE ONLY: see `enable_early_fills`.
+    pub(super) fill_early: bool,
+    /// The `candles` index of a candle whose entry was filled early, so its own
+    /// `on_candle` can skip what the ordinary path never saw that position do.
+    pub(super) early_filled_candle: Option<u64>,
+    /// Weekdays a new signal may be taken on, Monday = bit 0; `None` for every
+    /// day. RESEARCH ONLY -- set by the backtest from `EXNESS_ENTRY_DAYS`, the
+    /// same switch `cfd_families.ENTRY_DAYS` reads, and never by the live
+    /// runtime.
+    pub(super) entry_days: Option<u8>,
 }
 
 impl FamilyEngine {
@@ -642,15 +754,165 @@ impl FamilyEngine {
             current_width: None,
             current_width_min: None,
             current_span_min: None,
+            aroon: None,
+            fast_ema: None,
+            slow_ema: None,
+            roofing: None,
+            relative_volume: None,
+            efficiency: None,
+            cci: None,
+            linreg: None,
             candles: 0,
             traded_day: None,
             pending: None,
             position: None,
             action_timestamp: None,
             shadow_equity: ADMISSION_BALANCE * sleeve.shown_equity(),
+            fills: None,
+            entry_cost_bp: None,
+            coverage: FillCoverage::default(),
+            fill_early: false,
+            early_filled_candle: None,
+            entry_days: sleeve.entry_days(),
         };
         engine.arm_family_state();
         engine
+    }
+
+    /// Fills the pending signal at the open of the candle stamped `candle_ts`,
+    /// if it still may: `cfd_families.backtest`'s fill block.
+    ///
+    /// Intraday that candle must still be in the SAME session, so a signal on
+    /// the last bar of the day is dropped rather than filled at tomorrow's open.
+    /// The pending signal is consumed either way, exactly as Python's is.
+    ///
+    /// AT THE PRICE THE ACCOUNT GETS, and everything downstream keys on it: both
+    /// sizing stages, the stop, the target and the trail's first `best`.
+    /// `ef.backtest` sets all of them from `fill_price`, so a broker fill that
+    /// lands away from the vendor open moves the stop with it rather than
+    /// leaving it measured from a price nobody paid.
+    ///
+    /// `entry_candle` is the index the fill candle has (or will have) in
+    /// `candles`, which only `time_N` reads.
+    fn fill_pending(
+        &mut self,
+        candle_ts: i64,
+        candle_open: f64,
+        equity: f64,
+        entry_candle: u64,
+    ) -> Option<Action> {
+        if self.position.is_some() {
+            return None;
+        }
+        let pending = self.pending.take()?;
+        let day = self.day_of(candle_ts);
+        let minute = self.minute_of(candle_ts);
+        if pending.day != day || minute >= self.spec.session.1 {
+            return None;
+        }
+        let broker_entry = self
+            .fills
+            .as_ref()
+            .and_then(|fills| fills.entry(candle_ts, candle_open));
+        let entry = broker_entry.unwrap_or(candle_open);
+        // Stage one: does this trade exist at all? See `ADMISSION_BALANCE`.
+        let shadow_lots = self.admission_lots(entry, pending.distance, pending.realized)?;
+        // Stage two: how large is it against the shared balance?
+        let quantity = self.quantity(equity, entry, pending.distance)?;
+        let broker_spread = self
+            .fills
+            .as_ref()
+            .and_then(|fills| fills.spread_bp(candle_ts));
+        self.coverage.entries += 1;
+        if broker_entry.is_some() && broker_spread.is_some() {
+            self.coverage.entries_priced += 1;
+        }
+        self.entry_cost_bp = broker_spread.map(|spread| spread + SLIPPAGE_BP);
+        let (target, trail, max_bars) = self.exit_plan(pending.distance);
+        self.position = Some(Position {
+            side: pending.side,
+            entry,
+            shadow_lots,
+            stop: match pending.side {
+                Side::Long => entry - pending.distance,
+                Side::Short => entry + pending.distance,
+            },
+            distance: pending.distance,
+            target: target.map(|distance| match pending.side {
+                Side::Long => entry + distance,
+                Side::Short => entry - distance,
+            }),
+            trail,
+            max_bars,
+            entry_candle,
+            best: entry,
+            spread_bp: broker_spread.unwrap_or(self.spec.spread_bp),
+        });
+        self.traded_day = Some(day);
+        Some(Action::Enter {
+            side: pending.side,
+            price: entry,
+            quantity,
+        })
+    }
+
+    pub(super) fn install_fills(&mut self, fills: Arc<MarketFills>) {
+        self.fills = Some(fills);
+    }
+
+    /// Sends entries when the fill candle OPENS rather than when it closes.
+    ///
+    /// WHY LIVE NEEDS IT AND THE BACKTEST DOES NOT. A signal read on candle S-1
+    /// fills at candle S's OPEN, and both engines book that price. But the
+    /// fill used to be EMITTED only when candle S closed -- `on_candle(S)` does
+    /// the exits, then the fill, then the next signal -- so the backtest filled
+    /// at 10:30's open while the live account's market order went out at
+    /// 11:00, half an hour later, at whatever the market then was. Measured on
+    /// 2026-09-24/25: every one of five entries was sent 30 minutes after the
+    /// price the engine recorded (ethusd_kalman 2694.02 booked, 2654.37 got).
+    ///
+    /// Everything the fill reads is known on the first minute of S: the
+    /// pending signal, the open, the day and minute, the shadow balance, and
+    /// the sizing multiplier (which moves only on a day's first candle, and an
+    /// entry never fills on one because its signal must be the same day). So
+    /// the fill is done there, and `on_candle(S)` then skips the two steps the
+    /// ordinary path never ran against this position: the exit test on S (the
+    /// ordinary fill comes AFTER it) and a new signal on S (the ordinary path
+    /// holds the position through it, even one that is later discarded).
+    ///
+    /// The backtest keeps the ordinary path, where both give the same trades
+    /// and the Python parity fixtures stay authoritative.
+    /// Restricts new signals to the weekdays in `mask` (Monday = bit 0). Gates
+    /// the SIGNAL, as `cfd_families.backtest` gates `tradeable`, so a position
+    /// already held still exits by its own rules.
+    pub(super) fn restrict_entry_days(&mut self, mask: u8) {
+        self.entry_days = Some(mask);
+    }
+
+    pub(super) fn enable_early_fills(&mut self) {
+        self.fill_early = true;
+    }
+
+    /// Where the account really got out of a position the candle stamped
+    /// `candle_ts` closed, given the price the bar itself says.
+    ///
+    /// `ef.backtest`'s `exit_at(ts, price)`: EVERY reason is repriced -- stop,
+    /// target, session flatten, clock -- because every one of them is a market
+    /// order the runtime sends once the candle has rolled. The idealised price
+    /// survives only where the broker table does not reach.
+    fn exit_fill(&mut self, candle_ts: i64, candle_open: f64, idealised: f64) -> f64 {
+        self.coverage.exits += 1;
+        match self
+            .fills
+            .as_ref()
+            .and_then(|fills| fills.exit(candle_ts, candle_open))
+        {
+            Some(price) => {
+                self.coverage.exits_priced += 1;
+                price
+            }
+            None => idealised,
+        }
     }
 
     /// Builds only the context blocks this cell's family declares.
@@ -777,6 +1039,32 @@ impl FamilyEngine {
                 self.half_life = Some(OuHalfLife::new(period));
                 self.closes = Some(CloseHistory::new());
             }
+            Family::Aroon { period, .. } => {
+                self.aroon = Some(Aroon::new(period));
+            }
+            Family::SwingMa { fast, slow } => {
+                self.fast_ema = Some(Ema::new(fast));
+                self.slow_ema = Some(Ema::new(slow));
+            }
+            Family::Roofing {
+                high_period,
+                low_period,
+                ..
+            } => {
+                self.roofing = Some(Roofing::new(high_period, low_period));
+            }
+            Family::Rvol { .. } => {
+                self.relative_volume = Some(RelativeVolume::new());
+            }
+            Family::Efficiency { period, .. } => {
+                self.efficiency = Some(EfficiencyRatio::new(period));
+            }
+            Family::Cci { period, .. } => {
+                self.cci = Some(Cci::new(period));
+            }
+            Family::LinregTrend { period, .. } => {
+                self.linreg = Some(LinearRegression::new(period));
+            }
         }
     }
 
@@ -902,6 +1190,37 @@ impl FamilyEngine {
         if let Some(half_life) = &mut self.half_life {
             half_life.push(candle.close);
         }
+        // All four read THIS index inclusively in Python: `aroon` includes the
+        // current bar, `es.ema` and the roofing recursion are defined at every
+        // index through this one, and `relative_volume` scores this bar
+        // against strictly earlier sessions before appending it.
+        if let Some(aroon) = &mut self.aroon {
+            aroon.push(candle.high, candle.low);
+        }
+        if let Some(fast) = &mut self.fast_ema {
+            fast.push(candle.close);
+        }
+        if let Some(slow) = &mut self.slow_ema {
+            slow.push(candle.close);
+        }
+        if let Some(roofing) = &mut self.roofing {
+            roofing.push(candle.close);
+        }
+        // Inclusive in Python too: `er`, `cci` and `linreg` are defined at every
+        // index through this one.
+        if let Some(efficiency) = &mut self.efficiency {
+            efficiency.push(candle.close);
+        }
+        if let Some(cci) = &mut self.cci {
+            cci.push(candle.high, candle.low, candle.close);
+        }
+        if let Some(linreg) = &mut self.linreg {
+            linreg.push(candle.close);
+        }
+        let minute = self.minute_of(candle.ts);
+        if let Some(relative) = &mut self.relative_volume {
+            relative.push(minute, candle.volume);
+        }
         // `opening_ranges` is built over the whole bar list up front, so on the
         // day's FIRST candle the window is already that candle's own high and
         // low -- which is why this is fed before the signal rather than after.
@@ -957,7 +1276,7 @@ impl FamilyEngine {
         }
     }
 
-    /// `size`, the book's sizing rule rather than `exness_families.quantity`.
+    /// `size`, the book's sizing rule rather than `cfd_families.quantity`.
     ///
     /// The margin ceiling deliberately reads FULL equity, not the shown figure:
     /// margin is a broker constraint on the real account and does not shrink or
@@ -985,7 +1304,7 @@ impl FamilyEngine {
         let step = self.quantity_step.max(self.spec.volume_step);
         // THE IMPORT-SIZED BRANCH IS A DIFFERENT RULE, NOT A RELAXED ONE.
         //
-        // `nq:volatility_breakout` IS an `exness_families` cell -- selected and
+        // `nq:volatility_breakout` IS an `cfd_families` cell -- selected and
         // admitted like one -- but `exness_combined_strategies.EXTERNAL` lists
         // it, so `replay` sizes it on the imported branch:
         //
@@ -1036,7 +1355,7 @@ impl FamilyEngine {
         (lots + 1e-10 >= floor && lots.is_finite()).then_some(lots)
     }
 
-    /// `exness_families.quantity`: the STANDALONE rule, at `ADMISSION_BALANCE`.
+    /// `cfd_families.quantity`: the STANDALONE rule, at `ADMISSION_BALANCE`.
     ///
     /// Not a sizing function -- only its zero/non-zero answer is used. A cell's
     /// trade log is what this admits, and the book then re-sizes those trades
@@ -1073,7 +1392,7 @@ impl FamilyEngine {
 
     /// Settles a closed trade into the shadow account.
     ///
-    /// `exness_families.backtest`'s own accounting: the gross move less the
+    /// `cfd_families.backtest`'s own accounting: the gross move less the
     /// entry cost, times the standalone lots and the contract multiplier.
     /// Financing is omitted because it is zero for every sleeve in this book --
     /// thirteen never span a date boundary and JP225 quotes both swap legs at
@@ -1083,7 +1402,7 @@ impl FamilyEngine {
             Side::Long => exit - position.entry,
             Side::Short => position.entry - exit,
         };
-        let cost = position.entry * (self.spec.spread_bp + SLIPPAGE_BP) / 10_000.0;
+        let cost = position.entry * (position.spread_bp + SLIPPAGE_BP) / 10_000.0;
         self.shadow_equity += (gross - cost) * position.shadow_lots * self.spec.multiplier;
     }
 
@@ -1172,7 +1491,176 @@ impl FamilyEngine {
                 threshold_z,
                 ..
             } => self.half_life_signal(candle, minute, multiple, threshold_z),
+            Family::Aroon { min_strength, .. } => self.aroon_signal(minute, min_strength),
+            Family::SwingMa { .. } => self.swing_ma_signal(),
+            Family::Roofing { amplitude_atr, .. } => self.roofing_signal(minute, amplitude_atr),
+            Family::Rvol {
+                rvol,
+                threshold_atr,
+            } => self.rvol_signal(candle, minute, rvol, threshold_atr),
+            Family::Efficiency { min_er, regime, .. } => {
+                self.efficiency_signal(minute, min_er, regime)
+            }
+            Family::Cci { threshold, .. } => self.cci_signal(minute, threshold),
+            Family::LinregTrend {
+                period,
+                slope,
+                min_fit,
+            } => self.linreg_trend_signal(minute, period, slope, min_fit),
         }
+    }
+
+    /// `efficiency_signal`: the move over `period`, if its path was the kind
+    /// of path this cell trades.
+    pub(super) fn efficiency_signal(&self, minute: i64, min_er: f64, regime: ErRegime) -> Option<Side> {
+        let (ratio, net) = self.efficiency.as_ref()?.value()?;
+        if self.late(minute) {
+            return None;
+        }
+        let clean = ratio >= min_er;
+        if clean != (regime == ErRegime::Clean) {
+            return None;
+        }
+        if net == 0.0 {
+            return None;
+        }
+        let raw = if net > 0.0 { Side::Long } else { Side::Short };
+        Some(self.params.direction.apply(raw))
+    }
+
+    /// `cci_signal`. The raw side FADES the extreme; `follow` inverts it.
+    pub(super) fn cci_signal(&self, minute: i64, threshold: f64) -> Option<Side> {
+        let value = self.cci.as_ref()?.value()?;
+        if self.late(minute) {
+            return None;
+        }
+        let raw = if value > threshold {
+            Side::Short
+        } else if value < -threshold {
+            Side::Long
+        } else {
+            return None;
+        };
+        Some(match self.params.direction {
+            Direction::Fade => raw,
+            Direction::Follow => Direction::Fade.apply(raw),
+        })
+    }
+
+    /// `linreg_trend_signal`: slope times period, in daily risk, past a
+    /// threshold -- on a window whose fit is good enough.
+    pub(super) fn linreg_trend_signal(
+        &self,
+        minute: i64,
+        period: usize,
+        threshold: f64,
+        min_fit: f64,
+    ) -> Option<Side> {
+        let (slope, fit) = self.linreg.as_ref()?.value()?;
+        let fit = fit?;
+        let risk = self.risk.value().filter(|risk| *risk != 0.0)?;
+        if self.late(minute) {
+            return None;
+        }
+        if fit < min_fit {
+            return None;
+        }
+        let travel = slope * period as f64 / risk;
+        let raw = if travel > threshold {
+            Side::Long
+        } else if travel < -threshold {
+            Side::Short
+        } else {
+            return None;
+        };
+        Some(self.params.direction.apply(raw))
+    }
+
+    /// `aroon_signal`: up crossing down, once either is strong enough.
+    pub(super) fn aroon_signal(&self, minute: i64, min_strength: f64) -> Option<Side> {
+        let ((up, down), (up_before, down_before)) = self.aroon.as_ref()?.readings()?;
+        if self.late(minute) {
+            return None;
+        }
+        if up.max(down) < min_strength {
+            return None;
+        }
+        let now = up - down;
+        let before = up_before - down_before;
+        let raw = if before <= 0.0 && now > 0.0 {
+            Side::Long
+        } else if before >= 0.0 && now < 0.0 {
+            Side::Short
+        } else {
+            return None;
+        };
+        Some(self.params.direction.apply(raw))
+    }
+
+    /// `swing_ma_signal`: the EMA cross. No `_late` -- Python never asks.
+    pub(super) fn swing_ma_signal(&self) -> Option<Side> {
+        let fast = self.fast_ema.as_ref()?.value()?;
+        let slow = self.slow_ema.as_ref()?.value()?;
+        let before = self.previous_cross?;
+        let now = fast - slow;
+        let raw = if before <= 0.0 && now > 0.0 {
+            Side::Long
+        } else if before >= 0.0 && now < 0.0 {
+            Side::Short
+        } else {
+            return None;
+        };
+        Some(self.params.direction.apply(raw))
+    }
+
+    /// `roofing_signal`: a zero crossing of the band, if the band has been
+    /// wide enough in ATRs over the last 21 readings to be worth trading.
+    pub(super) fn roofing_signal(&self, minute: i64, amplitude_atr: f64) -> Option<Side> {
+        let roofing = self.roofing.as_ref()?;
+        let (value, previous) = roofing.readings()?;
+        if self.late(minute) {
+            return None;
+        }
+        let raw = if previous <= 0.0 && value > 0.0 {
+            Side::Long
+        } else if previous >= 0.0 && value < 0.0 {
+            Side::Short
+        } else {
+            return None;
+        };
+        let atr = self
+            .atr
+            .value()
+            .filter(|atr| *atr != 0.0 && atr.is_finite())?;
+        if roofing.recent_amplitude()? < amplitude_atr * atr {
+            return None;
+        }
+        Some(self.params.direction.apply(raw))
+    }
+
+    /// `rvol_signal`: unusual volume for this minute on a bar whose body is at
+    /// least `threshold_atr` ATRs; the body's sign is the side.
+    pub(super) fn rvol_signal(
+        &self,
+        candle: &Candle,
+        minute: i64,
+        rvol: f64,
+        threshold_atr: f64,
+    ) -> Option<Side> {
+        let value = self.relative_volume.as_ref()?.value()?;
+        let atr = self.atr.value().filter(|atr| *atr != 0.0)?;
+        if self.late(minute) {
+            return None;
+        }
+        if value < rvol {
+            return None;
+        }
+        let body = candle.close - candle.open;
+        if body.abs() < threshold_atr * atr {
+            return None;
+        }
+        let raw = if body > 0.0 { Side::Long } else { Side::Short };
+        Some(self.params.direction.apply(raw))
     }
 
     /// A retracement from a recent extreme, measured in DAILY RANGE, inside a
@@ -2100,7 +2588,7 @@ impl FamilyEngine {
 // -------------------------------------------------------------------------- //
 
 impl FamilyEngine {
-    /// One completed in-session candle, in the order `exness_families.backtest`
+    /// One completed in-session candle, in the order `cfd_families.backtest`
     /// walks its bar list.
     pub(super) fn on_candle(
         &mut self,
@@ -2115,6 +2603,9 @@ impl FamilyEngine {
         // Python's `index` is the loop variable, already advanced when the exit
         // block runs and still advanced when the entry records it.
         self.candles += 1;
+        // This candle's entry already went out on its first minute; see
+        // `enable_early_fills`. Taken, so it can apply to this candle only.
+        let filled_early = self.early_filled_candle.take() == Some(self.candles);
 
         // Inclusive readings first: at this point every one of them holds what
         // the Python array holds at this index. The channels deliberately do
@@ -2141,7 +2632,7 @@ impl FamilyEngine {
         // 1. EXIT. Session flatten, then stop, then target, then the trail
         //    ratchet -- and the ratchet only runs on a candle that did not exit,
         //    which is why it is an `else` in the Python rather than a step.
-        if let Some(position) = &mut self.position {
+        if !filled_early && let Some(position) = &mut self.position {
             let mut price = None;
             // UNCONDITIONAL, because `family_hold` is "session" for all
             // twenty-two families this book selects. Python's `swing` branch
@@ -2203,7 +2694,8 @@ impl FamilyEngine {
                 }
             }
             match price {
-                Some(price) => {
+                Some(idealised) => {
+                    let price = self.exit_fill(candle.ts, candle.open, idealised);
                     let closed = self.position.take().expect("checked just above");
                     self.settle_shadow(&closed, price);
                     actions.push(Action::Close {
@@ -2234,53 +2726,23 @@ impl FamilyEngine {
         }
 
         // 2. FILL. A signal read on the previous candle enters at THIS candle's
-        //    open. Intraday that candle must still be in the SAME session, so a
-        //    signal on the last bar of the day is dropped rather than filled at
-        //    tomorrow's open.
-        if self.position.is_none()
-            && let Some(pending) = self.pending.take()
-            && pending.day == day
-            && minute < close_minute
-            // Stage one: does this trade exist at all? See `ADMISSION_BALANCE`.
-            && let Some(shadow_lots) =
-                self.admission_lots(candle.open, pending.distance, pending.realized)
-            // Stage two: how large is it against the shared balance?
-            && let Some(quantity) = self.quantity(equity, candle.open, pending.distance)
-        {
-            let entry = candle.open;
-            let (target, trail, max_bars) = self.exit_plan(pending.distance);
-            self.position = Some(Position {
-                side: pending.side,
-                entry,
-                shadow_lots,
-                stop: match pending.side {
-                    Side::Long => entry - pending.distance,
-                    Side::Short => entry + pending.distance,
-                },
-                distance: pending.distance,
-                target: target.map(|distance| match pending.side {
-                    Side::Long => entry + distance,
-                    Side::Short => entry - distance,
-                }),
-                trail,
-                max_bars,
-                entry_candle: self.candles,
-                best: entry,
-            });
-            self.traded_day = Some(day);
-            actions.push(Action::Enter {
-                side: pending.side,
-                price: entry,
-                quantity,
-            });
+        //    open -- unless live already filled it on this candle's first
+        //    minute (`fill_early`), in which case there is nothing left pending.
+        if let Some(enter) = self.fill_pending(candle.ts, candle.open, equity, self.candles) {
+            actions.push(enter);
         }
 
         // 3. SIGNAL. At most one position and one new entry a day, and the
         //    volatility filter is checked BEFORE the signal is called -- which
         //    is why anything reading the day's path has to read it from
         //    `SessionPath` rather than accumulate its own.
-        let tradeable = (self.spec.session.0..close_minute).contains(&minute);
+        // 1970-01-01, day 0, was a Thursday -- so Monday is `(day + 3) % 7 == 0`.
+        let weekday_allowed = self
+            .entry_days
+            .is_none_or(|mask| mask & (1 << (day + 3).rem_euclid(7)) != 0);
+        let tradeable = (self.spec.session.0..close_minute).contains(&minute) && weekday_allowed;
         if self.position.is_none()
+            && !filled_early
             && self.pending.is_none()
             && self.traded_day != Some(day)
             && tradeable
@@ -2336,6 +2798,12 @@ impl FamilyEngine {
         if let (Some(fast), Some(slow)) = (
             self.fast_tema.as_ref().and_then(Tema::value),
             self.slow_tema.as_ref().and_then(Tema::value),
+        ) {
+            self.previous_cross = Some(fast - slow);
+        }
+        if let (Some(fast), Some(slow)) = (
+            self.fast_ema.as_ref().and_then(Ema::value),
+            self.slow_ema.as_ref().and_then(Ema::value),
         ) {
             self.previous_cross = Some(fast - slow);
         }
@@ -2411,6 +2879,21 @@ impl Strategy for FamilyEngine {
                 close: bar.close,
                 volume: bar.volume,
             });
+            // THE ENTRY GOES OUT NOW, on the candle's first minute, whose open
+            // IS the candle's open -- the price the backtest books. See
+            // `enable_early_fills`. Only for a candle `on_candle` will later
+            // step, which is an in-session one.
+            let opening = slot * BAR_SECONDS;
+            if self.fill_early
+                && self.in_session(self.minute_of(opening))
+                && let Some(enter) = self.fill_pending(opening, bar.open, equity, self.candles + 1)
+            {
+                self.early_filled_candle = Some(self.candles + 1);
+                if self.action_timestamp.is_none() {
+                    self.action_timestamp = Some(opening - self.spec.shift_hours * 3_600);
+                }
+                actions.push(enter);
+            }
         } else if let Some(candle) = &mut self.building {
             candle.high = candle.high.max(bar.high);
             candle.low = candle.low.min(bar.low);
@@ -2426,7 +2909,7 @@ impl Strategy for FamilyEngine {
         // T+63 -- with nothing missing, on a decision whose every input was
         // already in memory. Measured on `mt5_execution_commands` for 2026-09-07,
         // with the watermark hold-back on top: usdjpy and ukoil +125s, ethusd
-        // +95s, against the 1.6s `exness_live_execution` charges.
+        // +95s, against the 1.6s `fill_models.exness` charges.
         //
         // The final source bar identifies itself -- `ts + source_step` lands
         // exactly on the slot's end -- so the candle is closed here instead, and
@@ -2505,7 +2988,7 @@ impl Strategy for FamilyEngine {
     /// Called by the engine at the backtest boundary, after the preroll has
     /// warmed the indicators and before the reported window opens.
     ///
-    /// THE SHADOW ACCOUNT RESETS HERE TOO, and it has to. `exness_families`
+    /// THE SHADOW ACCOUNT RESETS HERE TOO, and it has to. `cfd_families`
     /// starts its standalone run AT `lo` with `initial` in hand -- it never
     /// trades the warm-up -- so a shadow balance that had been compounding
     /// through the preroll would answer the admission question against an
@@ -2517,6 +3000,11 @@ impl Strategy for FamilyEngine {
         self.position = None;
         self.traded_day = None;
         self.shadow_equity = ADMISSION_BALANCE * self.sleeve.shown_equity();
+        self.coverage = FillCoverage::default();
+    }
+
+    fn entry_cost_bp(&self) -> Option<f64> {
+        self.entry_cost_bp
     }
 
     /// Only `position`, and deliberately nothing else.

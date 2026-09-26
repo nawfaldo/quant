@@ -13,7 +13,7 @@ import os
 from datetime import datetime, timezone
 
 from sandbox.research import exness_combined_strategies as cs
-from sandbox.research import exness_families as ef
+from sandbox.research import cfd_families as ef
 from sandbox.research.zero_min_book_search import load
 
 

@@ -1,6 +1,6 @@
 //! Streaming indicators, one bar at a time.
 //!
-//! Every one of these is a bar-at-a-time rewrite of an `exness_families` helper
+//! Every one of these is a bar-at-a-time rewrite of an `cfd_families` helper
 //! that builds a whole array up front. The contract each keeps is the value the
 //! Python array holds AT THE CURRENT INDEX once this candle has been folded in,
 //! so a signal reading them here sees exactly what the sealed cell saw.
@@ -1040,7 +1040,10 @@ impl CloseHistory {
         let start = end.checked_sub(count)?;
         let n = count as f64;
         let mean = (self.total[end] - self.total[start]) / n;
-        Some((mean, (self.square[end] - self.square[start]) / n - mean * mean))
+        Some((
+            mean,
+            (self.square[end] - self.square[start]) / n - mean * mean,
+        ))
     }
 }
 
@@ -1207,5 +1210,378 @@ impl OpeningRange {
     /// `(high, low)` of today's opening candle.
     pub(super) fn value(&self) -> Option<(f64, f64)> {
         self.window
+    }
+}
+
+/// `ind.aroon`: how RECENTLY the `period`-bar extreme was set, in [0, 100].
+///
+/// `rolling_argextreme` INCLUDES the current bar (unlike `RollingExtreme`), and
+/// on a tie it keeps the LATER index -- the deque pops while the held value is
+/// `<=` (max) or `>=` (min) the new one -- so an equal high set again today
+/// reads as brand new. It answers only once `period` bars exist.
+///
+/// Both the current and the previous reading are held, because the family
+/// trades the CROSS of up over down and Python reads index and index - 1.
+pub(super) struct Aroon {
+    period: usize,
+    highs: VecDeque<(usize, f64)>,
+    lows: VecDeque<(usize, f64)>,
+    index: usize,
+    current: Option<(f64, f64)>,
+    previous: Option<(f64, f64)>,
+}
+
+impl Aroon {
+    pub(super) fn new(period: usize) -> Self {
+        Self {
+            period,
+            highs: VecDeque::new(),
+            lows: VecDeque::new(),
+            index: 0,
+            current: None,
+            previous: None,
+        }
+    }
+
+    fn age(
+        queue: &mut VecDeque<(usize, f64)>,
+        index: usize,
+        period: usize,
+        value: f64,
+        maximum: bool,
+    ) {
+        while queue
+            .front()
+            .is_some_and(|(at, _)| (*at as i64) <= index as i64 - period as i64)
+        {
+            queue.pop_front();
+        }
+        while queue.back().is_some_and(|(_, held)| {
+            if maximum {
+                *held <= value
+            } else {
+                *held >= value
+            }
+        }) {
+            queue.pop_back();
+        }
+        queue.push_back((index, value));
+    }
+
+    pub(super) fn push(&mut self, high: f64, low: f64) {
+        let index = self.index;
+        Self::age(&mut self.highs, index, self.period, high, true);
+        Self::age(&mut self.lows, index, self.period, low, false);
+        self.previous = self.current;
+        self.current = if index + 1 >= self.period {
+            let period = self.period as f64;
+            let up_age = (index - self.highs.front().map_or(index, |(at, _)| *at)) as f64;
+            let down_age = (index - self.lows.front().map_or(index, |(at, _)| *at)) as f64;
+            Some((
+                100.0 * (period - up_age) / period,
+                100.0 * (period - down_age) / period,
+            ))
+        } else {
+            None
+        };
+        self.index += 1;
+    }
+
+    /// `((up, down) now, (up, down) one bar ago)`.
+    pub(super) fn readings(&self) -> Option<((f64, f64), (f64, f64))> {
+        Some((self.current?, self.previous?))
+    }
+}
+
+/// `ind.roofing_filter`: Ehlers' two-pole Butterworth HIGHPASS at `high_period`,
+/// then his SuperSmoother LOWPASS at `low_period`. A bandpass with zero mean.
+///
+/// RECURSIVE FROM THE FIRST CLOSE, so it is streamed exactly as Python loops:
+/// `highpass` and `smooth` are 0.0 at indices 0 and 1 and the recursions start
+/// at 2. Output is withheld until `3 * high_period` bars, Python's allowance
+/// for the transient. The last 21 outputs are kept for the amplitude gate,
+/// which reads `line[index - 20 ..= index]`.
+pub(super) struct Roofing {
+    alpha: f64,
+    gain: f64,
+    c1: f64,
+    c2: f64,
+    c3: f64,
+    warm: usize,
+    index: usize,
+    closes: [f64; 2],
+    highpass: [f64; 2],
+    smooth: [f64; 2],
+    recent: VecDeque<Option<f64>>,
+}
+
+impl Roofing {
+    pub(super) fn new(high_period: usize, low_period: usize) -> Self {
+        let radians = 0.707 * 2.0 * std::f64::consts::PI / high_period as f64;
+        let alpha = (radians.cos() + radians.sin() - 1.0) / radians.cos();
+        let gain = (1.0 - alpha / 2.0).powi(2);
+        let a1 = (-1.414 * std::f64::consts::PI / low_period as f64).exp();
+        let b1 = 2.0 * a1 * (1.414 * std::f64::consts::PI / low_period as f64).cos();
+        let (c2, c3) = (b1, -a1 * a1);
+        Self {
+            alpha,
+            gain,
+            c1: 1.0 - c2 - c3,
+            c2,
+            c3,
+            warm: 3 * high_period,
+            index: 0,
+            closes: [0.0; 2],
+            highpass: [0.0; 2],
+            smooth: [0.0; 2],
+            recent: VecDeque::new(),
+        }
+    }
+
+    pub(super) fn push(&mut self, close: f64) {
+        let (mut hp, mut sm) = (0.0, 0.0);
+        if self.index >= 2 {
+            let (b, c) = (self.closes[1], self.closes[0]);
+            hp = self.gain * (close - 2.0 * b + c) + 2.0 * (1.0 - self.alpha) * self.highpass[1]
+                - (1.0 - self.alpha).powi(2) * self.highpass[0];
+            sm = self.c1 * (hp + self.highpass[1]) / 2.0
+                + self.c2 * self.smooth[1]
+                + self.c3 * self.smooth[0];
+        }
+        self.closes = [self.closes[1], close];
+        self.highpass = [self.highpass[1], hp];
+        self.smooth = [self.smooth[1], sm];
+        let out = (self.index >= self.warm).then_some(sm);
+        self.recent.push_back(out);
+        while self.recent.len() > 21 {
+            self.recent.pop_front();
+        }
+        self.index += 1;
+    }
+
+    /// `(line[index], line[index - 1])`.
+    pub(super) fn readings(&self) -> Option<(f64, f64)> {
+        let n = self.recent.len();
+        if n < 2 {
+            return None;
+        }
+        Some((self.recent[n - 1]?, self.recent[n - 2]?))
+    }
+
+    /// `max(|line[i]| for i in index-20 ..= index if present)`.
+    pub(super) fn recent_amplitude(&self) -> Option<f64> {
+        self.recent
+            .iter()
+            .flatten()
+            .map(|v| v.abs())
+            .fold(None, |m, v| Some(m.map_or(v, |m: f64| m.max(v))))
+    }
+}
+
+/// `ind.relative_volume(bars, days=20)`: this candle's volume over the mean of
+/// the SAME CLOCK MINUTE on up to 20 earlier sessions.
+///
+/// Causal exactly as Python is: the reading is taken from the window BEFORE this
+/// candle is appended, and needs at least `max(5, days // 4)` = 5 earlier
+/// observations. A zero average reads as missing, not infinite.
+pub(super) struct RelativeVolume {
+    by_minute: std::collections::HashMap<i64, VecDeque<f64>>,
+    current: Option<f64>,
+}
+
+impl RelativeVolume {
+    const DAYS: usize = 20;
+
+    pub(super) fn new() -> Self {
+        Self {
+            by_minute: std::collections::HashMap::new(),
+            current: None,
+        }
+    }
+
+    pub(super) fn push(&mut self, minute: i64, volume: f64) {
+        let window = self.by_minute.entry(minute).or_default();
+        self.current = if window.len() >= 5.max(Self::DAYS / 4) {
+            let average = window.iter().sum::<f64>() / window.len() as f64;
+            (average > 0.0).then(|| volume / average)
+        } else {
+            None
+        };
+        window.push_back(volume);
+        while window.len() > Self::DAYS {
+            window.pop_front();
+        }
+    }
+
+    pub(super) fn value(&self) -> Option<f64> {
+        self.current
+    }
+}
+
+/// `exness_indicators.efficiency_ratio`: Kaufman's net travel over gross travel.
+///
+/// The running gross sum is updated in Python's exact order -- add this step,
+/// then drop the one `period` steps back -- so the float it holds is the same.
+/// `net_move` is `close[i] - close[i - period]`, the direction the family trades.
+pub(super) struct EfficiencyRatio {
+    period: usize,
+    closes: VecDeque<f64>,
+    steps: VecDeque<f64>,
+    running: f64,
+    index: usize,
+    current: Option<(f64, f64)>,
+}
+
+impl EfficiencyRatio {
+    pub(super) fn new(period: usize) -> Self {
+        Self {
+            period,
+            closes: VecDeque::with_capacity(period + 2),
+            steps: VecDeque::with_capacity(period + 2),
+            running: 0.0,
+            index: 0,
+            current: None,
+        }
+    }
+
+    pub(super) fn push(&mut self, close: f64) {
+        let step = self.closes.back().map_or(0.0, |previous| (close - previous).abs());
+        self.closes.push_back(close);
+        // Python's `steps[0]` is a literal 0.0 that is added and never removed,
+        // so only steps from index 1 are queued: the front is then always
+        // `steps[index - period]` when Python subtracts it.
+        if self.index > 0 {
+            self.steps.push_back(step);
+        }
+        self.running += step;
+        if self.index > self.period {
+            let old = self.steps.pop_front().unwrap_or(0.0);
+            self.running -= old;
+        }
+        if self.closes.len() > self.period + 1 {
+            self.closes.pop_front();
+        }
+        self.current = if self.index >= self.period {
+            let first = *self.closes.front().unwrap_or(&close);
+            let net = (close - first).abs();
+            let ratio = if self.running > 0.0 { net / self.running } else { 0.0 };
+            Some((ratio, close - first))
+        } else {
+            None
+        };
+        self.index += 1;
+    }
+
+    /// `(ratio, close[i] - close[i - period])`.
+    pub(super) fn value(&self) -> Option<(f64, f64)> {
+        self.current
+    }
+}
+
+/// `exness_indicators.cci`: typical-price deviation over MEAN ABSOLUTE deviation.
+///
+/// The mean is `sma`'s running sum, in its order; the deviation is summed over
+/// the window afresh each bar, as Python does.
+pub(super) struct Cci {
+    period: usize,
+    typical: VecDeque<f64>,
+    running: f64,
+    index: usize,
+    current: Option<f64>,
+}
+
+impl Cci {
+    pub(super) fn new(period: usize) -> Self {
+        Self {
+            period,
+            typical: VecDeque::with_capacity(period + 1),
+            running: 0.0,
+            index: 0,
+            current: None,
+        }
+    }
+
+    pub(super) fn push(&mut self, high: f64, low: f64, close: f64) {
+        let typical = (high + low + close) / 3.0;
+        self.typical.push_back(typical);
+        self.running += typical;
+        if self.index >= self.period {
+            let old = self.typical.pop_front().unwrap_or(0.0);
+            self.running -= old;
+        }
+        self.current = if self.index + 1 >= self.period {
+            let mean = self.running / self.period as f64;
+            let deviation = self
+                .typical
+                .iter()
+                .fold(0.0, |total, value| total + (value - mean).abs())
+                / self.period as f64;
+            (deviation > 1e-15).then(|| (typical - mean) / (0.015 * deviation))
+        } else {
+            None
+        };
+        self.index += 1;
+    }
+
+    pub(super) fn value(&self) -> Option<f64> {
+        self.current
+    }
+}
+
+/// `exness_indicators.linreg`: `(slope per bar, r squared)` of the least-squares
+/// line over the last `period` closes, from Python's three running sums in its
+/// exact update order.
+pub(super) struct LinearRegression {
+    period: usize,
+    values: VecDeque<f64>,
+    running: f64,
+    weight: f64,
+    squares: f64,
+    index: usize,
+    current: Option<(f64, Option<f64>)>,
+}
+
+impl LinearRegression {
+    pub(super) fn new(period: usize) -> Self {
+        Self {
+            period,
+            values: VecDeque::with_capacity(period + 1),
+            running: 0.0,
+            weight: 0.0,
+            squares: 0.0,
+            index: 0,
+            current: None,
+        }
+    }
+
+    pub(super) fn push(&mut self, value: f64) {
+        let period = self.period as f64;
+        let x_sum = period * (period - 1.0) / 2.0;
+        let xx_sum = ((self.period - 1) * self.period * (2 * self.period - 1)) as f64 / 6.0;
+        let denominator = period * xx_sum - x_sum * x_sum;
+        self.weight += period * value - self.running;
+        self.running += value;
+        self.squares += value * value;
+        self.values.push_back(value);
+        if self.index >= self.period {
+            let old = self.values.pop_front().unwrap_or(0.0);
+            self.running -= old;
+            self.squares -= old * old;
+        }
+        self.current = if denominator != 0.0 && self.index + 1 >= self.period {
+            let slope = (period * (self.weight - self.running) - x_sum * self.running) / denominator;
+            let variance = self.squares - self.running * self.running / period;
+            let explained = slope * slope * (xx_sum - x_sum * x_sum / period);
+            let fit = (variance > 1e-15).then(|| (explained / variance).clamp(0.0, 1.0));
+            Some((slope, fit))
+        } else {
+            None
+        };
+        self.index += 1;
+    }
+
+    /// `(slope, fit)`; the fit is `None` on a flat window, as in Python.
+    pub(super) fn value(&self) -> Option<(f64, Option<f64>)> {
+        self.current
     }
 }

@@ -1,4 +1,4 @@
-//! `eurjpy:gated_orb`, one `exness_families` cell.
+//! `eurjpy:gated_orb`, one `cfd_families` cell.
 //!
 //! The opening-range break, taken only when the SLOW RSI is on the OTHER side of
 //! fifty.
@@ -38,6 +38,7 @@ pub(super) const SPEC: SleeveSpec = SleeveSpec {
     scale: 1.0,
     shown_equity: 1.0,
     sized_as_import: false,
+    entry_days: None,
     engine: EngineKind::Family(Params {
         family: Family::GatedOrb {
             gate: Gate::Rsi,

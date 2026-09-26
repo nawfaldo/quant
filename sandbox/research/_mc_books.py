@@ -16,7 +16,7 @@ import sys
 from datetime import datetime, timezone
 
 from sandbox.research import exness_combined_strategies as ecs
-from sandbox.research import exness_live_execution as le
+from sandbox.research.fill_models import exness as le
 from sandbox.research import exness_combined_montecarlo as mc
 
 SOURCE = "bars"
@@ -31,7 +31,23 @@ NAME = os.environ.get("BOOK_NAME", "base")
 #: `BOOK_EXTRA=a:b,c:d` scores BASE plus those cells under NAME, so a finalist
 #: from a search can go straight to Monte Carlo without a code change.
 EXTRA = [k for k in os.environ.get("BOOK_EXTRA", "").split(",") if k]
-KEYS = (BASE + [k for k in EXTRA if k not in BASE]) if EXTRA else BOOKS[NAME]
+KEYS = (BASE + [k for k in EXTRA if k not in BASE]) if EXTRA else BOOKS.get(NAME)
+#: `BOOK_KEYS=a:b,c:d,...` names the WHOLE membership explicitly. Needed once
+#: `BOOK` itself moved: BASE is derived from it, so after a seating it already
+#: contains the cells a comparison wants to add or remove.
+if os.environ.get("BOOK_KEYS"):
+    KEYS = [k for k in os.environ["BOOK_KEYS"].split(",") if k]
+if KEYS is None:
+    raise SystemExit(f"unknown BOOK_NAME {NAME!r} and no BOOK_KEYS/BOOK_EXTRA given")
+#: `symbol:family@we` seats a cell that ENTERS ON SATURDAY AND SUNDAY ONLY. Its
+#: trade list is the ordinary cell's with weekday entries dropped -- the same
+#: trades `EXNESS_ENTRY_DAYS=sat,sun` produces for a session-holding family,
+#: because every position is flattened at its own session end and none carries
+#: into the weekend. The key must not also be seated as an every-day cell.
+WEEKEND = {k[:-3] for k in KEYS if k.endswith("@we")}
+KEYS = [k[:-3] if k.endswith("@we") else k for k in KEYS]
+if len(set(KEYS)) != len(KEYS):
+    raise SystemExit(f"a cell is seated twice: {sorted(k for k in KEYS if KEYS.count(k) > 1)}")
 
 _PIN = mc.pin_external_window
 
@@ -86,6 +102,10 @@ def prepare():
         members.append(member)
         ecs.ef.resolve(member["symbol"], allow_stale=True)
         _r, log, bars, ctx = ecs.sleeve_trades(member)
+        if key in WEEKEND:
+            # 1970-01-01 was a Thursday: +3 makes Monday 0, Saturday 5.
+            log = [t for t in log if (t["entry_ts"] // 86400 + 3) % 7 >= 5]
+            print(f"  {key}: weekend entries only, {len(log)} trades", flush=True)
         logs[key] = log
         bars_by[member["symbol"]] = bars
         # Contexts are 1 GB across a book and `replay` reads only `cfg`.

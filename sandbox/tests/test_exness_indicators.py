@@ -21,7 +21,7 @@ import math
 import unittest
 from datetime import datetime, timezone
 
-from sandbox.research import exness_families as ef
+from sandbox.research import cfd_families as ef
 from sandbox.research import exness_indicators as ind
 
 TS, O, H, L, C, V = range(6)

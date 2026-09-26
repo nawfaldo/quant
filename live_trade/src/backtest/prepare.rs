@@ -1,3 +1,4 @@
+use super::fills::MarketFills;
 use super::{
     data::{format_day, parse_iso_days, valid_date},
     engine::{EngineConfig, RunResult, execute, execute_combined},
@@ -12,6 +13,7 @@ use crate::{
 };
 use arrow_array::RecordBatch;
 use std::collections::{BTreeMap, HashMap};
+use std::sync::Arc;
 
 pub async fn run(store: &ParquetStore, request: &RunRequest) -> Result<RunResult, ApiError> {
     let prepared = prepare(store, request).await?;
@@ -43,6 +45,11 @@ pub struct PreparedRun {
     pub(crate) symbol_bars: Vec<Vec<Bar>>,
     /// Index into `symbol_bars` for each requested strategy, in request order.
     pub(crate) strategy_symbols: Vec<usize>,
+    /// The Exness fill model's broker minutes, per MARKET, for every market the
+    /// run trades that has an `exness_<broker>_1m` table. It is the backtest's
+    /// only fill model; a market absent here fills the idealised way and says so
+    /// in `fill_coverage`.
+    pub(crate) fills: HashMap<String, Arc<MarketFills>>,
 }
 
 pub async fn prepare(store: &ParquetStore, request: &RunRequest) -> Result<PreparedRun, ApiError> {
@@ -68,7 +75,7 @@ fn merged_source(strategies: &[&str]) -> Result<PreferredData, ApiError> {
 
 /// Cuts a SHIFTED market's tail at the instant the Python's window ends.
 ///
-/// `exness_families.all_bars` adds the shift as it loads and `ef.backtest` then
+/// `cfd_families.all_bars` adds the shift as it loads and `ef.backtest` then
 /// stops at `shifted_ts >= hi`, so for JP225 and HK50 the window really ends six
 /// hours earlier in real time than the date says. The loader here cuts on the
 /// REAL stamp, so a run ending on a date hands those two markets one extra
@@ -262,7 +269,7 @@ async fn prepare_strategies(
             //
             // Filtering to the sleeve's session at load looks free -- a
             // `FamilyEngine` already ignores an out-of-session candle, and
-            // `exness_families.context` filters in exactly this place -- and it
+            // `cfd_families.context` filters in exactly this place -- and it
             // would have cut the long window's memory again. It was tried on
             // 2026-08-24 and REGRESSED the holdout hard: marked drawdown went
             // 10.23% -> 19.61% and the trade count moved off Python's 4,978.
@@ -309,10 +316,38 @@ async fn prepare_strategies(
     let start_day = parse_iso_days(&request.from_date)
         .ok_or_else(|| ApiError::BadRequest("invalid from date".into()))?;
     let balance = request.balance()?;
+    // OVER THE SAME SPAN AS THE BARS, preroll included. The Python maps cover
+    // every bar, warm-up too, and a preroll position priced differently can
+    // still be open -- or not -- when the reported window starts.
+    let mut fills = HashMap::new();
+    for (series, market) in symbols.iter().enumerate() {
+        if fills.contains_key(market) {
+            continue;
+        }
+        let warm_from = parse_iso_days(&request.from_date)
+            .map(|day| format_day(day - warm_days(series)))
+            .unwrap_or_else(|| request.from_date.clone());
+        let from = if canonical_book {
+            &warm_from
+        } else {
+            &request.from_date
+        };
+        let (lower, upper) = day_range(from, &request.to_date)?;
+        // `load_ohlcv_bars` reaches 90 days behind `from` as well.
+        let lower = lower.map(|value| value - 90 * 86_400 * NANOS_PER_SECOND);
+        let shift = exness_combined::BOOK
+            .into_iter()
+            .find(|sleeve| sleeve.market() == market.as_str())
+            .map_or(0, exness_combined::Sleeve::shift_hours);
+        if let Some(loaded) = MarketFills::load(store, market, shift, lower, upper)? {
+            fills.insert(market.clone(), Arc::new(loaded));
+        }
+    }
     Ok(PreparedRun {
         bars,
         symbol_bars,
         strategy_symbols,
+        fills,
         engine: EngineConfig {
             initial: balance,
             symbol,
@@ -352,7 +387,7 @@ async fn load_bars(
         PreferredData::Ohlcv => load_ohlcv_bars(store, symbol, from, to).await,
         PreferredData::OhlcvWithBenchmark => {
             let mut bars = load_ohlcv_bars(store, symbol, from, to).await?;
-            // `exness_families.BENCHMARK`, which is a per-MARKET table there
+            // `cfd_families.BENCHMARK`, which is a per-MARKET table there
             // too. It used to be asked of the sleeve, so the mapping lived with
             // the cell that read it; no cell reads one since 2026-09-04, and a
             // loader that could only answer for a market some sleeve currently

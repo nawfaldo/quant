@@ -1224,3 +1224,118 @@ async fn the_legacy_editable_rules_table_is_dropped() {
         "the editable rules table must not survive initialisation"
     );
 }
+
+/// The two orders a fill can land in, both seen live. The bridge pushes its
+/// position snapshot and the command result separately; `usdjpy_rvol` was
+/// blocked for one second on 2026-09-25 because its own new ticket reached
+/// the snapshot while the durable row was still `pending_open`.
+#[actix_web::test]
+async fn ownership_check_forgives_a_fill_that_is_still_landing() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = Database::new(dir.path().join("app.db"));
+    db.initialize().await.unwrap();
+    let environment = db
+        .create_environment(&CreateEnvironment { name: "idk".into() })
+        .await
+        .unwrap();
+    let account = db
+        .create_environment_mt5_account(
+            environment,
+            &EnvironmentMt5AccountInput {
+                server: "broker-demo".into(),
+                login: "456".into(),
+                password: "secret".into(),
+                account_type: "mt5".into(),
+            },
+        )
+        .await
+        .unwrap();
+    let strategy = db
+        .create_environment_account_strategy(
+            environment,
+            account,
+            &AccountStrategyInput {
+                strategy: "ofi_momentum".into(),
+                symbol: "USTEC".into(),
+            },
+        )
+        .await
+        .unwrap();
+    let sql = |text: &'static str, values: Vec<sea_orm::Value>| {
+        let db = &db;
+        async move {
+            db.orm()
+                .await
+                .unwrap()
+                .execute(Statement::from_sql_and_values(
+                    DatabaseBackend::Sqlite,
+                    text,
+                    values,
+                ))
+                .await
+                .unwrap();
+        }
+    };
+    let open_id = db
+        .enqueue_live_open(
+            strategy,
+            account,
+            environment,
+            "ofi_momentum",
+            "primary",
+            "long",
+            "USTEC",
+            0.05,
+            "2026-08-14 10:00",
+            30_000.0,
+        )
+        .await
+        .unwrap();
+
+    // Snapshot first: our magic on a ticket no row knows yet.
+    sql(
+        concat!(
+            "INSERT INTO mt5_bridge_positions",
+            "(account_id,ticket,position_type,symbol,volume,profit,open_price,open_time,magic) ",
+            "VALUES (?,991,'long','USTEC',0.05,0,30001,0,?)",
+        ),
+        vec![
+            account.into(),
+            super::live_runtime::strategy_magic(strategy).into(),
+        ],
+    )
+    .await;
+    assert!(!db.strategy_position_mismatch(strategy).await.unwrap());
+    // A `pending_open` that never resolves stops covering for the orphan.
+    sql(
+        "UPDATE mt5_strategy_positions SET updated_at=datetime('now','-2 minutes') WHERE account_strategy_id=?",
+        vec![strategy.into()],
+    )
+    .await;
+    assert!(db.strategy_position_mismatch(strategy).await.unwrap());
+
+    // Result first: the row turns `open` before a snapshot carries the ticket.
+    sql("DELETE FROM mt5_bridge_positions", vec![]).await;
+    db.complete_mt5_command(
+        open_id,
+        "456",
+        true,
+        991,
+        30_001.0,
+        1.0,
+        0.0,
+        0.0,
+        "2026-08-14 10:00",
+        "",
+    )
+    .await
+    .unwrap();
+    assert!(!db.strategy_position_mismatch(strategy).await.unwrap());
+    // Still missing after the grace: that is a real disagreement.
+    sql(
+        "UPDATE mt5_strategy_positions SET updated_at=datetime('now','-10 seconds') WHERE account_strategy_id=?",
+        vec![strategy.into()],
+    )
+    .await;
+    assert!(db.strategy_position_mismatch(strategy).await.unwrap());
+}

@@ -1,6 +1,6 @@
 """Sealed against live execution on a CHOSEN window, not the tick window.
 
-`exness_live_execution.book` opens its window where the last symbol's broker
+`fill_models.exness.book` opens its window where the last symbol's broker
 history begins -- 2022-08 on this book, because `ukoil` starts there -- which is
 the right default for measuring the execution correction on as much data as
 exists, and the wrong one for asking what the correction is worth on the holdout
@@ -21,8 +21,8 @@ import argparse
 from datetime import datetime, timezone
 
 from sandbox.research import exness_combined_strategies as cs
-from sandbox.research import exness_families as ef
-from sandbox.research import exness_live_execution as le
+from sandbox.research import cfd_families as ef
+from sandbox.research.fill_models import exness as le
 
 
 def main():

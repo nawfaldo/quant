@@ -1,4 +1,4 @@
-//! `jp225:kalman`, one `exness_families` cell.
+//! `jp225:kalman`, one `cfd_families` cell.
 //!
 //! The state-space SLOPE, past half a bar's typical log move.
 //!
@@ -32,6 +32,7 @@ pub(super) const SPEC: SleeveSpec = SleeveSpec {
     scale: 1.0,
     shown_equity: 1.0,
     sized_as_import: false,
+    entry_days: None,
     engine: EngineKind::Family(Params {
         family: Family::Kalman {
             // The RATE's sign. `residual` is the other claim the same state

@@ -1,4 +1,4 @@
-//! `ethusd:volatility_breakout`, one `exness_families` cell.
+//! `ethusd:volatility_breakout`, one `cfd_families` cell.
 //!
 //! A range-fraction breakout on the same shape as the NQ cell.
 
@@ -18,6 +18,7 @@ pub(super) const SPEC: SleeveSpec = SleeveSpec {
     scale: 1.0,
     shown_equity: 3.0,
     sized_as_import: false,
+    entry_days: None,
     engine: EngineKind::Family(Params {
         family: Family::VolatilityBreakout { fraction: 0.5 },
         direction: Direction::Follow,

@@ -51,7 +51,7 @@ def when(stamp):
     return datetime.fromtimestamp(stamp, timezone.utc).strftime("%Y-%m-%d %H:%M")
 
 
-#: Hours `exness_families.all_bars` adds to a market's timestamps before
+#: Hours `cfd_families.all_bars` adds to a market's timestamps before
 #: anything sees them. Python's trade log is stamped on the SHIFTED clock and the
 #: Rust dump on the real one, so the two have to be aligned before they can be
 #: compared -- otherwise every JP225 trade reads as present on one side only.

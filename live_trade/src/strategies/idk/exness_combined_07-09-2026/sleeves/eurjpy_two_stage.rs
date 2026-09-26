@@ -1,4 +1,4 @@
-//! `eurjpy:two_stage`, one `exness_families` cell.
+//! `eurjpy:two_stage`, one `cfd_families` cell.
 //!
 //! A Bollinger squeeze arms the trade; the break of the coil's own range takes
 //! it.
@@ -32,6 +32,7 @@ pub(super) const SPEC: SleeveSpec = SleeveSpec {
     scale: 1.0,
     shown_equity: 1.0,
     sized_as_import: false,
+    entry_days: None,
     engine: EngineKind::Family(Params {
         family: Family::TwoStage {
             coil: Coil::Squeeze,

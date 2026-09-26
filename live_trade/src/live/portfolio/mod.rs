@@ -571,16 +571,24 @@ async fn run(state: AppState) -> Result<(), crate::error::ApiError> {
             };
             // Replay missing bars to keep indicators and existing-position
             // exits correct, but never open a market order from an old signal.
-            // Only the newest completed bar of that exact source may add risk.
-            runtime
-                .on_bar(
-                    symbol,
-                    feed,
-                    bar,
+            //
+            // OLD IS A QUESTION FOR THE CLOCK, NOT FOR THE POLL. This used to
+            // let only the newest bar of a poll add risk, so a minute that
+            // landed one poll late -- delivered together with the minute after
+            // it -- was "catch-up" and its entry was refused, though it was
+            // barely a minute old. That lost `usdjpy_half_life` a +$4 winner on
+            // 2026-09-24 and `ukoil_level_confluence` a +$25 one on 09-23, for
+            // a delay far smaller than the one every entry then carried.
+            // Where the clock is known the rule is now `entry_is_fresh`; the
+            // poll-based rule stays only for the first bar, before it is.
+            let entries_current = match runtime.store_now() {
+                Some(now) => entry_is_fresh(bar.ts, symbol, now),
+                None => {
                     bar.ts == source_latest
-                        && completed_watermarks.get(&(symbol, feed)) == Some(&source_latest),
-                )
-                .await;
+                        && completed_watermarks.get(&(symbol, feed)) == Some(&source_latest)
+                }
+            };
+            runtime.on_bar(symbol, feed, bar, entries_current).await;
         }
         // AFTER the bars, so a strategy that DID get its bar this tick has
         // already emitted its own exit and has nothing left for this to find.
@@ -777,17 +785,13 @@ impl PortfolioRuntime {
                             .iter()
                             .map(|p| p.position_key.as_str())
                             .collect();
-                        let in_memory_keys: Vec<String> = slot.positions.keys().cloned().collect();
-                        for key in in_memory_keys {
-                            if !open_keys.contains(key.as_str()) {
-                                slot.reconcile_closed_position(&key);
-                                tracing::info!(
-                                    account_strategy_id = target.account_strategy_id,
-                                    strategy = target.strategy,
-                                    position_key = key,
-                                    "position was closed externally; reconciled to flat, ready for next signal"
-                                );
-                            }
+                        for key in slot.reconcile_external_closes(&open_keys) {
+                            tracing::info!(
+                                account_strategy_id = target.account_strategy_id,
+                                strategy = target.strategy,
+                                position_key = key,
+                                "position was closed externally; reconciled to flat, ready for next signal"
+                            );
                         }
                     }
 

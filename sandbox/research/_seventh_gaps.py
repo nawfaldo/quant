@@ -6,8 +6,8 @@ against sessions expected, bars per session against the session length, and the
 longest runs of missing trading days.
 
 TWO SERIES PER SYMBOL AND THEY ANSWER DIFFERENT QUESTIONS. The DECIDING series
-is what `exness_families` reads to generate signals; the BROKER 1m series is
-what `exness_live_execution` prices fills from. A hole in the first changes the
+is what `cfd_families` reads to generate signals; the BROKER 1m series is
+what `fill_models.exness` prices fills from. A hole in the first changes the
 strategy; a hole in the second only means that bar keeps the constant spread and
 the correction is a lower bound ([[exness-tick-tables-have-daily-holes]]).
 
@@ -24,8 +24,8 @@ from collections import Counter
 from datetime import datetime, timezone
 
 from sandbox.research import exness_combined_strategies as ecs
-from sandbox.research import exness_families as ef
-from sandbox.research import exness_live_execution as le
+from sandbox.research import cfd_families as ef
+from sandbox.research.fill_models import exness as le
 
 
 def day_of(ts):

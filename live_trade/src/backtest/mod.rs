@@ -3,6 +3,7 @@ pub mod data;
 mod drawdown;
 pub mod engine;
 mod exposure;
+pub mod fills;
 pub mod fx;
 pub mod monte_carlo;
 pub(crate) mod prepare;

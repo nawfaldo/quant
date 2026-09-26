@@ -7,9 +7,12 @@
 //! was an `idk` run, which every run is. What the environment screen showed and
 //! what the backtest charged were unrelated numbers.
 //!
-//! What is charged instead: a MEASURED per-market spread, sampled from a week of
-//! session-filtered tick history, plus a 0.2 bp slippage allowance, billed once
-//! at entry. The exit is free. Commission is zero, because a real minimum-lot
+//! What is charged instead: the EXNESS LIVE-FILL MODEL (`backtest::fills`) --
+//! the broker's own spread in the entry minute plus a 0.2 bp slippage allowance,
+//! billed once at entry, with the entry and every exit re-priced to where the
+//! broker's market was when the order actually landed. The per-market constants
+//! below are the FALL-BACK for a minute the broker table does not hold, and the
+//! share that fell back is reported with every run (`fill_coverage`). Commission is zero, because a real minimum-lot
 //! round trip on this account booked 0.0000 on both deals
 //! ([[pro-commission-is-measured-zero]]).
 
@@ -180,7 +183,7 @@ pub(super) fn sleeve_financing_per_night(name: &str, long: bool) -> f64 {
 
 /// Calendar nights a position spanned: DATE BOUNDARIES CROSSED.
 ///
-/// `exness_families.financing_nights`. Counting calendar nights IS the
+/// `cfd_families.financing_nights`. Counting calendar nights IS the
 /// triple-swap rule rather than an approximation of it: a broker charges one
 /// swap per trading night and three on one weekday to cover the weekend, so a
 /// full week is 3 + 1 + 1 + 1 + 1 = 7 charges and a week has 7 calendar nights.
@@ -279,9 +282,13 @@ pub fn cost_model() -> CostModel {
         id: "exness_pro",
         name: "Exness Pro",
         detail: concat!(
-            "Measured per-market spread plus a 0.2 bp slippage allowance, ",
-            "charged once at entry. No commission: a real round trip on this ",
-            "account booked 0.0000 on both deals.",
+            "Filled the way this account fills: the entry at the broker's price ",
+            "one feed lag after the candle opens, every exit as a market order ",
+            "one whole candle later (there is no broker-side stop), and the ",
+            "broker's own spread in the entry minute plus a 0.2 bp slippage ",
+            "allowance, all read off exness_<symbol>_1m. The per-market spread ",
+            "below is charged only where that table has no minute. No ",
+            "commission: a real round trip booked 0.0000 on both deals.",
         ),
         markets: crate::strategies::known_markets()
             .into_iter()

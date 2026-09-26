@@ -281,6 +281,40 @@ fn print(body: &Value, balance: &str) {
         }
     }
 
+    // THE EXNESS FILL MODEL'S REACH. A fill the broker's minute table does not
+    // cover falls back to the vendor open, the constant spread and the idealised
+    // exit, so anything under 100% here is that much kinder than the account.
+    if let Some(coverage) = body.get("fill_coverage").and_then(Value::as_object) {
+        let count = |row: &Value, key: &str| row.get(key).and_then(Value::as_u64).unwrap_or(0);
+        let share = |priced: u64, total: u64| {
+            if total == 0 {
+                "-".to_owned()
+            } else {
+                format!("{:.1}%", 100.0 * priced as f64 / total as f64)
+            }
+        };
+        let (mut entries, mut entries_priced, mut exits, mut exits_priced) = (0, 0, 0, 0);
+        for row in coverage.values() {
+            entries += count(row, "entries");
+            entries_priced += count(row, "entries_priced");
+            exits += count(row, "exits");
+            exits_priced += count(row, "exits_priced");
+        }
+        println!();
+        println!(
+            "EXNESS LIVE FILLS  entries {}  exits {}",
+            share(entries_priced, entries),
+            share(exits_priced, exits)
+        );
+        for (name, row) in coverage {
+            let (a, b) = (count(row, "entries_priced"), count(row, "entries"));
+            let (c, d) = (count(row, "exits_priced"), count(row, "exits"));
+            if a < b || c < d {
+                println!("  {name:<28} entries {a}/{b}  exits {c}/{d}");
+            }
+        }
+    }
+
     // The cap is first-come-first-served, so a sleeve that shows up here was
     // crowded out by whoever was already holding the exposure -- not by its own
     // signals drying up.

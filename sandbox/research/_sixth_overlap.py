@@ -1,7 +1,7 @@
 """Do the sixth wave's winners actually trade different bars?
 
 THE QUESTION THE ADMISSION TEST WAS SUPPOSED TO SETTLE, ASKED AGAIN AFTER THE
-FACT. Every family in `exness_families` has to name a bar on which it fires and
+FACT. Every family in `cfd_families` has to name a bar on which it fires and
 no existing family does. That argument was made for each of the twenty-seven
 about the CONSTRUCT -- a Hurst exponent is not a variance ratio, a bandpass is
 not a lowpass -- and the arguments are sound about the constructs. They say
@@ -36,7 +36,7 @@ import itertools
 import json
 import os
 
-from sandbox.research import exness_families as ef
+from sandbox.research import cfd_families as ef
 from sandbox.research import _sixth_compare as sc
 
 

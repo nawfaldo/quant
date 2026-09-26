@@ -1,4 +1,4 @@
-//! `usdjpy:pullback`, one `exness_families` cell.
+//! `usdjpy:pullback`, one `cfd_families` cell.
 //!
 //! A retracement from a recent extreme, measured in DAILY RANGE, inside a trend
 //! that is still intact.
@@ -33,6 +33,7 @@ pub(super) const SPEC: SleeveSpec = SleeveSpec {
     scale: 1.0,
     shown_equity: 1.0,
     sized_as_import: false,
+    entry_days: None,
     engine: EngineKind::Family(Params {
         family: Family::Pullback {
             channel: 4 * SESSION,

@@ -354,10 +354,21 @@ impl Database {
             .await?
             .query_one(Statement::from_sql_and_values(
                 DatabaseBackend::Sqlite,
+                // BOTH LEGS FORGIVE A FILL THAT IS STILL LANDING. The bridge
+                // pushes its snapshot and the command result separately, in
+                // either order. On 2026-09-25 06:00:01 `usdjpy_rvol`'s short
+                // reached the snapshot while its durable row was still
+                // `pending_open` with no ticket, and the sleeve was blocked for
+                // one second over its own trade. So a recent `pending_open`
+                // row accounts for an unrecognised ticket of ours, and a row
+                // that turned `open` in the last 3 seconds may be missing from
+                // a snapshot taken before the fill -- the same grace
+                // `reconcile_missing_bridge_positions` already allows.
                 concat!(
                     "SELECT CASE WHEN EXISTS(",
                     "SELECT 1 FROM mt5_strategy_positions sp ",
                     "WHERE sp.account_strategy_id=? AND sp.status='open' AND sp.ticket>0 ",
+                    "AND sp.updated_at < datetime('now', '-3 seconds') ",
                     "AND NOT EXISTS(SELECT 1 FROM mt5_bridge_positions bp ",
                     "WHERE bp.account_id=sp.account_id AND bp.ticket=sp.ticket)) ",
                     "OR EXISTS(SELECT 1 FROM mt5_bridge_positions bp ",
@@ -365,7 +376,10 @@ impl Database {
                     "WHERE s.id=? AND bp.magic=? AND NOT EXISTS(",
                     "SELECT 1 FROM mt5_strategy_positions sp ",
                     "WHERE sp.account_strategy_id=s.id AND sp.ticket=bp.ticket ",
-                    "AND sp.status IN ('open','pending_close'))) THEN 1 ELSE 0 END",
+                    "AND sp.status IN ('open','pending_close')) AND NOT EXISTS(",
+                    "SELECT 1 FROM mt5_strategy_positions sp ",
+                    "WHERE sp.account_strategy_id=s.id AND sp.status='pending_open' ",
+                    "AND sp.updated_at >= datetime('now', '-60 seconds'))) THEN 1 ELSE 0 END",
                 ),
                 [
                     account_strategy_id.into(),

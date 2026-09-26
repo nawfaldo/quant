@@ -35,7 +35,7 @@ import json
 import os
 from collections import Counter, defaultdict
 
-from sandbox.research import exness_families as ef
+from sandbox.research import cfd_families as ef
 from sandbox.research import _sixth_compare as sc
 from sandbox.research._sixth_overlap import jaccard, signals
 

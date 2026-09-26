@@ -507,7 +507,7 @@ impl LiveSlot {
     /// through a total blackout.
     ///
     /// ONE BAR, WHICH IS WHERE THE RESEARCH MODEL ALREADY PUTS THE EXIT.
-    /// `exness_live_execution` prices a session flatten at `bar_seconds + lag`
+    /// `fill_models.exness` prices a session flatten at `bar_seconds + lag`
     /// past the close -- 13:30:01.6 for a 13:00 session -- unconditionally,
     /// whatever the feed did. So firing here is not a late backstop racing the
     /// strategy; it is the same instant the study assumes, and a strategy exit
@@ -1053,6 +1053,33 @@ impl LiveSlot {
     /// Resets the strategy engine's internal position state to flat so it can
     /// take the next signal cleanly, removes the position from in-memory tracking,
     /// and clears any ownership block.
+    /// Flattens every in-memory position whose durable row is gone, returning
+    /// the keys it flattened.
+    ///
+    /// A key with an exit in flight is the STRATEGY's own close landing, not an
+    /// external one, so it is skipped and left to `retry_pending_exits`, which
+    /// logs `exit_acknowledged` and sends any reversal deferred behind the exit
+    /// -- flattening here would drop that deferred entry. Without the skip,
+    /// every strategy close from 2026-09-16 was reported as "closed externally"
+    /// and none was acknowledged.
+    pub(super) fn reconcile_external_closes(
+        &mut self,
+        open_keys: &std::collections::HashSet<&str>,
+    ) -> Vec<String> {
+        let gone: Vec<String> = self
+            .positions
+            .keys()
+            .filter(|key| {
+                !open_keys.contains(key.as_str()) && !self.pending_exits.contains_key(*key)
+            })
+            .cloned()
+            .collect();
+        for key in &gone {
+            self.reconcile_closed_position(key);
+        }
+        gone
+    }
+
     pub(super) fn reconcile_closed_position(&mut self, position_key: &str) {
         self.strategy.abandon_open_position();
         self.positions.remove(position_key);

@@ -1,10 +1,10 @@
-"""One $1,000 account running several `exness_families` cells that do not
+"""One $1,000 account running several `cfd_families` cells that do not
 overlap.
 
 READ THIS FIRST IF YOU ARE AN AGENT RUNNING THIS MODULE.
 
 **Terminal output does NOT reach the user.** Paste the tables into the reply.
-See the same warning at the top of `exness_families` -- it cost a session once
+See the same warning at the top of `cfd_families` -- it cost a session once
 ([[paste-results-into-the-reply]]).
 
 **EVERY REPORTED RESULT MUST INCLUDE THE PER-SLEEVE TABLE.** Not the book
@@ -23,7 +23,7 @@ a summary of one number the operator cannot act on.
 
 WHAT THIS IS FOR.
 
-`exness_families` produced 50 cells that beat their own coin-flip null at 30m,
+`cfd_families` produced 50 cells that beat their own coin-flip null at 30m,
 and twelve of them are ETHUSD. Twelve views of one instrument in one session is
 one hypothesis, not twelve, and stacking them would buy no diversification while
 paying twelve risk budgets. This module picks a set whose P&L streams are
@@ -58,7 +58,7 @@ property of the trade streams rather than of the search.
 WHY THE BOOK IS NOT THE SUM OF ITS SLEEVES.
 
 Each member is re-sized against the LIVE shared balance, in entry order, using
-its own symbol's contract spec and `exness_families.quantity`. So a gold trade
+its own symbol's contract spec and `cfd_families.quantity`. So a gold trade
 taken after ETHUSD has drawn the account down is a smaller trade than it was
 standalone. Summing standalone daily return streams instead hides about half the
 drawdown ([[blend-model-understates-portfolio-drawdown]]), and a third sleeve
@@ -106,7 +106,7 @@ import statistics
 import time
 from datetime import datetime, timezone
 
-from sandbox.research import exness_families as ef
+from sandbox.research import cfd_families as ef
 
 RESULTS = ef.RESULTS
 OUT_PATH = os.path.join(RESULTS, "exness_combined_strategies.json")
@@ -148,7 +148,7 @@ MAX_LOSS_LIFT = 1.40
 #: would be gating on four or five observations.
 TAIL_MONTHS = 5
 
-#: Economic-significance gates, applied BEFORE the null. `exness_families`'s
+#: Economic-significance gates, applied BEFORE the null. `cfd_families`'s
 #: verdict is purely statistical, and on jp225 that let eight families through
 #: at +0.2% on a quantised lot floor -- statistically fine, economically
 #: nothing. A sleeve has to clear all three to be considered.
@@ -1211,12 +1211,12 @@ TICK_COSTS = os.environ.get("EXNESS_TICK_COSTS", "") == "1"
 #: False is the account as it is wired TODAY: no `sl`/`tp` in the payload, so
 #: every exit is a market order the runtime sends after its candle rolls. True
 #: is the counterfactual the bridge change would buy. Set by
-#: `exness_live_execution.book`; it does nothing unless TICK_COSTS is on,
+#: `fill_models.exness.book`; it does nothing unless TICK_COSTS is on,
 #: because with no exit map there is no late fill to exempt anything from.
 BROKER_STOPS = False
 
-#: Which `exness_live_execution` maps file to read, or None for that module's
-#: default feed. Set by `exness_live_execution.book` so a run cannot silently
+#: Which `fill_models.exness` maps file to read, or None for that module's
+#: default feed. Set by `fill_models.exness.book` so a run cannot silently
 #: replay the wrong series.
 MAPS_OVERRIDE = None
 
@@ -1226,7 +1226,7 @@ _TICK_COST_CACHE = {}
 def _tick_costs(symbol, bars):
     """`(spread_by_ts, entry_by_ts, exit_by_ts)`, or `(None, None, None)`.
 
-    READ OFF DISK, NEVER COMPUTED HERE. `exness_live_execution precompute`
+    READ OFF DISK, NEVER COMPUTED HERE. `fill_models.exness precompute`
     reduces each tick table to a few thousand floats and writes them out; this
     process only loads that, so a book run never opens a tick table.
 
@@ -1253,7 +1253,7 @@ def _tick_costs(symbol, bars):
     if not TICK_COSTS:
         return None, None, None
     if not _TICK_COST_CACHE:
-        from sandbox.research import exness_live_execution as tc
+        tc = ef.fill_model()
 
         # `MAPS_OVERRIDE` names WHICH maps file, so a book run states its feed
         # instead of inheriting whatever `precompute` wrote last. None means the
@@ -1263,7 +1263,7 @@ def _tick_costs(symbol, bars):
         if not loaded:
             raise SystemExit(
                 "EXNESS_TICK_COSTS=1 but no maps on disk -- run "
-                "`py -m sandbox.research.exness_live_execution precompute` first")
+                "`py -m sandbox.research.fill_models.exness precompute` first")
         _TICK_COST_CACHE.update(loaded)
         print(f"  tick cost maps for {len(loaded)} symbols loaded from disk",
               flush=True)
@@ -1293,14 +1293,22 @@ def sleeve_trades(row, null_seed=None, lo=None, hi=None, shown=1.0):
     symbol = row["symbol"]
     bars, ctx = _context(symbol)
     spreads, entries, exits = _tick_costs(symbol, bars)
-    result = ef.backtest(row["family"], bars, ctx, row["params"],
-                         lo=ef.IS_END if lo is None else lo,
-                         hi=ef.OOS_END if hi is None else hi,
-                         initial=ef.INITIAL_BALANCE * shown,
-                         null_seed=null_seed, include_trades=True,
-                         fill_bars=_fill_bars(symbol, bars),
-                         tick_spreads=spreads, entry_prices=entries,
-                         exit_prices=exits, broker_stops=BROKER_STOPS)
+    # `WEEKEND_ONLY` gates this cell's entries alone; the module global is put
+    # back so no other sleeve inherits it.
+    saved_days = ef.ENTRY_DAYS
+    if f"{symbol}:{row['family']}" in WEEKEND_ONLY:
+        ef.ENTRY_DAYS = frozenset({5, 6})
+    try:
+        result = ef.backtest(row["family"], bars, ctx, row["params"],
+                             lo=ef.IS_END if lo is None else lo,
+                             hi=ef.OOS_END if hi is None else hi,
+                             initial=ef.INITIAL_BALANCE * shown,
+                             null_seed=null_seed, include_trades=True,
+                             fill_bars=_fill_bars(symbol, bars),
+                             tick_spreads=spreads, entry_prices=entries,
+                             exit_prices=exits, broker_stops=BROKER_STOPS)
+    finally:
+        ef.ENTRY_DAYS = saved_days
     for trade in result["trade_log"]:
         trade["symbol"] = symbol
         trade["sleeve"] = f"{symbol}:{row['family']}"
@@ -1454,10 +1462,10 @@ def choose_members(rows, streams, limit=MAX_MEMBERS,
 # --------------------------------------------------------------------------- #
 
 # --------------------------------------------------------------------------- #
-# sleeves that are not exness_families cells
+# sleeves that are not cfd_families cells
 # --------------------------------------------------------------------------- #
 
-#: Sleeves imported from `combined_book`. They are not `exness_families` cells
+#: Sleeves imported from `combined_book`. They are not `cfd_families` cells
 #: and have no sealed JSON here, so they carry their own sizing rule:
 #: `units_per_dollar` already folds in the strategy's risk fraction, stop
 #: distance and margin ceiling, so the replay multiplies it by live equity
@@ -1935,7 +1943,7 @@ TARGET_FILL = 90.0
 #:
 #: OUT: `xniusd:cci` and `uk100:gated_fade`. Both are profitable on the sealed
 #: fill and lose money on the one this account actually gets. Priced through
-#: `exness_live_execution` -- entry at the broker quote a feed lag after the
+#: `fill_models.exness` -- entry at the broker quote a feed lag after the
 #: bar's open, exit as the late market order the runtime really sends, because
 #: the MT5 payload carries no stop ([[no-broker-side-stops-exits-are-late-market-orders]]):
 #:
@@ -2007,7 +2015,7 @@ TARGET_FILL = 90.0
 #:     this book (25)            +852.7%   MTM dd 14.6%   0 refused
 #:
 #: THE WINDOW MOVED WITH THE MEMBERSHIP and that is a trap worth naming.
-#: `exness_live_execution.tick_window_start` opens the window where the LAST
+#: `fill_models.exness.tick_window_start` opens the window where the LAST
 #: member symbol's history begins, so swapping uk100 for de40 moved it from
 #: 2025-01-03 03:00 to 2025-01-02 09:00. A book measured against a window
 #: derived from DIFFERENT members skips the very trades that distinguish them --
@@ -2202,7 +2210,7 @@ TARGET_FILL = 90.0
 #: ([[canon-drawdown-is-sequence-risk]], [[refill-guarded-on-one-path-hides-its-tail]]).
 #: The screen alone beats every refill of it on the tail by 6 to 22 points.
 #: EVERY JP225 SLEEVE LEFT 2026-09-22, and the reason is a measurement error
-#: rather than six bad cells. `exness_live_execution` keyed its spread and fill
+#: rather than six bad cells. `fill_models.exness` keyed its spread and fill
 #: maps on the SHIFTED stamp and read the broker's unshifted table, so every
 #: jp225 execution number in this book was drawn from a window six hours away
 #: ([[shifted-markets-misread-the-broker-table]]). The fix landed 2026-09-20 but
@@ -2253,7 +2261,9 @@ BOOK = ("usdjpy:volume_thrust", "audusd:zscore",
         "usdjpy:pullback",
         "ethusd:obv_break",
         "ukoil:level_confluence",
-        "usdjpy:kendall",
+        #: `usdjpy:kendall` REMOVED 2026-09-26, operator decision, against the
+        #: advice below: 22 sleeves ran 964%/13.97 realised, MC median 731%,
+        #: dd p95/p99 26.51/32.68, P(dd>20) 25.4% (23 with it: 832%, 24.59/29.72).
         "eurjpy:gated_orb",
         #: SEATED 2026-09-22 into the freed jp225 seats. `usdjpy:aroon` is an
         #: Aroon breakout, 43 OOS trades at pf 1.88 and the best win rate of the
@@ -2270,7 +2280,9 @@ BOOK = ("usdjpy:volume_thrust", "audusd:zscore",
         #: same class of reason: its axis is `weekday=3`, a label with no
         #: neighbourhood, so its robustness gate reports 1/1 by construction
         #: ([[all-categorical-axes-void-the-robustness-gate]]).
-        "usdjpy:aroon", "ethusd:break_retest", "eurjpy:swing_ma",
+        "usdjpy:aroon", "ethusd:break_retest",
+        #: `eurjpy:swing_ma` REMOVED 2026-09-26, operator decision (-$4 over
+        #: 2025-26, 103 trades).
         #: SEATED 2026-09-04 on the HOLDOUT, not the long window. All three are
         #: decay-clean, and `usdjpy:fracdiff` is accelerating -- 18.5R in eight
         #: months of 2026 against 5.3R in all of 2025, a 2.49x ratio.
@@ -2355,7 +2367,61 @@ BOOK = ("usdjpy:volume_thrust", "audusd:zscore",
         #: generic knobs are shared, the signal-defining ones all differ.
         #: CONCENTRATION RISES: ethusd 6 -> 8 sleeves, usdjpy 6 -> 7, and that is
         #: where the extra tail comes from.
-        "ethusd:roofing", "ethusd:level_confluence", "usdjpy:rvol")
+        #: REMOVED 2026-09-26, operator decision, after the 2022-2026 Monte
+        #: Carlo reversed the 2025-26 one. Over five years the three cost far
+        #: more tail than the recent window showed:
+        #:
+        #:     2022-2026, 1,000 paths, live fills   base 18    with the three
+        #:     median return                          4,138%       6,734%
+        #:     MTM dd median / p99             17.93 / 34.48  22.30 / 44.35
+        #:     P(dd > 20%)                             33.1%        69.4%
+        #:
+        #: Every replacement tried sits on the same fed markets (usdjpy, ethusd)
+        #: as the sleeves already seated, so each added correlated risk rather
+        #: than spreading it -- the concentration the jp225 exit was meant to end.
+        #: "ethusd:roofing", "ethusd:level_confluence", "usdjpy:rvol"
+        #:
+        #: RE-SEATED 2026-09-26, operator decision, together with seven
+        #: WEEKEND-ONLY crypto cells (`WEEKEND_ONLY` below): the best-return
+        #: membership of all 4,096 subsets of these three plus nine weekend
+        #: candidates, on 2025-26.
+        #:
+        #:     2025-26, live fills, $500, 500 paths   base 18   A (+3)   this (+10)
+        #:     realised return / MTM dd       662% / 12.10  953% / 13.84  1,148% / 13.78
+        #:     median return                          528%      731%       888%
+        #:     MTM dd p95 / p99               23.30/29.05  25.22/29.92  25.68/30.86
+        #:     P(dd > 20%)                           11.8%     23.2%      23.8%
+        #:
+        #: THE 2022-2026 TAIL IS THE PRICE, and it was shown before the choice:
+        #: A + all nine weekend cells there ran median 7,431%, p99 dd 50.3%,
+        #: P(dd > 20%) 77.8% (base 18: 4,138%, 34.9%, 33.1%). The weekend cells
+        #: were picked on the 2025-26 window they are scored on, and `efficiency`
+        #: and `cci` only broke even over 2018-24.
+        "ethusd:roofing", "ethusd:level_confluence", "usdjpy:rvol",
+        "ethusd:efficiency", "ethusd:cci", "ethusd:linreg_trend",
+        #: REMOVED the same day, operator decision on their 2025-26 dollars:
+        #: `eurjpy:swing_ma` (above) and the weekend `ethusd:kendall` (+$1),
+        #: `ethusd:aroon` (+$29), `btc:dmi` (+$43, 7 trades), `ethusd:idio_break`
+        #: (+$55). 2025-26, live fills, $500, 500 paths:
+        #:
+        #:                           28 sleeves   23 (this)   22 (also no usdjpy:kendall)
+        #:     realised / MTM dd   1,148%/13.78  1,063%/13.97   964%/13.97
+        #:     MC median               888%          832%          731%
+        #:     MC dd p95 / p99     25.68/30.86   24.59/29.72   26.51/32.68
+        #:     P(dd > 20%)            23.8%         22.2%         25.4%
+        #:
+        #: `usdjpy:kendall` was advised to stay (dropping it costs ~100 points
+        #: of return AND fattens the tail); the operator removed it anyway.
+        )
+
+#: Cells that ENTER ON SATURDAY AND SUNDAY ONLY, inside their ordinary 09:30-16:00
+#: New York session. Their trades are `cfd_families.backtest` run with
+#: `ENTRY_DAYS` set to the weekend for that cell alone (`sleeve_trades`), which
+#: is exactly `EXNESS_ENTRY_DAYS=sat,sun`. None of them shares a family with an
+#: every-day ethusd sleeve, so no signal is traded twice.
+WEEKEND_ONLY = frozenset({
+    "ethusd:efficiency", "ethusd:cci", "ethusd:linreg_trend",
+})
 
 
 
@@ -3202,7 +3268,7 @@ def build(limit, max_rho, max_lift, null_seed=None, stale=True,
         key = f"{row['symbol']}:{row['family']}"
         if row.get("external"):
             # No coin-flip variant exists for an imported sleeve -- it is not an
-            # exness_families cell and `null_seed` has nothing to randomise. It
+            # cfd_families cell and `null_seed` has nothing to randomise. It
             # therefore appears UNCHANGED in the null book, which makes that
             # control weaker, and the report says so.
             # Explicit, because the default would end 2026-08-05 and quietly
@@ -3891,7 +3957,7 @@ def standalone(start_year=2018, risk_scale=CANON_RISK_SCALE, gross_cap=CANON_GRO
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Combine uncorrelated exness_families cells in one account.")
+        description="Combine uncorrelated cfd_families cells in one account.")
     parser.add_argument("command",
                         choices=("build", "size", "yearly", "standalone",
                                  "cache"))

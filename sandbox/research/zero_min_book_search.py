@@ -15,7 +15,7 @@ import os
 from datetime import datetime, timezone
 
 from sandbox.research import exness_combined_strategies as cs
-from sandbox.research import exness_families as ef
+from sandbox.research import cfd_families as ef
 
 
 CORE = ("nq:ofi", "nq:drift_vwap", "nq:volatility_breakout")

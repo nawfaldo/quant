@@ -39,7 +39,7 @@ import os
 import time
 from collections import Counter
 
-from sandbox.research import exness_families as ef
+from sandbox.research import cfd_families as ef
 from sandbox.research import _sixth_compare as sc
 from sandbox.research._sixth_verdict import null_for
 

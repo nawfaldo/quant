@@ -2,7 +2,7 @@
 
 Same machinery as `exness_combined_montecarlo` -- blocks of calendar time
 chained through the real `replay` -- with the execution path of
-`exness_live_execution.book`'s `live` run wired in before the trade logs are
+`fill_models.exness.book`'s `live` run wired in before the trade logs are
 built: the broker's own per-minute spread at the entry bar, the entry filled one
 publish lag plus bridge queue after the open, the exit filled one whole bar plus
 the same lag and queue after the bar it fired on, and no broker-side stop.
@@ -30,7 +30,7 @@ import sys
 from datetime import datetime, timezone
 
 from sandbox.research import exness_combined_strategies as ecs
-from sandbox.research import exness_live_execution as le
+from sandbox.research.fill_models import exness as le
 from sandbox.research import exness_combined_montecarlo as mc
 
 SOURCE = "bars"

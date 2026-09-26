@@ -25,7 +25,7 @@ import os
 import time
 from collections import Counter
 
-from sandbox.research import exness_families as ef
+from sandbox.research import cfd_families as ef
 from sandbox.research._sixth_export import (MIN_OOS_PF, MIN_OOS_RETURN,
                                             MIN_OOS_TRADES, NULL_METHOD,
                                             SURVIVOR_DIR, INDEX, index_row,

@@ -1,4 +1,4 @@
-//! `jp225:vol_regime`, one `exness_families` cell.
+//! `jp225:vol_regime`, one `cfd_families` cell.
 //!
 //! A one-session momentum, taken only while short-horizon volatility sits BELOW
 //! 1.3 times its own hundred-session baseline.
@@ -36,6 +36,7 @@ pub(super) const SPEC: SleeveSpec = SleeveSpec {
     scale: 1.0,
     shown_equity: 1.0,
     sized_as_import: false,
+    entry_days: None,
     engine: EngineKind::Family(Params {
         family: Family::VolRegime {
             ratio: 1.3,

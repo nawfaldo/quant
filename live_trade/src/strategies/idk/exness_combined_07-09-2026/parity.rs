@@ -1,4 +1,4 @@
-//! Trade-for-trade agreement with `exness_families.backtest`.
+//! Trade-for-trade agreement with `cfd_families.backtest`.
 //!
 //! The unit tests in `tests.rs` pin structure -- that the sessions are right, that the
 //! channels exclude the current bar, that the sizing refuses where the
@@ -16,7 +16,7 @@
 //! EVERY SLEEVE IN THE BOOK HAS ONE, and
 //! `every_sleeve_is_covered_by_a_parity_fixture` is what keeps it that way.
 //! Since 2026-09-04 that is the whole book rather than most of it: the two
-//! hand-written imports, which were not `exness_families` cells and had no
+//! hand-written imports, which were not `cfd_families` cells and had no
 //! sealed row to reproduce, left with NQ. A few are worth naming for what they
 //! cover that nothing else does:
 //!
@@ -203,7 +203,23 @@ fn minute_stream(fixture: &Fixture) -> Vec<Bar> {
 }
 
 fn replay_stream(fixture: &Fixture, bars: &[Bar]) -> Vec<(Entry, i64)> {
+    replay_stream_with(fixture, bars, false, 0)
+}
+
+/// `replay_stream`, optionally with the live runtime's early fills, and
+/// optionally DISCARDING every `discard_every`-th entry the way the live runtime
+/// discards one it refuses to send. `0` discards nothing.
+fn replay_stream_with(
+    fixture: &Fixture,
+    bars: &[Bar],
+    early: bool,
+    discard_every: usize,
+) -> Vec<(Entry, i64)> {
     let mut engine = FamilyEngine::new(fixture.sleeve, 0.01);
+    if early {
+        engine.enable_early_fills();
+    }
+    let mut entries_seen = 0usize;
     let mut closed: Vec<(Entry, i64)> = Vec::new();
     let mut open: Option<Entry> = None;
     let mut started = false;
@@ -231,6 +247,14 @@ fn replay_stream(fixture: &Fixture, bars: &[Bar]) -> Vec<(Entry, i64)> {
         let at = engine.action_timestamp(bar.ts) + fixture.shift_seconds;
         for action in actions {
             match action {
+                Action::Enter { .. }
+                    if discard_every > 0 && {
+                        entries_seen += 1;
+                        entries_seen % discard_every == 0
+                    } =>
+                {
+                    engine.discard(action);
+                }
                 Action::Enter { side, price, .. } => {
                     // Read off the position rather than through
                     // `entry_stop_price`, which this strategy deliberately
@@ -639,7 +663,43 @@ fn dump() {
 /// One entry per SLEEVE, which since 2026-09-04 is the whole book --
 /// `every_sleeve_is_covered_by_a_parity_fixture` is what keeps the two lists
 /// from drifting apart.
-const ALL: [(Sleeve, &str); 22] = [
+const ALL: [(Sleeve, &str); 31] = [
+    (
+        Sleeve::EthusdEfficiency,
+        include_str!("../fixtures/parity_ethusd_efficiency.json"),
+    ),
+    (
+        Sleeve::EthusdCci,
+        include_str!("../fixtures/parity_ethusd_cci.json"),
+    ),
+    (
+        Sleeve::EthusdLinregTrend,
+        include_str!("../fixtures/parity_ethusd_linreg_trend.json"),
+    ),
+    (
+        Sleeve::UsdjpyAroon,
+        include_str!("../fixtures/parity_usdjpy_aroon.json"),
+    ),
+    (
+        Sleeve::EthusdBreakRetest,
+        include_str!("../fixtures/parity_ethusd_break_retest.json"),
+    ),
+    (
+        Sleeve::EurjpySwingMa,
+        include_str!("../fixtures/parity_eurjpy_swing_ma.json"),
+    ),
+    (
+        Sleeve::EthusdRoofing,
+        include_str!("../fixtures/parity_ethusd_roofing.json"),
+    ),
+    (
+        Sleeve::EthusdLevelConfluence,
+        include_str!("../fixtures/parity_ethusd_level_confluence.json"),
+    ),
+    (
+        Sleeve::UsdjpyRvol,
+        include_str!("../fixtures/parity_usdjpy_rvol.json"),
+    ),
     (
         Sleeve::UsdjpyVolumeThrust,
         include_str!("../fixtures/parity_usdjpy_volume_thrust.json"),
@@ -745,11 +805,28 @@ fn every_sleeve_is_covered_by_a_parity_fixture() {
             sleeve.display()
         );
     }
-    assert_eq!(
-        covered.len(),
-        BOOK.len(),
-        "a fixture names a sleeve the book does not carry"
-    );
+    // RETIRED sleeves keep their fixtures on purpose: they are the only thing
+    // still holding `Cusum`, `ObvDivergence`, `VolRegime`, `MomentumStack`,
+    // `XmaCross` and the jp225 arms of `Kalman` and `VolumeThrust` to their
+    // Python. Any other stray is an error.
+    const RETIRED: [Sleeve; 9] = [
+        Sleeve::UkoilXmaCross,
+        Sleeve::Jp225VolumeThrust,
+        Sleeve::Jp225VolRegime,
+        Sleeve::Jp225MomentumStack,
+        Sleeve::Jp225Cusum,
+        Sleeve::Jp225ObvDivergence,
+        Sleeve::Jp225Kalman,
+        Sleeve::UsdjpyKendall,
+        Sleeve::EurjpySwingMa,
+    ];
+    for sleeve in &covered {
+        assert!(
+            BOOK.contains(sleeve) || RETIRED.contains(sleeve),
+            "a fixture names a sleeve the book does not carry: {sleeve:?}"
+        );
+    }
+    assert_eq!(covered.len(), BOOK.len() + RETIRED.len());
 }
 
 /// EVERY fixture reproduces, not only the ones with a test of their own above.
@@ -908,4 +985,69 @@ fn minute_bars_reach_the_same_trades() {
         (MISSING, EXTRA, MOVED),
         "the cost of the clock-derived last_of_day moved"
     );
+}
+
+/// THE LIVE RUNTIME'S EARLY FILLS CHANGE WHEN AN ENTRY IS SENT AND NOTHING ELSE.
+///
+/// Live sends an entry on its fill candle's first minute instead of once that
+/// candle has closed ([[live-entries-are-one-candle-late]]); the backtest keeps
+/// the ordinary path. Over every fixture's minute stream the two must produce
+/// the same trades to the bit -- entry candle, side, price, stop and exit bar --
+/// including when entries are DISCARDED, which is what live does with one it
+/// refuses to send, and which the ordinary path answers by never signalling
+/// again on the candle the position was opened on.
+#[test]
+fn early_fills_reach_the_same_trades() {
+    for (sleeve, raw) in ALL {
+        let fixture = load(sleeve, raw);
+        let minutes = minute_stream(&fixture);
+        for discard_every in [0, 3] {
+            let ordinary = replay_stream_with(&fixture, &minutes, false, discard_every);
+            let early = replay_stream_with(&fixture, &minutes, true, discard_every);
+            assert!(!ordinary.is_empty(), "{sleeve:?}: no trades to compare");
+            assert_eq!(
+                early.len(),
+                ordinary.len(),
+                "{sleeve:?} (discard every {discard_every}): trade count moved"
+            );
+            for ((ge, gx), (we, wx)) in early.iter().zip(ordinary.iter()) {
+                assert!(
+                    ge.ts == we.ts
+                        && ge.side == we.side
+                        && ge.price.to_bits() == we.price.to_bits()
+                        && ge.distance.to_bits() == we.distance.to_bits()
+                        && gx == wx,
+                    "{sleeve:?} (discard every {discard_every}): diverged at {}",
+                    we.ts
+                );
+            }
+        }
+    }
+}
+
+/// And they ARE early: every entry on every fixture goes out on its fill
+/// candle's first minute, none on a later one. Without this the test above
+/// would pass just as well if early fills never fired at all.
+#[test]
+fn early_fills_are_actually_early() {
+    let (mut first_minute, mut later) = (0, 0);
+    for (sleeve, raw) in ALL {
+        let fixture = load(sleeve, raw);
+        let mut engine = FamilyEngine::new(fixture.sleeve, 0.01);
+        engine.enable_early_fills();
+        for bar in minute_stream(&fixture) {
+            for action in engine.update_all(bar, UNLIMITED) {
+                if matches!(action, Action::Enter { .. }) {
+                    let shifted = bar.ts + fixture.shift_seconds;
+                    if shifted.rem_euclid(BAR_SECONDS) == 0 {
+                        first_minute += 1;
+                    } else {
+                        later += 1;
+                    }
+                }
+            }
+        }
+    }
+    assert!(first_minute > 6_000, "only {first_minute} early entries");
+    assert_eq!(later, 0, "entries sent after the candle's first minute");
 }

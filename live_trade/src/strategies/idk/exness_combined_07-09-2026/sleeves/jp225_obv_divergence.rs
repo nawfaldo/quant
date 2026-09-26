@@ -1,4 +1,4 @@
-//! `jp225:obv_divergence`, one `exness_families` cell.
+//! `jp225:obv_divergence`, one `cfd_families` cell.
 //!
 //! Price makes a new four-session extreme; cumulative volume does not follow --
 //! and this cell trades WITH the break anyway.
@@ -35,6 +35,7 @@ pub(super) const SPEC: SleeveSpec = SleeveSpec {
     scale: 1.0,
     shown_equity: 1.0,
     sized_as_import: false,
+    entry_days: None,
     engine: EngineKind::Family(Params {
         family: Family::ObvDivergence {
             // `4 * p["session"]`, the shorter of the two rungs, and the SAME

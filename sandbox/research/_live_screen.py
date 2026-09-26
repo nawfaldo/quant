@@ -31,9 +31,9 @@ import math
 import os
 import statistics
 
-from sandbox.research import exness_families as ef
+from sandbox.research import cfd_families as ef
 from sandbox.research import exness_combined_strategies as cs
-from sandbox.research import exness_live_execution as lx
+from sandbox.research.fill_models import exness as lx
 
 OUT_PATH = os.path.join(os.path.dirname(__file__), "live_screen.json")
 

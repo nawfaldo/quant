@@ -95,7 +95,7 @@ WORKSPACE = HERE.parent
 #: anything -- averaged over the day only about three of these are open at once.
 #:
 #: NEW YORK, NOT THE SHIFTED CLOCK, and the two are not the same table.
-#: `exness_families.SESSION` stores JP225 as `(60, 480)` because `all_bars` has
+#: `cfd_families.SESSION` stores JP225 as `(60, 480)` because `all_bars` has
 #: ALREADY added its six-hour shift; in real New York terms that session is
 #: 19:00-02:00, which wraps. Copying the shifted pair in read JP225 as open
 #: 01:00-08:00 -- the seven hours it is shut -- and deprioritised through the
@@ -112,7 +112,8 @@ DUKASCOPY = {
     "eurjpy": (_ins.INSTRUMENT_FX_CROSSES_EUR_JPY, "eurjpy_1m", (60, 870)),
     "gbpjpy": (_ins.INSTRUMENT_FX_CROSSES_GBP_JPY, "gbpjpy_1m", (0, 810)),
     "usdjpy": (_ins.INSTRUMENT_FX_MAJORS_USD_JPY, "usdjpy_1m", (0, 780)),
-    "jp225": (_ins.INSTRUMENT_IDX_ASIA_E_N225JAP, "jp225_1m", (1140, 120)),
+    # "jp225" LEFT 2026-09-23 with every jp225 sleeve. Its wrapping-session
+    # handling in `is_open` stays, in case it is re-seated.
     "ukoil": (_ins.INSTRUMENT_CMD_ENERGY_E_BRENT, "ukoil_1m", (540, 870)),
 }
 

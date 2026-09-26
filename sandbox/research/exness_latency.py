@@ -22,7 +22,7 @@ decision can be acted on. Nothing in the repository has charged for it.
 
 HOW IT IS CHARGED.
 
-`exness_families.backtest` grew a `decision_lag` argument: a pending entry
+`cfd_families.backtest` grew a `decision_lag` argument: a pending entry
 becomes fillable at bar `i+1+lag`'s open instead of `i+1`'s. Zero reproduces
 every sealed result byte for byte, which `selftest` asserts rather than
 assuming. Nothing else moves -- the signal is still READ on bar `i`, the stop
@@ -52,7 +52,7 @@ import time
 from datetime import datetime, timedelta, timezone
 
 from sandbox import data
-from sandbox.research import exness_families as ef
+from sandbox.research import cfd_families as ef
 
 UTC = timezone.utc
 OUT_PATH = os.path.join(os.path.dirname(__file__), "exness_latency.json")
@@ -79,7 +79,7 @@ OUT_PATH = os.path.join(os.path.dirname(__file__), "exness_latency.json")
 #:
 #: THE CONSEQUENCE IS THAT EVERY LIVE-EXECUTION FIGURE BUILT ON 78.0 CHARGED
 #: SEVENTY-SIX SECONDS OF DRIFT THE ACCOUNT NEVER PAID, so those numbers are a
-#: LOWER bound on the book. Re-run `exness_live_execution precompute` after
+#: LOWER bound on the book. Re-run `fill_models.exness precompute` after
 #: changing this or the maps keep the old delay.
 #:
 #: Binance is a websocket and closes a minute bar on the minute, so its lag is

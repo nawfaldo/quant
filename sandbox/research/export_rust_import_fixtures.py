@@ -1,6 +1,6 @@
 """Export Rust parity fixtures for the book's two IMPORTED sleeves.
 
-`export_rust_parity_fixtures` covers the twelve `exness_families` cells. It
+`export_rust_parity_fixtures` covers the twelve `cfd_families` cells. It
 cannot cover `nq:ofi` or `nq:drift_vwap`, because neither is a family cell:
 they are finished strategies `combined_book` imports whole, they run on
 ONE-MINUTE bars rather than the study's 30-minute candles, and `nq:ofi` reads

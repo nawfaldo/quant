@@ -30,7 +30,7 @@ from datetime import datetime, timezone
 from sandbox.research import _mc_live as live
 from sandbox.research import _mc_live_frontier as fr
 from sandbox.research import exness_combined_strategies as ecs
-from sandbox.research import exness_live_execution as le
+from sandbox.research.fill_models import exness as le
 
 
 def stamp(text):

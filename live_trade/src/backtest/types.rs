@@ -281,6 +281,23 @@ pub(crate) trait Strategy {
     fn resize_entry(&self, _price: f64, quantity: f64, _shown: f64, _actual: f64) -> f64 {
         quantity
     }
+
+    /// The whole entry charge, in bp of the fill, for the entry this strategy
+    /// just emitted -- when the Exness fill model priced its spread from the
+    /// broker's own minute. `None` keeps the engine's per-market constant.
+    ///
+    /// ASKED OF THE STRATEGY, NOT LOOKED UP BY THE ENGINE, because the strategy
+    /// already charged the same figure to its admission account; two lookups
+    /// could disagree about which minute the entry belongs to.
+    fn entry_cost_bp(&self) -> Option<f64> {
+        None
+    }
+
+    /// How many of this strategy's fills the Exness fill model priced from the
+    /// broker table, or `None` for a strategy the model does not reach.
+    fn fill_coverage(&self) -> Option<super::fills::FillCoverage> {
+        None
+    }
 }
 
 #[cfg(test)]

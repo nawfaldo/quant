@@ -1,4 +1,4 @@
-//! `ethusd:obv_break`, one `exness_families` cell.
+//! `ethusd:obv_break`, one `cfd_families` cell.
 //!
 //! On-balance volume breaking its own channel, price ignored.
 //!
@@ -28,6 +28,7 @@ pub(super) const SPEC: SleeveSpec = SleeveSpec {
     scale: 1.0,
     shown_equity: 1.0,
     sized_as_import: false,
+    entry_days: None,
     engine: EngineKind::Family(Params {
         family: Family::ObvBreak {
             // `p["obv"][0]`. Longer than the price channels on purpose: OBV is

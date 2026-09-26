@@ -109,7 +109,7 @@ pub(super) const LATE_BAR_GRACE_SECONDS: i64 = 300;
 /// runtime closes it on the clock alone, with no bar from that market required.
 ///
 /// ONE BAR, BECAUSE THAT IS WHERE THE RESEARCH MODEL PUTS THE EXIT.
-/// `exness_live_execution` prices a session flatten at `bar_seconds + lag` past
+/// `fill_models.exness` prices a session flatten at `bar_seconds + lag` past
 /// the close and does so unconditionally -- 1801.6s for every Dukascopy market
 /// -- so this is not a grudging backstop but the same instant the study already
 /// assumes. Shorter would cut the exit in front of the model; longer reopens the
@@ -151,6 +151,25 @@ pub(super) fn release_settled_bar(held: i64, symbol: &str, now: Option<i64>) -> 
         Some(now) if now >= held + 2 * step => held + step,
         _ => held,
     }
+}
+
+/// How old a bar's decision may be, by the clock, and still open a position.
+///
+/// A market order sent on an old signal is a different trade from the one the
+/// backtest took, so a real catch-up -- a restart, a feed outage replayed in one
+/// poll -- must still only warm indicators and run exits. But the feed routinely
+/// hands over a minute ~70s after it closed (Dukascopy publishes ~18s after the
+/// close and the daemon polls once a minute), and one poll late is ~130s. Three
+/// minutes admits both and nothing older. The fill model the backtest charges
+/// puts an entry 2s after the candle opens, so every second of this is cost the
+/// research did not pay -- which is why it is minutes and not the half hour a
+/// late entry used to carry.
+pub(super) const ENTRY_FRESH_SECONDS: i64 = 180;
+
+/// Whether a bar stamped `bar_ts` is recent enough, at store-clock `now`, for
+/// its signal to open a position. Its decision moment is the bar's CLOSE.
+pub(super) fn entry_is_fresh(bar_ts: i64, symbol: &str, now: i64) -> bool {
+    now - (bar_ts + market_step(symbol)) <= ENTRY_FRESH_SECONDS
 }
 
 pub(super) fn market_step(symbol: &str) -> i64 {
@@ -216,23 +235,23 @@ pub const LIVE_STRATEGIES: &[&str] = &[
     "ethusd_confluence",
     "ethusd_volatility_breakout",
     "gbpjpy_trap",
-    "ukoil_xma_cross",
     "eurjpy_two_stage",
     "usdjpy_pullback",
     "ethusd_obv_break",
-    "jp225_volume_thrust",
     "ukoil_level_confluence",
-    "jp225_vol_regime",
-    "jp225_momentum_stack",
-    "usdjpy_kendall",
-    "jp225_cusum",
-    "jp225_obv_divergence",
-    "jp225_kalman",
     "eurjpy_gated_orb",
+    "usdjpy_aroon",
+    "ethusd_break_retest",
     "usdjpy_fracdiff",
     "ethusd_pullback",
     "ethusd_kalman",
     "usdjpy_half_life",
+    "ethusd_roofing",
+    "ethusd_level_confluence",
+    "usdjpy_rvol",
+    "ethusd_efficiency",
+    "ethusd_cci",
+    "ethusd_linreg_trend",
 ];
 
 /// The market a live strategy trades. Slots are fed only their own symbol's
@@ -434,8 +453,15 @@ pub fn symbol_matches_strategy(strategy: &str, symbol: &str) -> bool {
 pub(super) fn build_strategy(strategy: &str) -> Option<Box<dyn Strategy>> {
     // 0.01 is the Forex quantity step, matching the backtest instrument. Each
     // sleeve floors to its own market's `volume_step` on top of it.
-    sleeve_of(strategy)
-        .map(|sleeve| Box::new(ExnessCombined::new(sleeve, 0.01)) as Box<dyn Strategy>)
+    //
+    // ENTRIES GO OUT ON THE FILL CANDLE'S FIRST MINUTE, not once it has closed:
+    // the backtest fills at that candle's open, and waiting for the close sent
+    // every live entry half an hour late ([[live-entries-are-one-candle-late]]).
+    sleeve_of(strategy).map(|sleeve| {
+        let mut strategy = ExnessCombined::new(sleeve, 0.01);
+        strategy.enable_early_fills();
+        Box::new(strategy) as Box<dyn Strategy>
+    })
 }
 
 pub(super) fn side_name(side: Side) -> &'static str {

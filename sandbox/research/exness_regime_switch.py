@@ -97,7 +97,7 @@ import statistics
 from datetime import datetime, timezone
 
 from sandbox.research import exness_combined_strategies as ecs
-from sandbox.research import exness_families as ef
+from sandbox.research import cfd_families as ef
 
 OUT_PATH = os.path.join(ecs.RESULTS, "exness_regime_switch.json")
 

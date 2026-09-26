@@ -1,5 +1,21 @@
 #!/usr/bin/env python3
-"""Import Exness MT5 one-minute bars into the store as `exness_<symbol>_1m`.
+"""Import a broker's MT5 one-minute bars into the store as `<broker>_<symbol>_1m`.
+
+`--broker exness` (the default) lands `exness_<symbol>_1m`; `--broker
+fundednext` lands `fundednext_<symbol>_1m` from the FundedNext terminal. The
+table is named for the BROKER's symbol, so FundedNext's NDX100 is
+`fundednext_ndx100_1m`. Everything below was written for Exness and holds for
+both, except the clock -- see FUNDEDNEXT CLOCK.
+
+FUNDEDNEXT CLOCK. FundedNext's MT5 epoch is SERVER time, not UTC: the server
+sits at New York + 7h all year (UTC+3 in the US summer, UTC+2 in winter), so the
+stored New York wall clock is the raw stamp minus seven hours, with no DST
+arithmetic -- EXCEPT before 2024-07-08 12:37 server, when the server kept
+Central European time: New York + 6, and + 5 in the weeks each spring and
+autumn when the US and EU clocks disagree (`FUNDEDNEXT_OFFSET_EXCEPTIONS`).
+Never calibrate against an `exness_*` table: Exness FX is itself an hour early
+in every EU winter before 2024-04. Use Dukascopy FX, Databento indices, or a
+clock-anchored event such as the 08:30 New York data spike.
 
 WHY THIS EXISTS. Every canon sleeve signals off a vendor table (`gbpjpy_1m`
 from Dukascopy, `ethusd_1m` from Binance, `nq_1m` from Databento) but the book
@@ -62,10 +78,49 @@ from parquet_writer import VENDOR_DIR, Sender, TimestampNanos, compact, table_sp
 
 UTC = timezone.utc
 DEFAULT_TERMINAL = Path(r"C:\Program Files\MetaTrader 5 EXNESS\terminal64.exe")
+FUNDEDNEXT_TERMINAL = Path(r"C:\Program Files\FundedNext MT5 Terminal\terminal64.exe")
+
+#: Hours the FundedNext server clock runs ahead of New York wall clock.
+FUNDEDNEXT_SERVER_AHEAD_OF_NY_HOURS = 7
+
+#: FundedNext's currency pairs. Kept because the class matters for commission
+#: in `cfd_families`; the clock no longer depends on it.
+FUNDEDNEXT_FX = {"AUDJPY", "AUDUSD", "EURJPY", "EURUSD", "GBPJPY", "GBPUSD",
+                 "USDCAD", "USDJPY"}
+
+#: `(first, end, hours, scope)` in SERVER time where the lead was not seven.
+#: ONE SWITCH: every symbol was New York + 6 until 2024-07-08 12:37 server and
+#: + 7 since. Before it the server kept Central European time, so in the US/EU
+#: DST gap weeks of 2020-2022 the lead was five -- found on AUDUSD and AUDJPY,
+#: the only FundedNext M1 that old, at day resolution against Dukascopy. The
+#: 2022-10 and 2023 gap weeks read six. Later rows override earlier ones. That edge is a mid-week forward jump -- stamps go 12:37 then
+#: 13:37 -- so both bars land on 06:37 New York and the writer keeps the later.
+#:
+#: Checked 2026-09-24 against clock-correct references only: Dukascopy FX
+#: (day-level, 2020-2026, AUDUSD/AUDJPY/GBPJPY/USDJPY/EURUSD), Databento
+#: `es_1m`/`nq_1m` for the indices, Exness indices and oils from 2022-07, and
+#: the 17:00 New York daily break for the metals. An earlier version of this
+#: table held six scoped windows because it was calibrated against `exness_*`
+#: FX, which is itself an hour early in every EU winter before 2024-04
+#: ([[exness-history-is-an-hour-early-in-eu-winter]]).
+FUNDEDNEXT_OFFSET_EXCEPTIONS = (
+    (datetime(2000, 1, 1, tzinfo=timezone.utc),
+     datetime(2024, 7, 8, 13, tzinfo=timezone.utc), 6, "all"),
+    (datetime(2020, 3, 7, tzinfo=timezone.utc),
+     datetime(2020, 3, 28, tzinfo=timezone.utc), 5, "all"),
+    (datetime(2020, 10, 24, tzinfo=timezone.utc),
+     datetime(2020, 10, 31, tzinfo=timezone.utc), 5, "all"),
+    (datetime(2021, 3, 13, tzinfo=timezone.utc),
+     datetime(2021, 3, 27, tzinfo=timezone.utc), 5, "all"),
+    (datetime(2021, 10, 30, tzinfo=timezone.utc),
+     datetime(2021, 11, 6, tzinfo=timezone.utc), 5, "all"),
+    (datetime(2022, 3, 12, tzinfo=timezone.utc),
+     datetime(2022, 3, 26, tzinfo=timezone.utc), 5, "all"),
+)
 
 #: The eleven instruments the canon book trades, as Exness names them. The keys
 #: are the repository's symbols, so `nq` -> `USTEC` matches `BROKER_ALIAS` in
-#: `sandbox/research/exness_families.py` and the table lands as
+#: `sandbox/research/cfd_families.py` and the table lands as
 #: `exness_ustec_1m`.
 CANON = {
     # RENAMED FROM `nq` 2026-09-03. The table this lands is `exness_ustec_1m`
@@ -88,14 +143,14 @@ CANON = {
     # from the book. `btc` and `xniusd` are canon sleeves that were missing
     # here, so a default run imported ten of the twelve symbols the book needs
     # and said nothing about the two it skipped. Checked against
-    # `exness_families.broker_symbol`, which is the authority.
+    # `cfd_families.broker_symbol`, which is the authority.
     "btc": "BTCUSD",
     "xniusd": "XNIUSD",
     # The rest of the research pool, added 2026-08-31 so a candidate can be
     # screened on live fills rather than skipped for want of a table. `es` and
     # `de40` are the two whose broker name does NOT follow the repository name
     # -- US500 and DE30 -- which is exactly why this map is resolved through
-    # `exness_families.broker_symbol` and never guessed.
+    # `cfd_families.broker_symbol` and never guessed.
     "es": "US500",
     "de40": "DE30",
     "hk50": "HK50",
@@ -113,6 +168,55 @@ CANON = {
     # could not price. Its contract size is 100, not 1
     # ([[ethbtc-live-size-is-100x-the-contract-size]]).
     "ethbtc": "ETHBTC",
+    # ADDED 2026-09-23 for the `fastbar` 5m sweep. Each has a 1m vendor table
+    # and was refused only for want of a broker table to price its fills.
+    "fr40": "FR40",
+    "stoxx50": "STOXX50",
+    "aus200": "AUS200",
+    "eurusd": "EURUSD",
+    "usdcad": "USDCAD",
+    "audjpy": "AUDJPY",
+}
+
+#: The research symbols FundedNext quotes, as FundedNext names them. Probed
+#: 2026-09-24 from `symbols_get` (67 symbols): no crypto, no XAL/XNI, no gold
+#: crosses. The indices and oils do not follow the Exness names.
+FUNDEDNEXT = {
+    "ustec": "NDX100",
+    "es": "SPX500",
+    "de40": "GER30",
+    "fr40": "FRA40",
+    "stoxx50": "EUSTX50",
+    "uk100": "UK100",
+    "jp225": "JP225",
+    "hk50": "HK50",
+    "aus200": "AUS200",
+    "ukoil": "UKOUSD",
+    "usoil": "USOUSD",
+    "usdjpy": "USDJPY",
+    "audusd": "AUDUSD",
+    "gbpjpy": "GBPJPY",
+    "gbpusd": "GBPUSD",
+    "eurjpy": "EURJPY",
+    "eurusd": "EURUSD",
+    "usdcad": "USDCAD",
+    "audjpy": "AUDJPY",
+    "xagusd": "XAGUSD",
+    "xptusd": "XPTUSD",
+    "xauusd": "XAUUSD",
+}
+
+#: Everything that differs between brokers. `clock` says what the terminal's
+#: epoch is: `utc` is a true UTC instant (Exness), `ny_plus_7` is server time
+#: seven hours ahead of New York (FundedNext). Each broker gets its own IPC
+#: mutex: the lock exists for processes sharing ONE terminal, and a FundedNext
+#: import must never queue behind the live Exness bridge.
+BROKERS = {
+    "exness": {"terminal": DEFAULT_TERMINAL, "symbols": CANON,
+               "prefix": "exness_", "clock": "utc", "mutex": None},
+    "fundednext": {"terminal": FUNDEDNEXT_TERMINAL, "symbols": FUNDEDNEXT,
+                   "prefix": "fundednext_", "clock": "ny_plus_7",
+                   "mutex": r"Local\QuantMetaTrader5IPC_fundednext"},
 }
 
 #: A year chunk is requested until two consecutive calls agree, because the
@@ -147,6 +251,31 @@ def actual_to_stored_ns(actual_seconds, wall_clock):
     """Real UTC instant -> New York wall clock reinterpreted as UTC."""
     local = datetime.fromtimestamp(actual_seconds, tz=UTC).astimezone(wall_clock)
     return int(local.replace(tzinfo=UTC).timestamp()) * 1_000_000_000
+
+
+def server_to_stored_ns(server_seconds, fx=True):
+    """FundedNext server stamp -> New York wall clock reinterpreted as UTC."""
+    hours = FUNDEDNEXT_SERVER_AHEAD_OF_NY_HOURS
+    for first, end, lead, scope in FUNDEDNEXT_OFFSET_EXCEPTIONS:
+        if scope != "all" and (scope == "fx") != fx:
+            continue
+        if first.timestamp() <= server_seconds < end.timestamp():
+            hours = lead
+    return (server_seconds - hours * 3600) * 1_000_000_000
+
+
+def to_stored_ns(seconds, wall_clock, clock, fx=True):
+    if clock == "ny_plus_7":
+        return server_to_stored_ns(seconds, fx)
+    return actual_to_stored_ns(seconds, wall_clock)
+
+
+def to_actual_seconds(seconds, clock, fx=True):
+    """A terminal stamp as a true UTC instant, for comparing with the cutoff."""
+    if clock != "ny_plus_7":
+        return seconds
+    stored = datetime.fromtimestamp(server_to_stored_ns(seconds, fx) // 10**9, tz=UTC)
+    return int(stored.replace(tzinfo=ZoneInfo("America/New_York")).timestamp())
 
 
 def ensure_table(table):
@@ -226,8 +355,9 @@ def settled_rates(symbol, start, stop):
 class Writer:
     """One reconnecting QuestDB ILP connection, shared by every symbol."""
 
-    def __init__(self, wall_clock):
+    def __init__(self, wall_clock, clock="utc"):
         self.wall_clock = wall_clock
+        self.clock = clock
         self.sender = None
         self.written = 0
 
@@ -237,13 +367,13 @@ class Writer:
             self.sender.establish()
         return self.sender
 
-    def write(self, table, rows, cutoff_seconds):
+    def write(self, table, rows, cutoff_seconds, fx=True):
         sender = self.connect()
         written = 0
         try:
             for row in rows:
                 seconds = int(row["time"])
-                if seconds >= cutoff_seconds:
+                if to_actual_seconds(seconds, self.clock, fx) >= cutoff_seconds:
                     continue
                 sender.row(
                     table,
@@ -257,7 +387,8 @@ class Writer:
                         "spread": int(row["spread"]),
                         "real_volume": int(row["real_volume"]),
                     },
-                    at=TimestampNanos(actual_to_stored_ns(seconds, self.wall_clock)),
+                    at=TimestampNanos(to_stored_ns(seconds, self.wall_clock,
+                                                   self.clock, fx)),
                 )
                 written += 1
             sender.flush()
@@ -313,7 +444,8 @@ def import_symbol(key, broker, writer, cutoff, first_year, table_prefix):
         for edge, following in month_windows(start, stop):
             rows = settled_rates(broker, edge, following)
             if rows:
-                written += writer.write(table, rows, cutoff_seconds)
+                written += writer.write(table, rows, cutoff_seconds,
+                                        broker in FUNDEDNEXT_FX)
         if written == 0:
             empty_run += 1
             log(f"  {broker} {year}: no bars")
@@ -344,26 +476,43 @@ def import_symbol(key, broker, writer, cutoff, first_year, table_prefix):
 def parse_args():
     two_days_ago = date.today() - timedelta(days=2)
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--symbols", nargs="+", default=sorted(CANON),
-                        help="repository symbols; default is the canon eleven")
+    parser.add_argument("--broker", choices=sorted(BROKERS), default="exness")
+    parser.add_argument("--symbols", nargs="+", default=None,
+                        help="repository symbols; default is every symbol in "
+                             "the broker's map")
     parser.add_argument("--to-date", default=two_days_ago.isoformat(),
                         help="last INCLUSIVE New York date to import "
                              "(default: two days ago)")
     parser.add_argument("--first-year", type=int, default=EARLIEST_YEAR)
-    parser.add_argument("--terminal", type=Path, default=DEFAULT_TERMINAL)
+    parser.add_argument("--terminal", type=Path, default=None,
+                        help="default: the broker's own terminal")
     parser.add_argument("--timezone", default="America/New_York")
-    parser.add_argument("--table-prefix", default="exness_")
-    parser.add_argument("--report", type=Path,
-                        default=VENDOR_DIR / "exness" / "import_1m_report.json")
-    return parser.parse_args()
+    parser.add_argument("--table-prefix", default=None, help="default: <broker>_")
+    parser.add_argument("--report", type=Path, default=None,
+                        help="default: <vendor dir>/<broker>/import_1m_report.json")
+    args = parser.parse_args()
+    profile = BROKERS[args.broker]
+    args.symbol_map = profile["symbols"]
+    args.clock = profile["clock"]
+    args.symbols = args.symbols or sorted(args.symbol_map)
+    args.terminal = args.terminal or profile["terminal"]
+    args.table_prefix = args.table_prefix or profile["prefix"]
+    args.report = args.report or VENDOR_DIR / args.broker / "import_1m_report.json"
+    if profile["mutex"]:
+        from ipc_lock import _NamedMutex  # noqa: PLC0415
+
+        mt5._mutex = _NamedMutex(profile["mutex"])
+    return args
 
 
 def main():
     args = parse_args()
     wall_clock = ZoneInfo(args.timezone)
-    unknown = [s for s in args.symbols if s.lower() not in CANON]
+    symbol_map = args.symbol_map
+    unknown = [s for s in args.symbols if s.lower() not in symbol_map]
     if unknown:
-        print(f"unknown symbols: {unknown}; known: {sorted(CANON)}", file=sys.stderr)
+        print(f"unknown symbols for {args.broker}: {unknown}; "
+              f"known: {sorted(symbol_map)}", file=sys.stderr)
         return 2
 
     # The cutoff is a NEW YORK date, so it is converted back to the real UTC
@@ -375,7 +524,7 @@ def main():
         print(f"MT5 initialization failed: {mt5.last_error()}", file=sys.stderr)
         return 1
 
-    writer = Writer(wall_clock)
+    writer = Writer(wall_clock, args.clock)
     report = []
     try:
         terminal, account = mt5.terminal_info(), mt5.account_info()
@@ -399,14 +548,14 @@ def main():
 
         for key in args.symbols:
             key = key.lower()
-            log(f"{key} -> {CANON[key]}")
+            log(f"{key} -> {symbol_map[key]}")
             try:
-                summary = import_symbol(key, CANON[key], writer, cutoff,
+                summary = import_symbol(key, symbol_map[key], writer, cutoff,
                                         args.first_year, args.table_prefix)
             except Exception as error:  # noqa: BLE001 - one symbol must not
                 # cost the other ten; an unquoted CFD is a normal outcome.
                 log(f"{key}: {type(error).__name__}: {error}")
-                summary = {"symbol": key, "broker": CANON[key],
+                summary = {"symbol": key, "broker": symbol_map[key],
                            "error": f"{type(error).__name__}: {error}"}
             report.append(summary)
             log(f"{key}: {summary}")

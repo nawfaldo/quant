@@ -224,7 +224,8 @@ mod tests {
         }
     }
 
-    /// The seven markets the loader has to be able to serve.
+    /// The six markets the loader has to be able to serve. JP225 left with
+    /// every one of its sleeves on 2026-09-23.
     ///
     /// FIVE FEWER THAN THE 29-08 BOOK, and two of the departures are the ones to
     /// remember: `xniusd` was the only market with no one-minute table, so
@@ -233,12 +234,10 @@ mod tests {
     /// ([[hk50-stops-for-lunch-inside-its-session]]). A new market added blindly
     /// inherits neither guard.
     #[test]
-    fn the_book_spans_seven_markets() {
+    fn the_book_spans_six_markets() {
         assert_eq!(
             known_markets(),
-            vec![
-                "audusd", "ethusd", "eurjpy", "gbpjpy", "jp225", "ukoil", "usdjpy",
-            ]
+            vec!["audusd", "ethusd", "eurjpy", "gbpjpy", "ukoil", "usdjpy",]
         );
     }
 }

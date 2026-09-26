@@ -1,6 +1,6 @@
 """Consolidate every sealed `--groups fourth` result into one readable table.
 
-READ THE HEADER OF `exness_families` FIRST. Terminal output does not reach the
+READ THE HEADER OF `cfd_families` FIRST. Terminal output does not reach the
 user, so this writes a markdown file as well as printing, and the path is the
 thing to hand over.
 
@@ -20,7 +20,7 @@ import json
 import os
 import sys
 
-from sandbox.research import exness_families as f
+from sandbox.research import cfd_families as f
 
 RESULTS = os.path.join(os.path.dirname(__file__), "..", "results")
 
@@ -201,7 +201,7 @@ def main():
         emit(f"| {symbol} | {concentration[symbol]} | "
              f"{100 * concentration[symbol] / len(rows):.0f}% |")
     emit()
-    emit("This is the result `exness_families` already documents and explains "
+    emit("This is the result `cfd_families` already documents and explains "
          "([[stock-cost-share-explains-the-tsla-result]]): risk per trade is "
          "fixed and the stop is a fraction of the daily range, so what decides "
          "a stock sweep is the ratio of spread to range -- the share of each "

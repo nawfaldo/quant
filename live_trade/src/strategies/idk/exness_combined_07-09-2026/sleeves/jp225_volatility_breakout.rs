@@ -1,4 +1,4 @@
-//! `jp225:volatility_breakout`, one `exness_families` cell.
+//! `jp225:volatility_breakout`, one `cfd_families` cell.
 //!
 //! A close beyond the open plus three tenths of yesterday's range.
 //!
@@ -30,6 +30,7 @@ pub(super) const SPEC: SleeveSpec = SleeveSpec {
     scale: 1.0,
     shown_equity: 1.0,
     sized_as_import: false,
+    entry_days: None,
     engine: EngineKind::Family(Params {
         family: Family::VolatilityBreakout { fraction: 0.3 },
         direction: Direction::Follow,

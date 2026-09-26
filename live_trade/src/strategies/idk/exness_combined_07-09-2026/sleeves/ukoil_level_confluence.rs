@@ -1,4 +1,4 @@
-//! `ukoil:level_confluence`, one `exness_families` cell.
+//! `ukoil:level_confluence`, one `cfd_families` cell.
 //!
 //! Yesterday's range and today's session VWAP landing on the SAME price, and
 //! the break of that cluster taken in its own direction.
@@ -33,6 +33,7 @@ pub(super) const SPEC: SleeveSpec = SleeveSpec {
     scale: 1.0,
     shown_equity: 1.0,
     sized_as_import: false,
+    entry_days: None,
     engine: EngineKind::Family(Params {
         family: Family::LevelConfluence {
             pair: LevelPair::PdrVwap,

@@ -1,4 +1,4 @@
-//! `jp225:volume_thrust`, one `exness_families` cell.
+//! `jp225:volume_thrust`, one `cfd_families` cell.
 //!
 //! A directional bar on twice the five-session average volume, taken in its own
 //! direction, in a CALM regime and only in the first seven hours of the session.
@@ -35,6 +35,7 @@ pub(super) const SPEC: SleeveSpec = SleeveSpec {
     // `SHOWN_EQUITY["jp225:volume_thrust"]`: 90.1% fills -> 100.0%.
     shown_equity: 2.0,
     sized_as_import: false,
+    entry_days: None,
     engine: EngineKind::Family(Params {
         family: Family::VolumeThrust {
             volume_period: 5 * SESSION,

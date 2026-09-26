@@ -77,21 +77,21 @@ packages in `requirements.txt`.
 
 ### Family studies: one module, symbols as a parameter
 
-`exness_families` replaces the eight per-universe family scripts
+`cfd_families` replaces the eight per-universe family scripts
 (`commodity_`, `index_`, `crypto_`, `stock_`, `usoil_`, `xauusd_`, `btc_` and
 `es_diverse_families_research`). They ran the same protocol and disagreed only
 about how to charge cost, and each hardcoded its own instrument table, so adding
 a symbol meant editing code. Here the symbol is an argument:
 
 ```powershell
-py -B -m sandbox.research.exness_families coverage --symbols all
-py -B -m sandbox.research.exness_families specs    --symbols all
-py -B -m sandbox.research.exness_families spreads  --symbols index --minutes 15
-py -B -m sandbox.research.exness_families families --bar-minutes 30,1440
-py -B -m sandbox.research.exness_families budget   --symbols ethusd --bar-minutes 5,30,1440
-py -B -m sandbox.research.exness_families select   --symbols ethusd --bar-minutes 30
-py -B -m sandbox.research.exness_families validate --symbols ethusd --bar-minutes 30
-py -B -m sandbox.research.exness_families why      --symbols ethusd --bar-minutes 30
+py -B -m sandbox.research.cfd_families coverage --symbols all
+py -B -m sandbox.research.cfd_families specs    --symbols all
+py -B -m sandbox.research.cfd_families spreads  --symbols index --minutes 15
+py -B -m sandbox.research.cfd_families families --bar-minutes 30,1440
+py -B -m sandbox.research.cfd_families budget   --symbols ethusd --bar-minutes 5,30,1440
+py -B -m sandbox.research.cfd_families select   --symbols ethusd --bar-minutes 30
+py -B -m sandbox.research.cfd_families validate --symbols ethusd --bar-minutes 30
+py -B -m sandbox.research.cfd_families why      --symbols ethusd --bar-minutes 30
 ```
 
 `--symbols` takes names, an asset class (`commodity` / `index` / `crypto`), or
@@ -110,7 +110,7 @@ notional, the one unit that compares a $2.83 gas contract with a $30,000 index;
 a fixed absolute spread ranks price level rather than edge.
 
 **Every fill is the live one.** `select`, `validate` and `why` score the path
-`exness_live_execution` reads out of the runtime, not the idealised bar fill:
+`fill_models.exness` reads out of the runtime, not the idealised bar fill:
 the spread charged is the broker's own quote in the minute the entry happened
 (`exness_<broker>_1m`), the entry is that bar's open moved by the ratio the
 broker's price travelled over the feed's publish lag plus the bridge queue, and

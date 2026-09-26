@@ -18,7 +18,7 @@ use super::data::parse_iso_days;
 
 pub fn execute(prepared: &PreparedRun, request: &RunRequest) -> Result<RunResult, ApiError> {
     let engine = prepared.engine.clone();
-    let strategy = build_strategy(&request.strategy)?;
+    let strategy = build_strategy(&request.strategy, prepared)?;
     Ok(run_engines(&prepared.bars, vec![strategy], engine))
 }
 
@@ -29,7 +29,7 @@ pub fn execute_combined(prepared: &PreparedRun, names: &[String]) -> Result<RunR
     let engine = prepared.engine.clone();
     let strategies = names
         .iter()
-        .map(|name| build_strategy(name))
+        .map(|name| build_strategy(name, prepared))
         .collect::<Result<Vec<_>, _>>()?;
     if prepared.symbol_bars.len() > 1 {
         // Merge every market's bars into one timestamp-ordered stream. A stable
@@ -63,7 +63,7 @@ pub fn execute_combined(prepared: &PreparedRun, names: &[String]) -> Result<RunR
         // AND THE SHIFTED CLOCK, which changes WHEN a market's bars are offered
         // relative to every other market's.
         //
-        // `exness_families.all_bars` adds JP225's six hours as it loads, so a
+        // `cfd_families.all_bars` adds JP225's six hours as it loads, so a
         // JP225 trade carries a SHIFTED `entry_ts` -- and `replay` then sorts it
         // against unshifted AUDUSD and NQ stamps and marks it on a grid built
         // from those same shifted stamps. Its positions therefore open and close
@@ -145,11 +145,53 @@ pub fn execute_combined(prepared: &PreparedRun, names: &[String]) -> Result<RunR
     Ok(run_engines_named(&prepared.bars, strategies, names, engine))
 }
 
-/// Builds one sleeve of the 2026-09-07 Exness book.
-fn build_strategy(name: &str) -> Result<Box<dyn Strategy>, ApiError> {
+/// Builds one sleeve of the 2026-09-07 Exness book, filled the way the account
+/// is filled: its market's broker minutes installed from the run's
+/// `PreparedRun::fills` (see `backtest::fills`).
+fn build_strategy(name: &str, prepared: &PreparedRun) -> Result<Box<dyn Strategy>, ApiError> {
     let sleeve = Sleeve::from_display(name)
         .ok_or_else(|| ApiError::BadRequest("unknown strategy".into()))?;
-    Ok(Box::new(ExnessCombined::new(sleeve, LOT_STEP)))
+    let mut strategy = ExnessCombined::new(sleeve, LOT_STEP);
+    if let Some(fills) = prepared.fills.get(sleeve.market()) {
+        strategy.install_fills(std::sync::Arc::clone(fills));
+    }
+    if let Some(mask) = entry_days_from_env()? {
+        strategy.restrict_entry_days(mask);
+    }
+    Ok(Box::new(strategy))
+}
+
+/// `EXNESS_ENTRY_DAYS=mon,tue,wed,thu,fri`: a RESEARCH switch restricting new
+/// signals to those New York weekdays, the Rust twin of
+/// `cfd_families.ENTRY_DAYS`. Unset is every day, which is canon. A name it
+/// does not know is an error rather than a silently narrower run.
+fn entry_days_from_env() -> Result<Option<u8>, ApiError> {
+    let Ok(text) = std::env::var("EXNESS_ENTRY_DAYS") else {
+        return Ok(None);
+    };
+    let mut mask = 0u8;
+    for part in text
+        .split(',')
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+    {
+        let bit = match part.to_ascii_lowercase().get(..3) {
+            Some("mon") => 0,
+            Some("tue") => 1,
+            Some("wed") => 2,
+            Some("thu") => 3,
+            Some("fri") => 4,
+            Some("sat") => 5,
+            Some("sun") => 6,
+            _ => {
+                return Err(ApiError::BadRequest(format!(
+                    "EXNESS_ENTRY_DAYS: unknown day {part:?}"
+                )));
+            }
+        };
+        mask |= 1 << bit;
+    }
+    Ok((mask != 0).then_some(mask))
 }
 
 #[derive(Clone)]
@@ -759,6 +801,10 @@ pub(crate) fn run_engines_streams_at(
                                 }
                                 let point_value = market_point_value(market);
                                 let (spread, spread_bp) = sleeve_entry_cost(&slot.name);
+                                // THE SPREAD THE ACCOUNT CROSSED, where the Exness
+                                // fill model could read it off the broker's own
+                                // minute; the market constant otherwise.
+                                let spread_bp = slot.strategy.entry_cost_bp().or(spread_bp);
                                 // The gross cap is FIRST-COME-FIRST-SERVED, and
                                 // that is not neutral: whichever sleeve trades
                                 // most often is usually already holding the
@@ -869,6 +915,7 @@ pub(crate) fn run_engines_streams_at(
                         }
                         exposed += notional;
                         let (spread, spread_bp) = sleeve_entry_cost(&slot.name);
+                        let spread_bp = slot.strategy.entry_cost_bp().or(spread_bp);
                         slot.tagged_positions.push(Position {
                             id: Some(id),
                             side,
@@ -1064,6 +1111,14 @@ pub(crate) fn run_engines_streams_at(
     let last = stream.last().unwrap().1.ts;
     let mut body = report(&trades, &cfg, first, last, equity, drawdowns.finish());
     body["below_broker_minimum"] = serde_json::json!(below_broker_minimum);
+    // How much of the run the Exness fill model actually priced. A sleeve whose
+    // entries fall outside the broker table's reach is on the idealised fill
+    // there, and a total that hides that is kinder than the account.
+    let coverage: std::collections::BTreeMap<&str, _> = slots
+        .iter()
+        .filter_map(|slot| Some((slot.name.as_str(), slot.strategy.fill_coverage()?)))
+        .collect();
+    body["fill_coverage"] = serde_json::json!(coverage);
     if cfg.gross_cap.is_some() {
         body["refused_by_gross_cap"] = serde_json::json!(refused_by_gross_cap);
     }

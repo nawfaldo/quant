@@ -5,7 +5,7 @@
 //! GBPJPY; all of them size against the same broker spec, so it lives here and
 //! each sleeve file names the one it uses.
 
-/// Everything `exness_families.resolve` assembles for one symbol, frozen from
+/// Everything `cfd_families.resolve` assembles for one symbol, frozen from
 /// the 2026-08-16 Exness Pro snapshot and the 2024 volume profile.
 ///
 /// `multiplier` is ALREADY in the account currency -- MT5 reports

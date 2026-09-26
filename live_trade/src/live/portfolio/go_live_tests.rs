@@ -54,3 +54,20 @@ fn a_stale_signal_never_refuses_an_exit() {
     };
     assert_eq!(slot.entry_refusal(exit, false), None);
 }
+
+/// A minute that arrives one poll late is still fresh; a replayed backlog is
+/// not. 2026-09-24: `usdjpy_half_life`'s 02:29 minute landed at 02:31:00 with
+/// the 02:30 one, 60s after its close, and was refused as "catch-up".
+#[test]
+fn a_minute_one_poll_late_may_still_enter() {
+    let bar = 1_790_000_000 - 1_790_000_000 % 60;
+    let close = bar + 60;
+    assert!(entry_is_fresh(bar, "usdjpy", close + 60));
+    assert!(entry_is_fresh(bar, "usdjpy", close + ENTRY_FRESH_SECONDS));
+    assert!(!entry_is_fresh(
+        bar,
+        "usdjpy",
+        close + ENTRY_FRESH_SECONDS + 1
+    ));
+    assert!(!entry_is_fresh(bar, "usdjpy", close + 3_600));
+}
