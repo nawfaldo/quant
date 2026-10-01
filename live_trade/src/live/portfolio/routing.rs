@@ -249,9 +249,14 @@ pub const LIVE_STRATEGIES: &[&str] = &[
     "ethusd_roofing",
     "ethusd_level_confluence",
     "usdjpy_rvol",
-    "ethusd_efficiency",
-    "ethusd_cci",
-    "ethusd_linreg_trend",
+    "ustec_lux_body_momentum_5m",
+    "usdjpy_qp_ma_cross_30m",
+    "us500_lux_swing_sweep_mss_5m",
+    "gbpjpy_qp_ma_cross_15m",
+    "eurjpy_qp_ma_cross_60m",
+    "ethusd_td_ema_macd_15m",
+    "gbpjpy_luxalgo_manipulation_120m",
+    "gbpjpy_lux_htf_manipulation_15m",
 ];
 
 /// The market a live strategy trades. Slots are fed only their own symbol's
@@ -498,6 +503,7 @@ pub(super) fn route_symbol(symbol: &str) -> Result<&str, crate::error::ApiError>
         "uk100" => Ok("UK100"),
         "btc" | "btcusd" => Ok("BTCUSD"),
         "xniusd" => Ok("XNIUSD"),
+        "us500" => Ok("US500"),
         _ => Err(crate::error::ApiError::BadRequest(
             "unsupported live IDK symbol".into(),
         )),

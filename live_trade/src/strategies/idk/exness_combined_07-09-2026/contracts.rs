@@ -181,4 +181,38 @@ impl Instrument {
         financing_short: 0.0089,
         vol_target: 0.073_098_303_217_424_5,
     };
+    /// USTEC and US500 joined with the TikTok sleeves on 2026-09-28. Frozen
+    /// from `cfd_families.resolve` on the Exness Pro snapshot, the same way.
+    pub(super) const USTEC: Self = Self {
+        session: (570, 960),
+        shift_hours: 0,
+        per_session: 14,
+        calendar: 252.0,
+        multiplier: 1.0,
+        contract_size: 1.0,
+        fx_to_usd: 1.0,
+        volume_min: 0.05,
+        volume_step: 0.01,
+        volume_max: 500.0,
+        spread_bp: 0.265_1,
+        financing_long: 5.841,
+        financing_short: 0.0,
+        vol_target: 0.180_496_421_536_471_1,
+    };
+    pub(super) const US500: Self = Self {
+        session: (570, 960),
+        shift_hours: 0,
+        per_session: 14,
+        calendar: 252.0,
+        multiplier: 1.0,
+        contract_size: 1.0,
+        fx_to_usd: 1.0,
+        volume_min: 0.14,
+        volume_step: 0.01,
+        volume_max: 1_000.0,
+        spread_bp: 0.362_4,
+        financing_long: 1.493,
+        financing_short: 0.0,
+        vol_target: 0.131_204_016_377_772_8,
+    };
 }

@@ -1,0 +1,169 @@
+{
+  "asset_class": "forex",
+  "bar_minutes": 60,
+  "families": {
+    "tqb_first_candle_ema": null,
+    "tqb_red_days_long": null
+  },
+  "protocol": {
+    "account": "Exness Pro 416209807",
+    "benchmark": null,
+    "broker": "exness",
+    "calendar": 252.0,
+    "candidate_counts": {
+      "tqb_first_candle_ema": 48,
+      "tqb_red_days_long": 72
+    },
+    "contract": {
+      "broker": "AUDUSD",
+      "contract_size": 100000.0,
+      "currency_profit": "USD",
+      "fx_to_usd": 1.0,
+      "multiplier": 99999.99999999999,
+      "tick_size": 1e-05,
+      "tick_value": 1.0,
+      "volume_max": 200.0,
+      "volume_min": 0.01,
+      "volume_step": 0.01
+    },
+    "cost_model": "spread only; commission measured at 0.0000",
+    "data": {
+      "first_row": "2014-12-31",
+      "last_row": "2026-09-28",
+      "source": "1m",
+      "table": "audusd_1m",
+      "warmup": "2014-01-01"
+    },
+    "execution": {
+      "bars_priced": 41388,
+      "bridge_queue_seconds": 1.0,
+      "entry_days": null,
+      "exit": "market order one whole bar + lag + queue after the bar it fired on; no broker-side stop on this account",
+      "feed_lag_seconds": 0.6,
+      "fill_model": "exness",
+      "fills_only": false,
+      "financing": "multiday: 17:00 New York rollover schedule; current swap rates for every year",
+      "full_day": false,
+      "model": "live",
+      "modelled_cost": null,
+      "mtm_peak": true,
+      "spread_at_entry": "exness_audusd_1m",
+      "swap_free": false,
+      "window": "rth"
+    },
+    "family_groups": {
+      "tqb_first_candle_ema": "thequantbuilder",
+      "tqb_red_days_long": "thequantbuilder"
+    },
+    "holding": {
+      "tqb_first_candle_ema": "session",
+      "tqb_red_days_long": "session"
+    },
+    "holdout": "2025-01-01 through 2026-08-16",
+    "in_sample_years": [
+      2020,
+      2021,
+      2022,
+      2023,
+      2024
+    ],
+    "initial_balance": 1000.0,
+    "risk_unit": "stop_day x average true daily range over 14 days -- timeframe invariant",
+    "select_rank": "tstat",
+    "session_minutes": [
+      60,
+      840
+    ],
+    "shift_hours": 0,
+    "sizing": "1.5% volatility-throttled stop risk, MT5 lots, 4x notional ceiling",
+    "slippage_bp": 0.2,
+    "spread_bp": 0.8496,
+    "spread_quoted_at": "session",
+    "total_cost_bp": 1.0496,
+    "warning": null
+  },
+  "refused": {
+    "tqb_first_candle_ema": {
+      "best_by_return": {
+        "fill_rate": 100.0,
+        "max_dd_pct": 39.71,
+        "params": {
+          "ema_n": 9,
+          "exit_mode": "trail_0.25",
+          "last_entry_minute": 720,
+          "stop": "atr_1",
+          "stop_day": 0.2,
+          "trend": "none",
+          "vol_mode": "none"
+        },
+        "pf": 1.114,
+        "positive_years": 4,
+        "return_pct": 172.29,
+        "trades": 1300
+      },
+      "binding": [
+        "max_dd",
+        "annual_dd"
+      ],
+      "cells": 48,
+      "refused_by": {
+        "annual_dd": 48,
+        "fill_rate": 0,
+        "max_dd": 48,
+        "positive_years": 46,
+        "profit_factor": 26,
+        "trades": 0
+      },
+      "requires": {
+        "max_dd_pct": 20.0,
+        "of_years": 5,
+        "positive_years": 4,
+        "profit_factor": 1.05,
+        "trades": 125
+      }
+    },
+    "tqb_red_days_long": {
+      "best_by_return": {
+        "fill_rate": 99.8,
+        "max_dd_pct": 33.49,
+        "params": {
+          "exit_mode": "days_1",
+          "last_entry_minute": 720,
+          "n_red": 2,
+          "side": "both",
+          "stop": "atr_1",
+          "stop_day": 0.2,
+          "trend": "none",
+          "vol_mode": "none"
+        },
+        "pf": 1.211,
+        "positive_years": 4,
+        "return_pct": 103.73,
+        "trades": 646
+      },
+      "binding": [],
+      "cells": 72,
+      "refused_by": {
+        "annual_dd": 16,
+        "fill_rate": 0,
+        "max_dd": 38,
+        "positive_years": 70,
+        "profit_factor": 62,
+        "trades": 12
+      },
+      "requires": {
+        "max_dd_pct": 20.0,
+        "of_years": 5,
+        "positive_years": 4,
+        "profit_factor": 1.05,
+        "trades": 125
+      }
+    }
+  },
+  "scope": "thequantbuilder",
+  "seal_sha256": "978f45b8f9aaf03670c0e5616f2c2b739b7d13ef92c10af0affb6f11419c390c",
+  "sealed": true,
+  "symbol": "audusd",
+  "timeframe": "60m",
+  "validation": {}
+}

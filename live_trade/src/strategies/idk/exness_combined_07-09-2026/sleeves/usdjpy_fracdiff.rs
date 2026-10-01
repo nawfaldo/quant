@@ -41,6 +41,7 @@ pub(super) const SPEC: SleeveSpec = SleeveSpec {
     shown_equity: 1.0,
     sized_as_import: false,
     entry_days: None,
+    timeframe: None,
     engine: EngineKind::Family(Params {
         family: Family::Fracdiff {
             // 0.6 is past the point where most price series pass an ADF test and

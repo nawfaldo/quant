@@ -115,6 +115,11 @@ DUKASCOPY = {
     # "jp225" LEFT 2026-09-23 with every jp225 sleeve. Its wrapping-session
     # handling in `is_open` stays, in case it is re-seated.
     "ukoil": (_ins.INSTRUMENT_CMD_ENERGY_E_BRENT, "ukoil_1m", (540, 870)),
+    # SEATED 2026-09-28 with the TikTok sleeves: Dukascopy's Nasdaq 100 and
+    # S&P 500 CFDs, the series `ustec_1m` and `us500_1m` were imported from.
+    # US cash hours, New York, no wrap.
+    "ustec": (_ins.INSTRUMENT_IDX_AMERICA_E_NQ_100, "ustec_1m", (570, 960)),
+    "us500": (_ins.INSTRUMENT_IDX_AMERICA_E_SANDP_500, "us500_1m", (570, 960)),
 }
 
 #: ETHUSD is the whole crypto leg now.

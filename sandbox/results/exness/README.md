@@ -456,3 +456,74 @@ and it was not seated.
 | de40 | sb_macd | 240m | +10.7 | 9.2 | 67 | 1.19 | 10.3 | PASS* | - |
 | ethusd | sb_eom | 240m | +10.7 | 11.5 | 58 | 1.40 | 66.9 | PASS* | - |
 | us500 | sb_candle | 240m | +10.1 | 11.0 | 66 | 1.23 | 21.7 | PASS | -16.8 |
+
+### tiktok_luxalgo_2026-09-28 (56)
+
+Strategies from @luxalgo's TikTok (all 607 posts read; `sandbox/research/tt_luxalgo.py`,
+notes `results/tiktok/luxalgo_strategy_notes.md`), swept by `cfd_tt_families` on Exness Pro,
+RTH only (every entry and exit inside the cash session), 5m/15m/30m/60m/120m/240m. Same
+admission rule as the rest of the folder. Every file carries `study_wave: tiktok_luxalgo`,
+`group: luxalgo`, `source_creator: @luxalgo`, and a `lux_`/`luxalgo_` family name.
+`null` column: 21 **PASS** (beat the best coin-flip seed), 35 **PASS\***
+(no seed found an in-sample cell -- passed by default, weaker evidence).
+Searched ~5,700 family x symbol x timeframe runs to get here; read the aggregate, not single rows.
+Only the 30m files are visible to `candidates()`.
+
+| symbol | family | tf | OOS % | dd % | n | PF | BE bp | null | best flip |
+|---|---|---|---|---|---|---|---|---|---|
+| us500 | lux_swing_sweep_mss | 5m | +24.6 | 7.2 | 161 | 1.32 | 7.5955 | PASS* | - |
+| ustec | lux_body_momentum | 5m | +23.9 | 12.0 | 283 | 1.17 | 3.4323 | PASS | -11.3 |
+| ustec | lux_htf_manipulation | 15m | +22.7 | 5.2 | 73 | 1.77 | 11.9198 | PASS* | - |
+| audusd | lux_sweep_ifvg | 60m | +20.5 | 10.1 | 131 | 1.43 | 5.2751 | PASS | -10.0 |
+| eurjpy | lux_ny_vwap_pullback | 15m | +17.2 | 3.2 | 226 | 1.32 | 3.5077 | PASS* | - |
+| eurjpy | lux_value_area_reversion | 30m | +17.0 | 5.1 | 128 | 1.57 | 5.5957 | PASS* | - |
+| de40 | lux_rsi_50_pullback | 120m | +16.1 | 12.0 | 62 | 1.43 | 8.8936 | PASS* | - |
+| de40 | luxalgo_manipulation | 120m | +16.0 | 7.1 | 35 | 1.62 | 17.4116 | PASS | -18.0 |
+| eurjpy | lux_swing_sweep_mss | 15m | +14.3 | 10.3 | 251 | 1.18 | 2.0498 | PASS | +2.9 |
+| eurjpy | lux_rubber_band | 5m | +14.2 | 4.4 | 207 | 1.28 | 3.3278 | PASS* | - |
+| us500 | lux_rsi_50_pullback | 60m | +14.2 | 7.9 | 99 | 1.34 | 5.4281 | PASS | +8.7 |
+| eurjpy | lux_swing_sweep_mss | 5m | +13.1 | 9.0 | 387 | 1.13 | 1.7769 | PASS | -8.5 |
+| eurjpy | luxalgo_manipulation | 60m | +12.7 | 8.9 | 352 | 1.15 | 1.9982 | PASS | -4.3 |
+| ustec | lux_orb_breakout | 5m | +12.2 | 16.2 | 362 | 1.06 | 2.0992 | PASS* | - |
+| us500 | lux_structure_poc | 15m | +12.2 | 4.9 | 106 | 1.27 | 3.8362 | PASS* | - |
+| jp225 | lux_rsi_50_pullback | 120m | +12.0 | 12.0 | 58 | 1.47 | 5.5958 | PASS* | - |
+| eurjpy | lux_equal_levels | 5m | +11.9 | 4.2 | 141 | 1.36 | 3.0588 | PASS | +0.9 |
+| usdjpy | lux_htf_manipulation | 60m | +10.6 | 4.3 | 60 | 1.69 | 4.0921 | PASS* | - |
+| btc | lux_session_sweep_bos | 60m | +9.8 | 6.5 | 54 | 1.39 | 0.0859 | PASS* | - |
+| gbpusd | luxalgo_manipulation | 60m | +9.7 | 5.3 | 237 | 1.15 | 2.1365 | PASS | -3.7 |
+| gbpjpy | lux_body_momentum | 120m | +9.5 | 7.6 | 97 | 1.21 | 3.7814 | PASS* | - |
+| ustec | luxalgo_manipulation | 15m | +9.4 | 7.2 | 83 | 1.26 | 3.1925 | PASS | -6.7 |
+| usdjpy | lux_htf_manipulation | 30m | +9.3 | 2.9 | 34 | 2.39 | 11.3211 | PASS | +7.7 |
+| de40 | lux_supply_demand | 5m | +9.2 | 10.9 | 85 | 1.25 | 4.8026 | PASS* | - |
+| gbpjpy | lux_sweep_ifvg | 120m | +9.2 | 10.6 | 164 | 1.17 | 5.6936 | PASS* | - |
+| btc | lux_structure_poc | 15m | +9.1 | 6.7 | 82 | 1.32 | 10.0966 | PASS | -4.2 |
+| de40 | lux_rubber_band | 30m | +8.2 | 2.7 | 38 | 1.68 | 11.9914 | PASS* | - |
+| de40 | lux_body_momentum | 120m | +7.8 | 8.1 | 60 | 1.24 | 5.6532 | PASS* | - |
+| ustec | lux_eight_am_roadmap | 15m | +7.7 | 17.3 | 184 | 1.06 | 3.855 | PASS* | - |
+| gbpjpy | luxalgo_manipulation | 120m | +7.5 | 6.0 | 67 | 1.36 | 4.5581 | PASS* | - |
+| eurusd | lux_friday_monday | 240m | +6.7 | 4.6 | 56 | 1.53 | 4.0372 | PASS | -0.4 |
+| us500 | lux_body_momentum | 30m | +6.6 | 11.2 | 254 | 1.08 | 1.947 | PASS* | - |
+| ustec | lux_friday_monday | 30m | +6.1 | 5.6 | 43 | 1.33 | -0.0939 | PASS* | - |
+| eurjpy | lux_rubber_band | 15m | +5.9 | 10.3 | 219 | 1.09 | 2.2509 | PASS* | - |
+| de40 | lux_sweep_reclaim | 60m | +5.0 | 8.1 | 35 | 1.25 | 6.2806 | PASS | -4.7 |
+| usdjpy | lux_prior_day_direction | 60m | +5.0 | 6.2 | 175 | 1.12 | 1.6009 | PASS* | - |
+| gbpjpy | lux_no_wick_retest | 240m | +4.9 | 5.6 | 36 | 1.37 | 8.0316 | PASS* | - |
+| eurjpy | lux_rsi_divergence | 5m | +4.8 | 5.5 | 215 | 1.12 | 1.6668 | PASS | -8.2 |
+| eurjpy | lux_orb_retest | 60m | +4.5 | 13.7 | 266 | 1.06 | 1.4584 | PASS | -8.6 |
+| usdjpy | lux_prior_day_direction | 30m | +4.3 | 8.3 | 254 | 1.06 | 1.0149 | PASS* | - |
+| us500 | lux_htf_liquidity_fvg | 30m | +4.2 | 3.6 | 73 | 1.22 | 1.1907 | PASS* | - |
+| eurjpy | lux_trend_pullback | 5m | +4.2 | 11.3 | 214 | 1.07 | 1.405 | PASS | -3.3 |
+| ustec | lux_friday_monday | 15m | +3.7 | 5.6 | 41 | 1.17 | 2.6076 | PASS* | - |
+| ustec | lux_structure_poc | 15m | +3.2 | 6.3 | 36 | 1.25 | 7.0019 | PASS | -1.8 |
+| gbpjpy | lux_supply_demand | 30m | +3.2 | 2.8 | 41 | 1.37 | 3.7036 | PASS* | - |
+| gbpjpy | lux_htf_manipulation | 15m | +2.9 | 9.3 | 112 | 1.08 | 2.1666 | PASS* | - |
+| us500 | lux_gap_fill_breakout | 30m | +2.8 | 8.1 | 80 | 1.07 | 2.7594 | PASS | -16.0 |
+| de40 | lux_no_wick_retest | 30m | +2.5 | 9.7 | 105 | 1.05 | 2.0716 | PASS | +1.2 |
+| jp225 | luxalgo_manipulation | 60m | +2.5 | 5.8 | 38 | 1.15 | 6.6989 | PASS | -0.1 |
+| audjpy | lux_key_levels_orb | 240m | +2.5 | 13.5 | 81 | 1.05 | 4.1189 | PASS* | - |
+| us500 | lux_session_sweep_bos | 60m | +2.2 | 4.3 | 49 | 1.13 | 1.2121 | PASS* | - |
+| audjpy | lux_htf_manipulation | 15m | +2.2 | 10.2 | 118 | 1.05 | 0.2774 | PASS* | - |
+| eurjpy | lux_key_levels_orb | 120m | +1.9 | 9.6 | 105 | 1.06 | 1.0267 | PASS* | - |
+| usdjpy | lux_htf_manipulation | 15m | +1.8 | 3.9 | 39 | 1.15 | 5.7196 | PASS* | - |
+| eurjpy | lux_london_range | 120m | +1.5 | 5.9 | 49 | 1.15 | 3.2334 | PASS* | - |
+| eurjpy | lux_value_area_reversion | 60m | +1.1 | 1.8 | 45 | 1.12 | 2.1044 | PASS* | - |

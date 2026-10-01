@@ -61,6 +61,8 @@ _PIN = mc.pin_external_window
 #: symbol's broker map keep the constant spread, so a longer window is a LOWER
 #: BOUND on execution cost.
 START = os.environ.get("MC_START", "")
+#: Window end (exclusive). Empty means canon's `CANON_DATA_END`.
+END = os.environ.get("MC_END", "")
 
 
 def arm():
@@ -68,6 +70,10 @@ def arm():
     if START:
         ecs.ef.IS_END = int(datetime.fromisoformat(START)
                             .replace(tzinfo=timezone.utc).timestamp())
+    if END:
+        ecs.CANON_DATA_END = END
+        ecs.ef.OOS_END = int(datetime.fromisoformat(END)
+                             .replace(tzinfo=timezone.utc).timestamp())
 
     def pin(span=None):
         _PIN(span or ((START or "2025-01-01"), ecs.CANON_DATA_END))
@@ -89,7 +95,10 @@ def arm():
 
 
 def prepare():
-    """`mc.prepare` for THIS membership, contexts dropped to `cfg` as there."""
+    """`mc.prepare` for THIS membership, contexts dropped to `cfg` as there.
+
+    A `symbol:family@<bar>m` key is a TikTok cell; `candidate_rows_exact` and
+    `sleeve_trades` run it through `tt_book` like any other member."""
     rows = ecs.candidate_rows_exact(KEYS)
     missing = [k for k in KEYS if k not in rows]
     if missing:

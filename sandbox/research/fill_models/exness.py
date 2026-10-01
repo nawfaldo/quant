@@ -534,6 +534,10 @@ def _point_size(symbol):
         return spec["_point"]
     if spec.get("point"):
         return float(spec["point"])
+    # A peer read for `modelled_minutes` is never resolved; the snapshot has it.
+    snapshot = (ef.load_specs().get("symbols") or {}).get(symbol) or {}
+    if snapshot.get("point"):
+        return float(snapshot["point"])
     import MetaTrader5 as mt5  # noqa: PLC0415
 
     started = mt5.initialize()
@@ -611,8 +615,44 @@ def _read_minutes(symbol):
     if not stamps:
         return [], [], []
     order = np.argsort(np.concatenate(stamps), kind="stable")
-    return (np.concatenate(stamps)[order], np.concatenate(opens)[order],
-            np.concatenate(spreads)[order])
+    out = (np.concatenate(stamps)[order], np.concatenate(opens)[order],
+           np.concatenate(spreads)[order])
+    if ef.modelled_cost(symbol):
+        out = _with_modelled_history(symbol, *out)
+    return out
+
+
+def _with_modelled_history(symbol, stamps, opens, spreads):
+    """The real minutes with `modelled_minutes`' years in front of them."""
+    import numpy as np
+    from sandbox import data
+    from sandbox import parquet_store as store
+    from sandbox.research.fill_models import modelled_minutes as mm
+
+    peers, start = mm.MODELLED[symbol]
+    tables = [minute_table(p) for p in peers]
+    key = (f"peer-medians:{mm.MODEL_VERSION}:{','.join(peers)}:"
+           f"{data._table_fingerprint(tables)}")
+
+    def build():
+        medians = {}
+        for peer in peers:
+            peer_stamps, _opens, peer_spreads = _read_minutes(peer)
+            if len(peer_stamps):
+                medians[peer] = mm.monthly_levels(peer_stamps, peer_spreads,
+                                                   mm.rth_of(peer))
+        return medians
+
+    medians = data._cached(f"modelled_peers_{mm.MODEL_VERSION}_{'_'.join(peers)}",
+                           key, build)
+    vendor = ef.INSTRUMENTS[symbol]["table"]
+    rows = np.array([row[:2] for row in store.read_bars(
+        vendor, bar_minutes=1, start=f"{start}-01")], dtype="float64")
+    synthetic = mm.synthetic_minutes(
+        symbol, stamps, spreads,
+        (rows[:, 0].astype("int64"), rows[:, 1]), medians)
+    return tuple(np.concatenate((a, b)) for a, b in zip(synthetic,
+                                                          (stamps, opens, spreads)))
 
 
 def _minutes(symbol):

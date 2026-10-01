@@ -192,6 +192,28 @@ fn family_candles(family: Family, session_bars: usize) -> usize {
         Family::Efficiency { period, .. } => period + 1,
         Family::Cci { period, .. } => period,
         Family::LinregTrend { period, .. } => period,
+        // THE TIKTOK FAMILIES. Every one also reads `F.atr(14)`, a Wilder
+        // smoother, and `F.ema` is a seeded EMA exactly like `Ema`.
+        Family::QpMaCross { fast, slow, .. } => {
+            ema_convergence(fast.max(slow)).max(wilder_convergence(14))
+        }
+        // The 20-body mean two bars back, and a 3-bar pivot.
+        Family::LuxBodyMomentum { .. } => 22.max(wilder_convergence(14)),
+        // One previous higher-timeframe candle and the one before it.
+        Family::LuxHtfManipulation { htf_m, ema, .. } => (2 * htf_m + 1)
+            .max(wilder_convergence(14))
+            .max(if ema > 0 { ema_convergence(ema) } else { 0 }),
+        // The `k`-bar pivot plus the setup window, and the trend EMA.
+        Family::LuxSwingSweepMss { k, w, ema, .. } => (2 * k + 1 + w + 20)
+            .max(wilder_convergence(14))
+            .max(if ema > 0 { ema_convergence(ema) } else { 0 }),
+        Family::LuxalgoManipulation { prior_bars, ema, .. } => (prior_bars + 2)
+            .max(14)
+            .max(if ema > 0 { ema_convergence(ema) } else { 0 }),
+        // EMA(200), and MACD's 26-bar EMA feeding a 9-bar one.
+        Family::TdEmaMacd { .. } => ema_convergence(200)
+            .max(ema_convergence(26) + ema_convergence(9))
+            .max(wilder_convergence(14)),
     }
 }
 
@@ -238,7 +260,7 @@ impl Sleeve {
             // at its state; a seated import must answer here itself.
             return 1;
         };
-        let session_bars = self.contract().per_session;
+        let session_bars = self.per_session();
         let candles =
             shared_candles(params, session_bars).max(family_candles(params.family, session_bars));
         // Candles round UP to a whole session: a requirement of one candle past

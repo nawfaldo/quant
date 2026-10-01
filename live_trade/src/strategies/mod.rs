@@ -204,6 +204,8 @@ mod tests {
             "GBPUSD" => "gbpusd",
             "UKOIL" => "ukoil",
             "EURJPY" => "eurjpy",
+            "USTEC" => "ustec",
+            "US500" => "us500",
             other => panic!("{other} declares no market; add it here and to market_symbol"),
         }
     }
@@ -234,10 +236,10 @@ mod tests {
     /// ([[hk50-stops-for-lunch-inside-its-session]]). A new market added blindly
     /// inherits neither guard.
     #[test]
-    fn the_book_spans_six_markets() {
+    fn the_book_spans_eight_markets() {
         assert_eq!(
             known_markets(),
-            vec!["audusd", "ethusd", "eurjpy", "gbpjpy", "ukoil", "usdjpy",]
+            vec!["audusd", "ethusd", "eurjpy", "gbpjpy", "ukoil", "us500", "usdjpy", "ustec",]
         );
     }
 }

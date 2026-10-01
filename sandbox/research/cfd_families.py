@@ -397,6 +397,18 @@ the control for its `aligned` cells inside the same grid.
 """
 from __future__ import annotations
 
+import sys
+
+# ONE MODULE, NOT TWO. Run as `python -m sandbox.research.cfd_families`, this
+# file is `__main__` (and `__mp_main__` in every spawned worker), while
+# `fill_models.exness` imports `sandbox.research.cfd_families` -- a SECOND copy
+# with its own empty `INSTRUMENTS`. The fill model then read no spec at all:
+# `clock_offset` returned 0 for the +6h Asian markets and the modelled-cost
+# path raised KeyError. Found 2026-09-27; registering this copy under its
+# package name before anything imports it makes both names one module.
+if __name__ in ("__main__", "__mp_main__"):
+    sys.modules.setdefault("sandbox.research.cfd_families", sys.modules[__name__])
+
 import argparse
 import bisect
 import gc
@@ -408,7 +420,6 @@ import math
 import multiprocessing
 import os
 import statistics
-import sys
 import time
 from datetime import datetime, timezone
 
@@ -419,6 +430,7 @@ from sandbox import parquet_store as store
 from sandbox.research import es_strategy_research as es
 from sandbox.research import exness_indicators as ind
 from sandbox.research import exness_fastbar as fastbar
+from sandbox.research import exness_offhours as offhours
 from sandbox.research.usoil_families_research import (
     annual_detail, donchian_signal, exit_plan, ma_cross_signal,
     momentum_signal, overnight_signal, pdr_signal, random_side,
@@ -428,16 +440,21 @@ from sandbox.research.usoil_families_research import (
 RESULTS = os.path.join(os.path.dirname(__file__), "..", "results")
 
 
-def _argv_broker():
-    """`--broker X` from the command line, so the profile is right at import."""
-    if "--broker" in sys.argv:
-        position = sys.argv.index("--broker")
+def _argv_option(flag):
+    """`flag X` from the command line, so a switch is right at import."""
+    if flag in sys.argv:
+        position = sys.argv.index(flag)
         if position + 1 < len(sys.argv):
             return sys.argv[position + 1]
     for token in sys.argv:
-        if token.startswith("--broker="):
+        if token.startswith(flag + "="):
             return token.split("=", 1)[1]
     return None
+
+
+def _argv_broker():
+    """`--broker X` from the command line, so the profile is right at import."""
+    return _argv_option("--broker")
 
 
 #: Everything that differs between the brokers this study can price.
@@ -735,7 +752,7 @@ CATEGORICAL = ("direction", "vol_mode", "trend", "exit_mode", "fast", "slow",
                "band", "estimator", "evidence")
 #: The `fastbar` wave's label axes. Its thresholds and periods are all scales
 #: and are deliberately named so that none collides with a label above.
-CATEGORICAL = CATEGORICAL + fastbar.CATEGORICAL
+CATEGORICAL = CATEGORICAL + fastbar.CATEGORICAL + offhours.CATEGORICAL
 
 
 # --------------------------------------------------------------------------- #
@@ -1615,6 +1632,31 @@ FULL_DAY = os.environ.get("EXNESS_FULL_DAY") == "1"
 #: charged 0.00. Off charges the quoted swap; on charges nothing.
 SWAP_FREE = os.environ.get("EXNESS_SWAP_FREE") == "1"
 
+#: MODELLED COST for the symbols whose Exness minute table is too short to price
+#: an in-sample year -- fr40, stoxx50, aus200, ethbtc, which the terminal only
+#: serves from 2026-06/08. `fill_models.modelled_minutes` fills the years before
+#: that with a spread model (its own intraday shape, the peers' monthly regime,
+#: calibrated leave-one-out) and the vendor's own price path. On by default so
+#: they can be screened; every seal they write says `modelled_cost`, and none
+#: of them goes near the book before it is re-checked on real fills.
+#: `EXNESS_MODELLED_COST=0` refuses them again, as before.
+MODELLED_COST = os.environ.get("EXNESS_MODELLED_COST", "1") == "1"
+
+
+def modelled_cost(symbol):
+    """True when `symbol`'s early fills are priced by the spread model."""
+    from sandbox.research.fill_models import modelled_minutes  # noqa: PLC0415
+    return (MODELLED_COST and BROKER == "exness"
+            and symbol in modelled_minutes.MODELLED)
+
+
+def _model_tag(symbol):
+    """Cache-key fragment: model version, calibration and the peers' tables."""
+    from sandbox.research.fill_models import modelled_minutes as mm  # noqa: PLC0415
+    peers, start = mm.MODELLED[symbol]
+    return (f"{mm.MODEL_VERSION}:{sorted(mm.CALIBRATION.items())}:{start}:"
+            f"{data._table_fingerprint([broker_minute_table(p) for p in peers])}")
+
 #: New York weekdays a NEW position may be opened on, or `None` for every day.
 #:
 #: `EXNESS_ENTRY_DAYS=sat,sun` asks whether a family is worth running on the
@@ -1646,10 +1688,193 @@ def entry_days_tag():
     names = {v: k for k, v in _WEEKDAYS.items()}
     return "+".join(names[d] for d in sorted(ENTRY_DAYS))
 
+
+#: WHICH HOURS A RUN MAY TRADE. Every sealed result is `rth`: bars, entries and
+#: the flatten all live inside the market's own cash session (`SESSION`).
+#:
+#: A WINDOW REPLACES THE SESSION, AND NOTHING ELSE ABOUT A FAMILY CHANGES. Its
+#: bars, its entries and its flatten move to the window; its session anchors --
+#: the opening range, the session VWAP, the prior close, the gap -- are the
+#: window's; and every lookback written in sessions is counted in windows, so
+#: `orb` on `london` is the London opening range and a "20-day" average is twenty
+#: London mornings. That is what "the same strategy at a different time" means.
+#:
+#:   rth          the market's own session, as it always was
+#:   day          the whole broker day, 18:00-17:00 New York
+#:   off          `day`, but positions may only be OPENED while the cash
+#:                session is shut
+#:   <name>       a named session from `NAMED_WINDOWS`, New York clock
+#:   w1700-2000   the hourly grid (`GRID_WINDOWS`), or any `HH:MM-HH:MM`
+#:
+#: Windows are fixed New York clock times, the same for every symbol; a window
+#: in which a market does not quote simply has no bars there. `--window` takes
+#: several at once and the aliases in `WINDOW_ALIASES` (`sessions`, `grid3`,
+#: `grid6`, `grid`, `all`).
+#:
+#: THE DAY IS CUT AT THE ROLLOVER, NOT AT MIDNIGHT. Every window except `rth`
+#: runs on a +7h clock (`BROKER_DAY_SHIFT`) that moves 17:00 New York to
+#: midnight, so a window across midnight -- 20:00-02:00 -- is one contiguous
+#: block, and nothing can hold through the 17:00 rollover: a window may not
+#: cross it, so no position ever pays a swap. `day` leaves the rollover hour
+#: itself out; a window that names it (17:00-...) gets it, and pays its spread.
+#:
+#: The cost needs no change. Fills are priced per bar from the broker's own
+#: minute table, whose spread is that minute's -- an 03:00 entry pays the 03:00
+#: spread, not the session median.
+#:
+#: Carried on each symbol's spec (`spec["window"]`), so spawned workers inherit
+#: it with the spec and one command can loop over many. A non-rth run seals to
+#: its own file (`output_path`).
+BROKER_DAY_SHIFT = 7
+BROKER_DAY = (60, 1439)
+ROLLOVER_REAL = 17 * 60
+
+#: Conventional sessions, real New York `(open, close)`. Named for the market
+#: whose hours they are, not searched.
+NAMED_WINDOWS = {
+    "evening": (17 * 60, 23 * 60),                   # the rollover to midnight
+    "sydney": (17 * 60, 1 * 60),
+    "asia": (18 * 60, 3 * 60),                       # the reopen through Tokyo
+    "tokyo": (19 * 60, 2 * 60),
+    "night": (20 * 60, 2 * 60),
+    "overnight": (18 * 60, 9 * 60 + 30),             # a US index's Globex night
+    "frankfurt": (2 * 60, 11 * 60 + 30),
+    "london": (3 * 60, 11 * 60 + 30),
+    "london_open": (3 * 60, 6 * 60),
+    "pre_ny": (3 * 60, 8 * 60 + 30),
+    "premarket": (4 * 60, 9 * 60 + 30),
+    "morning": (7 * 60, 12 * 60),
+    "overlap": (8 * 60, 11 * 60 + 30),               # London and New York both open
+    "newyork": (8 * 60, 17 * 60),
+    "ny_am": (9 * 60 + 30, 12 * 60),
+    "ny_pm": (12 * 60, 16 * 60),
+    "us_close": (14 * 60, 17 * 60),
+}
+
+#: The hourly grid: every whole-hour start from 17:00, three and six hours long,
+#: that ends by the next rollover.
+GRID_HOURS = (3, 6)
+
+
+def _grid(hours):
+    out = {}
+    for start in range(24 - hours + 1):
+        real = (ROLLOVER_REAL + start * 60) % 1440
+        end = (real + hours * 60) % 1440
+        out[f"w{real // 60:02d}00-{end // 60:02d}00"] = (real, end)
+    return out
+
+
+GRID_WINDOWS = {name: span for hours in GRID_HOURS
+                for name, span in _grid(hours).items()}
+WINDOW_ALIASES = {
+    "sessions": tuple(NAMED_WINDOWS),
+    "grid3": tuple(_grid(3)),
+    "grid6": tuple(_grid(6)),
+    "grid": tuple(GRID_WINDOWS),
+    "all": ("rth", "day", "off", *NAMED_WINDOWS, *GRID_WINDOWS),
+}
+
+
+def window_span(name):
+    """`(open, close)` real New York minutes for a clock window, else `None`.
+
+    Accepts a catalogue name or `HH:MM-HH:MM`/`HHMM-HHMM`. Refuses a window that
+    crosses the 17:00 rollover, because a position inside it would pay a swap
+    the session model never charges.
+    """
+    if name in ("rth", "day", "off"):
+        return None
+    span = NAMED_WINDOWS.get(name) or GRID_WINDOWS.get(name)
+    if span is None:
+        text = name[1:] if name.startswith("w") else name
+        try:
+            first, second = text.replace(":", "").split("-")
+            span = tuple(int(part[:2]) * 60 + int(part[2:4])
+                         for part in (first.zfill(4), second.zfill(4)))
+        except ValueError:
+            raise SystemExit(
+                f"window {name!r}: not rth/day/off, a name in NAMED_WINDOWS or "
+                f"GRID_WINDOWS, or HH:MM-HH:MM") from None
+    if any(minute >= 1440 or minute < 0 or minute % 1 for minute in span):
+        raise SystemExit(f"window {name!r}: times must be 00:00-23:59")
+    opened, closed = ((minute - ROLLOVER_REAL) % 1440 for minute in span)
+    if not opened < (closed or 1440):
+        raise SystemExit(f"window {name!r} crosses the 17:00 rollover")
+    return span
+
+
+def window_name(name):
+    """The canonical name a window seals under: `w0300-0830` for a custom one."""
+    if name in ("rth", "day", "off") or name in NAMED_WINDOWS or name in GRID_WINDOWS:
+        return name
+    opened, closed = window_span(name)
+    return (f"w{opened // 60:02d}{opened % 60:02d}-"
+            f"{closed // 60:02d}{closed % 60:02d}")
+
+
+def expand_windows(text):
+    """`--window` resolved to canonical names, aliases expanded, order kept."""
+    out = []
+    for token in "".join((text or "rth").split()).split(","):
+        if not token:
+            continue
+        for name in WINDOW_ALIASES.get(token, (token,)):
+            name = window_name(name)
+            if name not in out:
+                out.append(name)
+    return out or ["rth"]
+
+
+#: The default for a spec resolved without one. Read from the environment or
+#: `--window` at import, so a script that imports the module and never names a
+#: window still gets the first one it was launched with.
+WINDOW = expand_windows(os.environ.get("EXNESS_WINDOW")
+                        or _argv_option("--window") or "rth")[0]
+
+
+def window_clock(session, shift, window=None):
+    """`(session, shift_hours, rth)` for a window.
+
+    `rth` is the market's cash session in REAL New York minutes, which wraps
+    past midnight for the Asian indices -- jp225's (60, 480) on its +6h clock is
+    (1140, 120) -- and is what `off` refuses entries inside.
+    """
+    window = window_name(WINDOW if window is None else window)
+    rth = tuple((minute - shift * 60) % 1440 for minute in session)
+    if window == "rth":
+        return tuple(session), shift, rth
+    span = window_span(window)
+    if span is None:
+        return BROKER_DAY, BROKER_DAY_SHIFT, rth
+    opened, closed = ((minute - ROLLOVER_REAL) % 1440 for minute in span)
+    # `in_session` keeps the bar AT the close, so the flatten fills at its open.
+    # A window ending at the rollover has no such bar; its last bar is
+    # flattened instead (`backtest`'s `last_of_day`).
+    return (opened, min(closed or 1440, 1439)), BROKER_DAY_SHIFT, rth
+
+
+def window_of(spec):
+    """The window a resolved spec was built for; `rth` for an older one."""
+    return spec.get("window", "rth")
+
+
+def rth_flags(bars, spec):
+    """Per bar, True while the market's cash session is open (`off` only)."""
+    opened, closed = spec["rth"]
+    shift = spec["shift_hours"] * 60
+    out = []
+    for bar in bars:
+        minute = (bar[TS] // 60 - shift) % 1440
+        out.append(opened <= minute < closed if opened < closed
+                   else minute >= opened or minute < closed)
+    return out
+
+
 INSTRUMENTS = {}
 
 
-def register_series(name):
+def register_series(name, window=None):
     """Install a DATA-ONLY spec for `name`, enough to load its bars and no more.
 
     A benchmark is read, never traded, so it needs a table, a session and a
@@ -1660,21 +1885,28 @@ def register_series(name):
 
     A real spec always wins. If the benchmark is also being studied, `resolve`
     has already put the full entry in `INSTRUMENTS` and this leaves it alone.
+    A data-only spec built for another window is rebuilt: the benchmark has to
+    sit on the traded symbol's clock, or its prior-day anchors land a day away.
     """
-    if name in INSTRUMENTS:
-        return INSTRUMENTS[name]
+    window = window_name(WINDOW if window is None else window)
+    have_spec = INSTRUMENTS.get(name)
+    if have_spec is not None and (not have_spec.get("reference_only")
+                                  or window_of(have_spec) == window):
+        return have_spec
     have = coverage(name)
     if not have["runnable"]:
         raise SystemExit(f"{name}: cannot be used as a benchmark -- {have['reason']}")
     session = SESSION.get(name) or derive_session(name, have["table"],
                                                   have["source"])
+    session, shift, _ = window_clock(session, SHIFT_HOURS.get(name, 0), window)
     INSTRUMENTS[name] = {
+        "window": window,
         "symbol": name, "asset_class": CLASS.get(name, "other"),
         "table": have["table"], "source": have["source"],
         "warmup": f"{max(int(have['first_row'][:4]), 2011)}-01-01",
         "first_full_year": have["first_full_year"],
         "first_row": have["first_row"], "last_row": have["last_row"],
-        "session": tuple(session), "shift_hours": SHIFT_HOURS.get(name, 0),
+        "session": tuple(session), "shift_hours": shift,
         "calendar": CALENDAR.get(name, 252.0), "reference_only": True,
     }
     return INSTRUMENTS[name]
@@ -1738,11 +1970,11 @@ def benchmark_closes(symbol, phase, bars, bar=None):
     name = BENCHMARK.get(symbol)
     if name is None:
         return None
-    register_series(name)
+    register_series(name, window_of(INSTRUMENTS[symbol]))
     return ind.align(bars, all_bars(name, phase, bar))
 
 
-def resolve(symbol, allow_stale=False, specs=None):
+def resolve(symbol, allow_stale=False, specs=None, window=None):
     """Everything the engine needs about `symbol`, assembled from live sources.
 
     Raises rather than guesses. A symbol with no table, no broker quote, or only
@@ -1791,6 +2023,9 @@ def resolve(symbol, allow_stale=False, specs=None):
 
     session = SESSION.get(symbol) or derive_session(
         symbol, have["table"], have["source"])
+    window = window_name(WINDOW if window is None else window)
+    session, shift, rth = window_clock(session, SHIFT_HOURS.get(symbol, 0),
+                                       window)
     warmup = f"{max(int(have['first_row'][:4]), 2011)}-01-01"
 
     resolved = {
@@ -1799,7 +2034,8 @@ def resolve(symbol, allow_stale=False, specs=None):
         "source": have["source"], "warmup": warmup,
         "first_full_year": have["first_full_year"],
         "first_row": have["first_row"], "last_row": have["last_row"],
-        "session": tuple(session), "shift_hours": SHIFT_HOURS.get(symbol, 0),
+        "session": tuple(session), "shift_hours": shift, "rth": rth,
+        "window": window,
         "calendar": CALENDAR.get(symbol, 252.0),
         "multiplier": spec["multiplier"], "contract_size": spec["contract_size"],
         "tick_size": spec["tick_size"], "tick_value": spec["tick_value"],
@@ -1825,6 +2061,17 @@ def resolve(symbol, allow_stale=False, specs=None):
 
 def is_years(symbol):
     first = INSTRUMENTS[symbol]["first_full_year"]
+    # AN EXPLICIT LATER START, opt-in per symbol:
+    # `EXNESS_IS_FIRST_YEAR=ethusd:2021`. Measured 2026-09-28: the broker's
+    # ETH table quotes a 172 bp median spread in 2020 (1-10 bp from 2022), so
+    # every intraday ETH cell lost ~95% in 2020 and then could not meet the
+    # 0.1-lot floor for the rest of the window -- the gate was scoring 2020's
+    # quotes, not the rule ([[ethusd-2020-broker-spread-is-170bp]]).
+    # Raise-only; `cfd_tt_families` names its output files after it.
+    for item in os.environ.get("EXNESS_IS_FIRST_YEAR", "").split(","):
+        name, _, value = item.strip().partition(":")
+        if name == symbol and value.isdigit():
+            first = max(first, int(value))
     return tuple(year for year in range(first, LAST_IS_YEAR + 1))
 
 
@@ -2779,6 +3026,9 @@ def context(symbol, phase, bar=None, only=None, full_bars=None):
     # blocks do.
     session_index, session_last = session_ordinals(bars, spec["session"][1], daily)
     ctx = {
+        # `None` outside the `off` window, which is every sealed result.
+        "in_rth": (rth_flags(bars, spec) if window_of(spec) == "off" and not daily
+                   else None),
         "session_high": running_high, "session_low": running_low,
         "session_open": running_open,
         "atr": es.average_true_range(bars, periods=p["atr"]),
@@ -3572,6 +3822,14 @@ def extra_context(symbol, phase, bars, ctx, p, daily, bar, blocks=None):
     fast_names = sorted(b[3:] for b in blocks if b.startswith("fb:"))
     if fast_names:
         out["fb"] = fastbar.build(bars, fast_names)
+
+    # ---- the eleventh wave: the broker day outside the cash session -------- #
+    # Built on EVERY bar the market printed and then sampled at this window's
+    # bars, because the rules read sessions the window may not contain -- an
+    # Asian range traded in a London window, the last cash close read at night.
+    if "offhours" in blocks and not daily:
+        out["oh"] = offhours.build_all(all_bars(symbol, phase, bar), ctx["cfg"],
+                                       ctx["bar_minutes"], bars)
 
     return out
 
@@ -7611,6 +7869,51 @@ def cusum_signal(index, bars, ctx, params, _state):
     return -side if params["direction"] == "fade" else side
 
 
+def _vol_of_vol_series(ctx, period):
+    """The coefficient of variation of the short/long volatility ratio over the
+    trailing `period` bars, per bar; NaN where `vol_of_vol` declines.
+
+    BUILT ONCE PER CONTEXT, NOT ONCE PER CALL. The signal used to sum its
+    window on every call, and the window is `periods["vol"]` -- twenty SESSIONS,
+    not twenty bars: 540 bars on an RTH usdjpy, 960 on a broker day. Measured
+    2026-09-27 at ~4 s per cell on a `day` window, a third of a whole job.
+
+    BIT-IDENTICAL TO THE LOOP IT REPLACES. The sums are accumulated one offset
+    at a time, oldest first, exactly as the loop added them -- the same IEEE
+    additions, just done for every bar at once -- so no threshold can flip on a
+    rounding difference and every sealed `vol_of_vol` result reproduces.
+    """
+    short = numpy.array([MISSING if v is None else v for v in ctx["volatility"]],
+                        dtype=numpy.float64)
+    long = numpy.array([MISSING if v is None else v
+                        for v in ctx["long_volatility"]], dtype=numpy.float64)
+    n = len(short)
+    out = numpy.full(n, numpy.nan)
+    if n < period or period < 2:
+        return out
+    bad = numpy.isnan(short) | numpy.isnan(long) | ~(long > 0)
+    with numpy.errstate(divide="ignore", invalid="ignore"):
+        ratio = numpy.where(bad, 0.0, short / numpy.where(bad, 1.0, long))
+    ends = numpy.arange(period - 1, n)
+    total = numpy.zeros(len(ends))
+    squares = numpy.zeros(len(ends))
+    for offset in range(period):
+        values = ratio[ends - period + 1 + offset]
+        total += values
+        squares += values * values
+    window_bad = numpy.convolve(bad.astype(numpy.int64),
+                                numpy.ones(period, dtype=numpy.int64),
+                                "valid") > 0
+    count = float(period)
+    mean = total / count
+    variance = squares / count - mean * mean
+    keep = ~window_bad & (variance > 1e-18) & (mean > 0)
+    with numpy.errstate(invalid="ignore", divide="ignore"):
+        cv = numpy.sqrt(numpy.where(keep, variance, 1.0)) / mean
+    out[ends] = numpy.where(keep, cv, numpy.nan)
+    return out.tolist()
+
+
 def vol_of_vol_signal(index, bars, ctx, params, _state):
     """How UNSTABLE the volatility itself is -- the second-order reading.
 
@@ -7632,32 +7935,15 @@ def vol_of_vol_signal(index, bars, ctx, params, _state):
         return None
     if _late(ctx, bars[index], params):
         return None
-    short = ctx["volatility"]
-    long = ctx["long_volatility"]
-    total = count = 0.0
-    squares = 0.0
-    # Bounded to the window and read from arrays the context already holds. The
-    # module's rule is that a signal does no windowed work; this is the one
-    # place a fixed 20-bar pass is cheaper than a whole extra context block, and
-    # the window is the shared `vol` period rather than an axis so it cannot
-    # grow.
-    for offset in range(index - period + 1, index + 1):
-        a, b = short[offset], long[offset]
-        if not present(a) or not present(b) or b <= 0:
-            return None
-        ratio = a / b
-        total += ratio
-        squares += ratio * ratio
-        count += 1
-    if count < 2:
-        return None
-    mean = total / count
-    variance = squares / count - mean * mean
-    if variance <= 1e-18 or mean <= 0:
-        return None
     # Coefficient of variation, so the reading is scale-free in the ratio and a
     # threshold means the same thing whether volatility is high or low.
-    unsteady = math.sqrt(variance) / mean >= params["dispersion"]
+    cv = ctx.get("_vol_of_vol")
+    if cv is None:
+        cv = ctx["_vol_of_vol"] = _vol_of_vol_series(ctx, period)
+    value = cv[index]
+    if value != value:
+        return None
+    unsteady = value >= params["dispersion"]
     if unsteady != (params["state"] == "unsteady"):
         return None
     lookback = ctx["periods"]["session"]
@@ -9258,6 +9544,18 @@ for _name, (_signal, _axes, _keys) in fastbar.FAMILIES.items():
             **axes, "last_entry_minute": (DAILY,), **g["swingbar"]})(_axes),
         hold="multiday", reads=(f"fb:{_name}",))
 
+#: THE ELEVENTH WAVE: rules built on the broker day OUTSIDE the cash session.
+#: Defined in `exness_offhours`, which says why. `scope="offhours"` runs them
+#: on any `--window` at 60m or finer; a family that brings its own exits
+#: (`oh_hour_drift`) gets them instead of the shared grid.
+for _name, (_signal, _axes, _exits) in offhours.FAMILIES.items():
+    FAMILIES[_name] = Family(
+        _signal,
+        (lambda axes, exits: lambda p, g: {
+            **axes, "last_entry_minute": g["last"],
+            **(exits or g["common"])})(_axes, _exits),
+        scope="offhours", reads=("offhours",))
+
 
 #: THE TAXONOMY, AND THE ONLY PLACE IT IS WRITTEN DOWN.
 #:
@@ -9352,6 +9650,8 @@ GROUPS = {
     "fastbar": tuple(fastbar.FAMILIES),
     #: The tenth wave -- the same constructs held for days; see the registry.
     "swingbar": tuple("sb_" + name[3:] for name in fastbar.FAMILIES),
+    #: The eleventh wave -- see `exness_offhours`. Any `--window`, <=60m.
+    "offhours": tuple(offhours.FAMILIES),
 }
 
 for _group, _members in GROUPS.items():
@@ -9424,6 +9724,16 @@ ALIASES = {
     #: null and a window neither it nor its parents were chosen on can price it.
     "sixth": tuple(GROUPS["pathstat"] + GROUPS["micro"] + GROUPS["filter"]
                    + GROUPS["adaptive"] + GROUPS["fusion"]),
+    #: The window study, 2026-09-27: every group with a survivor in
+    #: `results/exness` (plus calendar and swing, by operator choice) and the
+    #: eleventh wave. Excluded: night/almanac/horizon/crossasset/exogenous/
+    #: carry/live/relative (no or one survivor), fastbar/swingbar (bar-count
+    #: waves, one built for 5m and one that holds for days).
+    "windowed": tuple(name for group in (
+        "geometry", "fusion", "reversal", "xma", "combo", "adaptive",
+        "structure", "flow", "gate", "core", "filter", "micro", "oscillator",
+        "regime", "pathstat", "calendar", "swing", "offhours")
+        for name in GROUPS[group]),
 }
 
 
@@ -9590,6 +9900,13 @@ def axes(symbol, bar=None, only=None):
         # where that stops being true; above it the same rule would be buying
         # the afternoon and reporting the result as a gap study.
         if family.scope == "night" and (daily or (bar or BAR_MINUTES) > NIGHT_BAR_MAX):
+            continue
+        # A bar above `BAR_MAX` straddles the sessions these rules read, and
+        # `off` refuses the entries the `DAY_ONLY` families are about.
+        if family.scope == "offhours" and (
+                daily or (bar or BAR_MINUTES) > offhours.BAR_MAX
+                or (window_of(INSTRUMENTS[symbol]) == "off"
+                    and name in offhours.DAY_ONLY)):
             continue
         if family.symbols and symbol not in family.symbols:
             continue
@@ -9846,9 +10163,13 @@ def fill_maps(symbol, bar=None):
     # v2: v1 read a shifted market's broker table six hours away
     #      (`fill_models.exness.clock_offset`), so every jp225, hk50
     #      and aus200 map in the cache is wrong and must not be reused.
-    key = (f"fills:{FILL_MODEL}:v2:{table}:{spec['table']}:{bar}m:{spec['warmup']}:"
+    # v3: under `python -m` the fill model read a second, empty copy of this
+    #      module (see the top of the file) and applied NO clock offset, so a
+    #      map built by a command-line sweep could be six hours away again.
+    key = (f"fills:{FILL_MODEL}:v3:{table}:{spec['table']}:{bar}m:{spec['warmup']}:"
            f"{spec['shift_hours']}:{lag}:{BRIDGE_QUEUE_SECONDS}:"
-           f"{data._table_fingerprint([table, spec['table']])}")
+           f"{data._table_fingerprint([table, spec['table']])}"
+           f"{':modelled-' + _model_tag(symbol) if modelled_cost(symbol) else ''}")
 
     def build():
         lx = fill_model()
@@ -9924,6 +10245,10 @@ def install_fills(symbol, bar=None, quiet=False):
               f"scoreable bars priced ({share:.0f}%), feed lag "
               f"{feed_lag_seconds(symbol):g}s + {BRIDGE_QUEUE_SECONDS:g}s "
               f"queue, exit one bar later", flush=True)
+        if modelled_cost(symbol):
+            print(f"  MODELLED COST: {broker_minute_table(symbol)} is too short, "
+                  f"so the spreads before its first minute come from "
+                  f"fill_models.modelled_minutes -- screening only", flush=True)
         if share < 99.0:
             print(f"  {100 - share:.0f}% of the window predates "
                   f"{broker_minute_table(symbol)} and keeps the vendor open "
@@ -9931,6 +10256,11 @@ def install_fills(symbol, bar=None, quiet=False):
                   f"idealised fill", flush=True)
     return spreads, entries, exits
 
+
+#: Family name -> `fn(index, bars, ctx, params, side)`, True when an open
+#: position should close at the next bar's open. Read only by cells whose
+#: `exit_mode` is "signal"; no family in this module registers one.
+EXIT_SIGNALS = {}
 
 #: Off restores the plain bar-by-bar walk everywhere; see `_fire_table`.
 FIRE_SKIP = os.environ.get("EXNESS_FIRE_SKIP", "1") == "1"
@@ -9942,16 +10272,127 @@ _FIRE_EXIT_AXES = frozenset(("exit_mode", "stop_day", "trend", "vol_mode",
                              "stop_multiple"))
 
 
-def _fire_table(family, bars, ctx, params, signal_fn):
-    """Sorted bar indices where `family`'s signal is not `None`, cached on `ctx`."""
-    key = (family, tuple(sorted((k, repr(v)) for k, v in params.items()
-                                if k not in _FIRE_EXIT_AXES)))
+#: Off keeps the skip to the `fb_`/`sb_` waves, as every seal before
+#: 2026-09-27 was scored; on extends it to every pure signal (`pure_signals`).
+FIRE_SKIP_ALL = os.environ.get("EXNESS_FIRE_SKIP_ALL", "1") == "1"
+#: The holding skip (`_hold_scan`). Off until verified against the plain walk.
+HOLD_SKIP = os.environ.get("EXNESS_HOLD_SKIP", "0") == "1"
+_PURE = None
+
+
+def _uses_state(fn):
+    """True when a signal reads or writes its fifth argument, the state dict.
+
+    Read off the bytecode, so a signal that hands `state` on to a helper counts
+    as stateful too. Measured 2026-09-27: 114 of the 116 families in the window
+    study never touch it; `orb` and `ib` build their opening range in it."""
+    import dis        # noqa: PLC0415
+    import inspect    # noqa: PLC0415
+    names = list(inspect.signature(fn).parameters)
+    if len(names) < 5:
+        return False
+    state = names[4]
+    for op in dis.get_instructions(fn):
+        value = op.argval
+        if "FAST" in op.opname or "DEREF" in op.opname or "CLOSURE" in op.opname:
+            if value == state or (isinstance(value, tuple) and state in value):
+                return True
+    return False
+
+
+def pure_signals():
+    """Families whose signal is a pure function of the bar index and the cell's
+    SIGNAL axes, so the flat-account skip is exact for them.
+
+    THE SKIP WAS SAFE BEYOND THE BAR-COUNT WAVES ALL ALONG. What it needs is a
+    signal that keeps no state: then a bar the loop skips is a bar on which the
+    signal would have returned `None` and changed nothing. A stateful one --
+    `orb` accumulates its range only on the bars it is CALLED on, and the loop
+    does not call it while a position is open or on a non-calm bar -- would
+    see a different history under the skip, so it keeps the plain walk. The
+    window study is ~190M cells; this is what made it fit in a day.
+    """
+    global _PURE
+    if _PURE is None:
+        _PURE = frozenset(
+            name for name, entry in FAMILIES.items()
+            if name.startswith(("fb_", "sb_"))
+            or (FIRE_SKIP_ALL and not _uses_state(entry.signal)))
+    return _PURE
+
+
+def _hold_arrays(bars, ctx, closed):
+    """`(highs, lows, closes, flat_at)` for `_hold_scan`, cached on `ctx`.
+
+    `flat_at[i]` is the session-flatten test the exit block applies --
+    `minute >= closed` or the last bar of its day -- precomputed once."""
+    key = ("_hold", closed)
+    hit = ctx.get(key)
+    if hit is not None:
+        return hit
+    day_of, minute_of = ctx["day"], ctx["minute"]
+    n = len(bars)
+    flat_at = [minute_of[i] >= closed or i + 1 >= n or day_of[i + 1] != day_of[i]
+               for i in range(n)]
+    hit = ([b[H] for b in bars], [b[L] for b in bars], [b[C] for b in bars],
+           flat_at)
+    ctx[key] = hit
+    return hit
+
+
+def _hold_scan(index, position, arrays, risk_of, limit):
+    """The first bar from `index` on which the exit block would act.
+
+    MIRRORS THE EXIT BLOCK TEST FOR TEST. A bar is passed over only when the
+    flatten, the stop, the target and the clock exit would all decline on it;
+    on such a bar the block's one other effect is the trailing update, which
+    is applied here with the same expressions in the same order. The bar that
+    stops the scan is handed back untouched, so the ordinary code decides the
+    exit and its precedence exactly as before. `limit` is the first bar at or
+    past `hi`, where the loop stops anyway.
+    """
+    highs, lows, closes, flat_at = arrays
+    side, stop, target = position["side"], position["stop"], position["target"]
+    max_bars, opened, trail = (position["max_bars"], position["index"],
+                               position["trail"])
+    best = position["best"]
+    j = index
+    while j < limit:
+        if flat_at[j]:
+            break
+        if side == 1:
+            if lows[j] <= stop or (target is not None and highs[j] >= target):
+                break
+        elif highs[j] >= stop or (target is not None and lows[j] <= target):
+            break
+        if max_bars is not None and j - opened >= max_bars:
+            break
+        if trail is not None:
+            risk = risk_of[j]
+            if risk and present(risk):
+                if side == 1:
+                    best = max(best, closes[j])
+                    stop = max(stop, best - trail * risk)
+                else:
+                    best = min(best, closes[j])
+                    stop = min(stop, best + trail * risk)
+        j += 1
+    position["best"], position["stop"] = best, stop
+    return j
+
+
+def _fire_table(family, bars, ctx, params, signal_fn, start=0):
+    """Sorted bar indices from `start` where `family`'s signal is not `None`,
+    cached on `ctx`. Bars before `start` can never be traded, so they are not
+    asked; `start` is part of the key."""
+    key = (family, start, tuple(sorted((k, repr(v)) for k, v in params.items()
+                                       if k not in _FIRE_EXIT_AXES)))
     cache = ctx.setdefault("_fire_cache", {})
     hit = cache.get(key)
     if hit is not None:
         return hit
     state = {}
-    fires = [i for i in range(len(bars))
+    fires = [i for i in range(start, len(bars))
              if signal_fn(i, bars, ctx, params, state) is not None]
     if len(cache) >= FIRE_CACHE_SIZE:
         cache.pop(next(iter(cache)))
@@ -10088,6 +10529,7 @@ THREE HOLDING REGIMES. A `session` family is flattened at the close, as every
     calm_of = ctx["calm"]
     day_of = ctx["day"]
     minute_of = ctx["minute"]
+    in_rth = ctx.get("in_rth")
     signal_fn = SIGNALS[family]
     lag = DECISION_LAG_BARS if decision_lag is None else int(decision_lag)
     if lag < 0:
@@ -10194,9 +10636,26 @@ THREE HOLDING REGIMES. A `session` family is flattened at the close, as every
     # bar to the next instead of walking every bar of the day. Every bar it
     # skips is one on which the loop would have called the signal, got `None`
     # and done nothing else, so the statistics are identical to the plain walk.
-    fires = (_fire_table(family, bars, ctx, params, signal_fn)
-             if FIRE_SKIP and family.startswith(("fb_", "sb_")) else None)
+    # Extended 2026-09-27 to every pure signal (`pure_signals`); the argument
+    # above holds for any signal that keeps no state.
+    fires = (_fire_table(family, bars, ctx, params, signal_fn, start)
+             if FIRE_SKIP and family in pure_signals() else None)
     n_bars = len(bars)
+    # THE HOLDING SKIP, the same idea on the other side of the trade. While a
+    # session position is open and nothing is pending, a bar can only exit it
+    # or move its trailing stop, so `_hold_scan` walks the held bars in a tight
+    # loop and stops on the first one where the exit block would act; that bar
+    # then runs through the ordinary code. Off for every regime that holds
+    # past the close or reads a second feed, where more happens per bar.
+    # `exit_mode == "signal"`: the family's own exit rule (`EXIT_SIGNALS`),
+    # read on each held bar's close and acted on at the next open. The holding
+    # skip cannot see it, so it is off for those cells.
+    exit_signal = EXIT_SIGNALS.get(family) if exit_mode == "signal" else None
+    hold = None
+    if (HOLD_SKIP and not swing and not overnight and fill_bars is None
+            and exit_signal is None):
+        hold = _hold_arrays(bars, ctx, closed)
+        hold_limit = min(n_bars, bisect.bisect_left(ctx["ts"], hi))
     index = start - 1
     while True:
         index += 1
@@ -10207,6 +10666,8 @@ THREE HOLDING REGIMES. A `session` family is flattened at the close, as every
             if at >= len(fires):
                 break
             index = fires[at]
+        elif hold is not None and position is not None and pending is None:
+            index = _hold_scan(index, position, hold, risk_of, hold_limit)
         if index >= n_bars:
             break
         bar = bars[index]
@@ -10224,6 +10685,9 @@ THREE HOLDING REGIMES. A `session` family is flattened at the close, as every
                      or opened <= minute < closed)
         # 1970-01-01, day 0, was a Thursday.
         if ENTRY_DAYS is not None and (day + 3) % 7 not in ENTRY_DAYS:
+            tradeable = False
+        # The `off` window: no new position while the cash session is open.
+        if in_rth is not None and in_rth[index]:
             tradeable = False
 
         if position is not None:
@@ -10275,6 +10739,10 @@ THREE HOLDING REGIMES. A `session` family is flattened at the close, as every
                 if (price is None and position["max_bars"] is not None
                         and index - position["index"] >= position["max_bars"]):
                     price, reason = fbar[O], "time"
+                if (price is None and exit_signal is not None
+                        and index - 1 >= position["index"]
+                        and exit_signal(index - 1, bars, ctx, params, side)):
+                    price, reason = fbar[O], "signal"
             trail_risk = risk_of[index]
             if (price is None and position["trail"] is not None
                     and trail_risk and present(trail_risk)):
@@ -10352,7 +10820,19 @@ THREE HOLDING REGIMES. A `session` family is flattened at the close, as every
             # entries off the end of their own session. On daily bars the next
             # bar is by definition the next day, so the same-day test would
             # reject every entry -- which it silently did until this was fixed.
-            if daily or multiday or (day == pending["day"] and minute < closed):
+            # Under `off` the FILL must land outside the session too, or a
+            # signal on the last pre-open bar buys the opening print.
+            # Outside `rth` the day's last bar is not fillable either: the broker
+            # day's close (16:59) never prints as a bar, so the flatten fires
+            # on the LAST bar -- and a fill landing on that same bar would be
+            # carried through the rollover. Every sealed `rth` result keeps its
+            # own rule.
+            if ((in_rth is None or not in_rth[index])
+                    and (daily or multiday
+                         or (day == pending["day"] and minute < closed
+                             and (window_of(spec) == "rth" or swing
+                                  or (index + 1 < n_bars
+                                      and day_of[index + 1] == day))))):
                 # THE ONE PRICE A LATE FEED ACTUALLY CHANGES. `decision_lag`
                 # can only move an entry by whole bars, which at the 30m canon
                 # bar is a 30-minute quantum for a delay measured in seconds.
@@ -10394,8 +10874,20 @@ THREE HOLDING REGIMES. A `session` family is flattened at the close, as every
                     # widened stop: `rr_2` means twice what the trade risked by
                     # its own sizing, which is what every other family in the
                     # study means by it and what keeps the axis comparable.
-                    target, max_bars, trail = exit_plan_for(
-                        exit_mode, pending["distance"], per_session)
+                    if exit_mode.startswith("level"):
+                        # A price level the signal named: a number, or a dict
+                        # keyed by the suffix (`level_mid` -> "mid").
+                        own = pending.get("target")
+                        if isinstance(own, dict):
+                            own = own.get(exit_mode[6:] or "far")
+                        target = (own if own is not None and present(own)
+                                  and own > 0 else None)
+                        max_bars = trail = None
+                    elif exit_mode == "signal":
+                        target = max_bars = trail = None
+                    else:
+                        target, max_bars, trail = exit_plan_for(
+                            exit_mode, pending["distance"], per_session)
                     side = pending["side"]
                     position = {
                         "side": side, "entry": fill_price, "ts": ts,
@@ -10430,6 +10922,16 @@ THREE HOLDING REGIMES. A `session` family is flattened at the close, as every
                                          and rank_of[index] <= ENTRY_MAX_SPREAD_RANK))
                 and (want_calm is None or calm_of[index] == want_calm)):
             side = signal_fn(index, bars, ctx, params, state)
+            # A signal may return `(side, distance)` to place its own stop --
+            # a structural level such as a candle's extreme -- instead of the
+            # day-anchored `stop_day * risk`. Lots are then sized on that
+            # distance, so the trade still risks `RISK_FRACTION`. Every family
+            # in this module returns a bare side; `cfd_tt_families` uses it.
+            # A third element names a target distance (or a dict of them) for
+            # `level*` exit modes; see the fill block.
+            own_distance = own_target = None
+            if isinstance(side, tuple):
+                side, own_distance, own_target = (side + (None, None))[:3]
             if side is not None and null_seed is not None:
                 side = random_side(ts, null_seed)
             atr, realized = atr_of[index], realized_of[index]
@@ -10455,8 +10957,11 @@ THREE HOLDING REGIMES. A `session` family is flattened at the close, as every
                     # failure from here to entry is lot granularity alone -- which
                     # is exactly what fill_rate is meant to expose.
                     signals += 1
+                    distance = (own_distance if own_distance is not None
+                                and present(own_distance) and own_distance > 0
+                                else stop_day * risk)
                     pending = {"side": side, "day": day, "atr": atr,
-                               "distance": stop_day * risk,
+                               "distance": distance, "target": own_target,
                                "realized": realized,
                                "ready": index + 1 + lag}
 
@@ -10472,9 +10977,17 @@ THREE HOLDING REGIMES. A `session` family is flattened at the close, as every
         result["long_share"] = round(sum(t["side"] == 1 for t in trades) / len(trades), 3)
         # Strip the return a mechanical rule with the same long/short mix and
         # holding period would earn from unconditional session drift.
-        window = [bar for bar in bars if lo <= bar[TS] < hi]
-        moves = [1e4 * (b[C] - a[C]) / a[C] for a, b in zip(window, window[1:]) if a[C] > 0]
-        mu = statistics.fmean(moves) if moves else 0.0
+        # The same for every cell over one window, so computed once per
+        # context: it walked the whole series per cell, which on 5m FX was a
+        # third of each backtest.
+        drift_key = ("_drift", lo, hi, len(bars))
+        mu = ctx.get(drift_key)
+        if mu is None:
+            window = [bar for bar in bars if lo <= bar[TS] < hi]
+            moves = [1e4 * (b[C] - a[C]) / a[C]
+                     for a, b in zip(window, window[1:]) if a[C] > 0]
+            mu = statistics.fmean(moves) if moves else 0.0
+            ctx[drift_key] = mu
         drift = statistics.fmean([t["side"] * t["bars"] * mu for t in trades])
         excess = [value - t["side"] * t["bars"] * mu for value, t in zip(bp, trades)]
         result["drift_bp_per_trade"] = round(drift, 4)
@@ -10676,7 +11189,7 @@ def worker_specs(symbol):
     out = {symbol: INSTRUMENTS[symbol]}
     reference = BENCHMARK.get(symbol)
     if reference is not None:
-        out[reference] = register_series(reference)
+        out[reference] = register_series(reference, window_of(out[symbol]))
     return out
 
 
@@ -10848,7 +11361,7 @@ def prewarm(symbol, phase, bar):
         # the benchmark unregistered and every command died with `KeyError:
         # 'nq'`. Registering here makes `prewarm` self-sufficient rather than
         # dependent on what else happens to be in the run.
-        register_series(reference)
+        register_series(reference, window_of(INSTRUMENTS[symbol]))
         all_bars(reference, phase, bar)
 
 
@@ -10953,18 +11466,28 @@ def scope_tag(only):
 def output_path(symbol, bar=None, only=None):
     tag = scope_tag(only)
     days = entry_days_tag()
+    window = window_of(INSTRUMENTS[symbol])
     return os.path.join(
         RESULTS, f"{RESULT_PREFIX}_{symbol}_{label_bar(bar)}"
                  f"{'_' + tag if tag else ''}"
-                 f"{'_days-' + days if days else ''}.json")
+                 f"{'_days-' + days if days else ''}"
+                 f"{'_win-' + window if window != 'rth' else ''}.json")
+
+
+def _json_default(value):
+    """NumPy scalars (an int64 trade count, a float64 level) as plain Python
+    numbers, so a result file never fails to write at the end of a job."""
+    if hasattr(value, "item"):
+        return value.item()
+    raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
 
 
 def seal(payload, path):
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=_json_default)
     payload["seal_sha256"] = hashlib.sha256(canonical.encode()).hexdigest()
     with open(path, "w", encoding="utf-8") as handle:
-        json.dump(payload, handle, indent=2, sort_keys=True)
+        json.dump(payload, handle, indent=2, sort_keys=True, default=_json_default)
         handle.write("\n")
 
 
@@ -11042,10 +11565,17 @@ def select(symbol, workers, spread_bp=None, bar=None, only=None):
                 # True when unpriced bars were refused rather than filled
                 # at the vendor open; absent from every older seal.
                 "fills_only": FILLS_ONLY, "fill_model": FILL_MODEL,
+                # Absent from every older seal. When set, fills before the
+                # broker table's first minute are priced by
+                # `fill_models.modelled_minutes`, not by real Exness data.
+                "modelled_cost": (_model_tag(symbol) if modelled_cost(symbol)
+                                  else None),
                 "full_day": FULL_DAY,
                 "swap_free": SWAP_FREE,
                 # Absent from every older seal, all of which entered any day.
                 "entry_days": entry_days_tag(),
+                # Absent from every older seal, all of which traded `rth`.
+                "window": window_of(spec),
                 # Absent from every older seal, which measured a multiday
                 # drawdown from closed-trade peaks only.
                 "mtm_peak": MTM_PEAK,
@@ -11107,7 +11637,7 @@ def validate(symbol, spread_bp=None, bar=None, only=None):
         payload = json.load(handle)
     expected = payload.pop("seal_sha256")
     payload.pop("validation", None)
-    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=_json_default)
     if hashlib.sha256(canonical.encode()).hexdigest() != expected:
         raise SystemExit("selection seal mismatch")
     install_fills(symbol, bar)
@@ -11137,7 +11667,7 @@ def validate(symbol, spread_bp=None, bar=None, only=None):
     payload["seal_sha256"] = expected
     payload["validation"] = validation
     with open(path, "w", encoding="utf-8") as handle:
-        json.dump(payload, handle, indent=2, sort_keys=True)
+        json.dump(payload, handle, indent=2, sort_keys=True, default=_json_default)
         handle.write("\n")
 
 
@@ -11212,7 +11742,7 @@ def why(symbol, workers, spread_bp=None, requested=None, bar=None):
     with open(destination, "w", encoding="utf-8") as handle:
         json.dump({"symbol": symbol, "bar_minutes": bar, "spread_bp": spread_bp,
                    "select_rank": rank, "null_control": rows}, handle,
-                  indent=2, sort_keys=True)
+                  indent=2, sort_keys=True, default=_json_default)
         handle.write("\n")
 
 
@@ -11283,6 +11813,8 @@ def report_families(bars, only=None):
             where = ("intraday only" if family.scope == "intraday"
                      else "daily only" if family.scope == "daily"
                      else f"<={NIGHT_BAR_MAX}m only" if family.scope == "night"
+                     else f"window, <={offhours.BAR_MAX}m"
+                     if family.scope == "offhours"
                      else "any")
             print(f"{name:22}{family.hold:11}{where:16}"
                   f"{family.needs or '-':11}"
@@ -11292,7 +11824,9 @@ def report_families(bars, only=None):
                    if not (f.scope == "intraday" and is_daily(bar))
                    and not (f.scope == "daily" and not is_daily(bar))
                    and not (f.scope == "night"
-                            and (is_daily(bar) or bar > NIGHT_BAR_MAX))]
+                            and (is_daily(bar) or bar > NIGHT_BAR_MAX))
+                   and not (f.scope == "offhours"
+                            and (is_daily(bar) or bar > offhours.BAR_MAX))]
         print(f"\n{label_bar(bar):>5}: {len(allowed)} families available "
               "(before the per-symbol benchmark test)")
 
@@ -11434,6 +11968,15 @@ def main():
                              f"one or more of {','.join(GROUPS)}. A restricted "
                              "`select` writes to its own file so it cannot "
                              "overwrite a full sweep.")
+    parser.add_argument("--window", default=WINDOW,
+                        help="hours a run may trade, comma-separated, each "
+                             "run in turn: rth (the cash session, default), "
+                             "day (18:00-17:00), off (entries only while the "
+                             "cash session is shut), a named session "
+                             f"({', '.join(NAMED_WINDOWS)}), a grid window "
+                             "like w0300-0600, any HH:MM-HH:MM, or an alias "
+                             f"({', '.join(WINDOW_ALIASES)}); also "
+                             "$EXNESS_WINDOW")
     parser.add_argument("--spread-bp", type=float, default=None,
                         help="override the measured spread, in bp")
     parser.add_argument("--stale-spreads", action="store_true",
@@ -11453,6 +11996,7 @@ def main():
     # The profile was bound at import from the same flag; exporting it makes
     # every spawned worker bind the same one.
     os.environ["CFD_BROKER"] = args.broker
+    windows = expand_windows(args.window)
     symbols = expand(args.symbols)
     only = expand_families(args.families, args.groups)
     bars = [int(value) for value in str(args.bar_minutes).replace(" ", "").split(",")
@@ -11499,28 +12043,57 @@ def main():
     # have scored the other twenty-one. Named at the end for the same reason
     # the per-symbol failures below are: a skipped symbol the operator cannot
     # see is a study with a hole in it.
+    #
+    # ONE WINDOW AT A TIME, EVERY SYMBOL RE-RESOLVED FOR IT. The window lives
+    # on the spec, so resolving again is all it takes to move a symbol's bars,
+    # clock and session -- and the spec is what spawned workers are handed.
     refused = []
-    runnable = []
-    for symbol in symbols:
-        try:
-            resolve(symbol, allow_stale=args.stale_spreads)
-        except SystemExit as error:
-            refused.append(str(error))
-            print(f"SKIPPED {error}", flush=True)
-            continue
-        runnable.append(symbol)
-    symbols = runnable
-    if refused and not symbols:
-        raise SystemExit(f"none of the requested symbols can be studied "
-                         f"({len(refused)} refused)")
-    if args.command == "budget":
-        report_budget(symbols, bars, only)
-        return
-
-    global BAR_MINUTES
     failures = []
+    requested = symbols
+    for window in windows:
+        # For any helper that reads the environment rather than the spec.
+        os.environ["EXNESS_WINDOW"] = window
+        if len(windows) > 1:
+            print(f"\n==== window {window} ====", flush=True)
+        symbols = []
+        for symbol in requested:
+            try:
+                resolve(symbol, allow_stale=args.stale_spreads, window=window)
+            except SystemExit as error:
+                if str(error) not in refused:
+                    refused.append(str(error))
+                    print(f"SKIPPED {error}", flush=True)
+                continue
+            symbols.append(symbol)
+        if not symbols:
+            raise SystemExit(f"none of the requested symbols can be studied "
+                             f"({len(refused)} refused)")
+        if args.command == "budget":
+            report_budget(symbols, bars, only)
+            continue
+        _run_window(args, window, symbols, bars, only, failures)
+
+    if refused:
+        print(f"\n{len(refused)} symbol(s) refused before the sweep -- no "
+              f"broker minute table, so no fill to price:")
+        for line in refused:
+            print(f"  {line}")
+    if failures:
+        print(f"\n{len(failures)} symbol(s) failed and were skipped:")
+        for line in failures:
+            print(f"  {line}")
+
+
+def _run_window(args, window, symbols, bars, only, failures):
+    """Every bar size and symbol of one window; a failure is recorded in
+    `failures` rather than raised."""
+    global BAR_MINUTES
     for bar in bars:
         BAR_MINUTES = bar
+        if window == "off" and is_daily(bar):
+            print(f"window off skipped at {label_bar(bar)}: a daily bar has "
+                  "no hours to be outside of")
+            continue
         if args.command == "cost":
             report_cost(symbols, bar)
             continue
@@ -11546,21 +12119,11 @@ def main():
             except KeyboardInterrupt:
                 raise
             except Exception as error:                  # noqa: BLE001
-                failures.append(f"{symbol} {label_bar(bar)}: "
+                failures.append(f"{symbol} {label_bar(bar)} {window}: "
                                 f"{type(error).__name__}: {error}")
-                print(f"FAILED {symbol} {label_bar(bar)}: "
+                print(f"FAILED {symbol} {label_bar(bar)} {window}: "
                       f"{type(error).__name__}: {error}", flush=True)
                 traceback.print_exc()
-
-    if refused:
-        print(f"\n{len(refused)} symbol(s) refused before the sweep -- no "
-              f"broker minute table, so no fill to price:")
-        for line in refused:
-            print(f"  {line}")
-    if failures:
-        print(f"\n{len(failures)} symbol(s) failed and were skipped:")
-        for line in failures:
-            print(f"  {line}")
 
 
 if __name__ == "__main__":

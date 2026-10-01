@@ -453,6 +453,16 @@ pub enum Sleeve {
     EthusdEfficiency,
     EthusdCci,
     EthusdLinregTrend,
+    /// The TikTok-creator cells (`cfd_tt_families`), SEATED 2026-09-28. Each
+    /// runs on its own bar size and sets its own stop.
+    UstecLuxBodyMomentum5m,
+    UsdjpyQpMaCross30m,
+    Us500LuxSwingSweepMss5m,
+    GbpjpyQpMaCross15m,
+    EurjpyQpMaCross60m,
+    EthusdTdEmaMacd15m,
+    GbpjpyLuxalgoManipulation120m,
+    GbpjpyLuxHtfManipulation15m,
 }
 
 /// The canon book, in the order `exness_combined_strategies.BOOK` records it.
@@ -514,7 +524,11 @@ pub enum Sleeve {
 /// Kalman slope, a volatility-regime momentum, a three-horizon stack, a
 /// range-fraction breakout, a break-and-retest and a volume thrust all fire on
 /// different bars -- but they share one session, one clock and one gap.
-pub const BOOK: [Sleeve; 22] = [
+/// TT27, SET 2026-09-28: the 19-sleeve research canon (the three weekend-only
+/// ETHUSD cells removed) plus eight TikTok-creator cells, chosen by a greedy
+/// add over 2022-26, 2022-24, 2025-26 and 2026 and checked on the full canon
+/// report. Two new markets, USTEC and US500, arrive with them.
+pub const BOOK: [Sleeve; 27] = [
     Sleeve::UsdjpyVolumeThrust,
     Sleeve::AudusdZscore,
     Sleeve::EthusdConfluence,
@@ -534,9 +548,14 @@ pub const BOOK: [Sleeve; 22] = [
     Sleeve::EthusdRoofing,
     Sleeve::EthusdLevelConfluence,
     Sleeve::UsdjpyRvol,
-    Sleeve::EthusdEfficiency,
-    Sleeve::EthusdCci,
-    Sleeve::EthusdLinregTrend,
+    Sleeve::UstecLuxBodyMomentum5m,
+    Sleeve::UsdjpyQpMaCross30m,
+    Sleeve::Us500LuxSwingSweepMss5m,
+    Sleeve::GbpjpyQpMaCross15m,
+    Sleeve::EurjpyQpMaCross60m,
+    Sleeve::EthusdTdEmaMacd15m,
+    Sleeve::GbpjpyLuxalgoManipulation120m,
+    Sleeve::GbpjpyLuxHtfManipulation15m,
 ];
 
 /// The book's own name, for the one place it is a THING rather than a list.
@@ -716,6 +735,35 @@ impl Sleeve {
         self.spec().contract
     }
 
+    /// Seconds in one of this sleeve's candles: 1,800 unless it carries a
+    /// timeframe of its own.
+    pub(super) fn bar_seconds(self) -> i64 {
+        self.spec()
+            .timeframe
+            .map_or(BAR_SECONDS, |timeframe| timeframe.bar_minutes * 60)
+    }
+
+    /// `bar_seconds`, for the engine: the width of the candle this sleeve
+    /// aggregates, which is how late its stream acts and so how early the
+    /// engine must offer it.
+    pub fn candle_seconds(self) -> i64 {
+        self.bar_seconds()
+    }
+
+    /// Candles in one session at this sleeve's bar size.
+    pub(super) fn per_session(self) -> usize {
+        self.spec()
+            .timeframe
+            .map_or(self.contract().per_session, |timeframe| timeframe.per_session)
+    }
+
+    /// The admission throttle's target at this sleeve's bar size.
+    pub(super) fn vol_target(self) -> f64 {
+        self.spec()
+            .timeframe
+            .map_or(self.contract().vol_target, |timeframe| timeframe.vol_target)
+    }
+
     /// The broker's `volume_min` for this sleeve's market, in MT5 lots.
     ///
     /// THE LIVE RUNTIME MUST ASK THIS RATHER THAN KEEP A TABLE OF ITS OWN. The
@@ -771,6 +819,7 @@ mod contracts;
 mod family;
 mod indicators;
 mod sleeves;
+mod tt;
 pub mod warmup;
 
 use crate::backtest::fills::FillCoverage;

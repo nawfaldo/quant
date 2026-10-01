@@ -33,6 +33,8 @@ pub(super) fn market_point_value(market: &str) -> f64 {
         "uk100" => 1.353_35,
         // NQ, ETHUSD, BTC and spot nickel all carry a contract size of one.
         "nq" | "ethusd" | "btc" | "xniusd" => 1.0,
+        // The Nasdaq and S&P CFDs, both a contract size of one in USD.
+        "ustec" | "us500" => 1.0,
         _ => 1.0,
     }
 }
@@ -75,6 +77,8 @@ pub fn market_spread_bp(market: &str) -> Option<f64> {
         "btc" => 1.103,
         // Spot nickel, the second-widest quote in the book.
         "xniusd" => 7.189_7,
+        "ustec" => 0.265_1,
+        "us500" => 0.362_4,
         _ => return None,
     };
     Some(spread + SLIPPAGE_BP)
@@ -120,6 +124,8 @@ pub fn broker_minimum(market: &str) -> f64 {
         "ethusd" => 0.10,
         "jp225" => 3.0,
         "uk100" => 0.05,
+        "ustec" => 0.05,
+        "us500" => 0.14,
         "usdjpy" | "audusd" | "gbpjpy" | "gbpusd" | "ukoil" | "eurjpy" | "xalusd" | "btc"
         | "xniusd" => 0.01,
         _ => 0.0,

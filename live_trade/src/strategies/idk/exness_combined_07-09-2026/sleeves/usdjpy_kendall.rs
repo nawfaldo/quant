@@ -36,6 +36,7 @@ pub(super) const SPEC: SleeveSpec = SleeveSpec {
     shown_equity: 1.0,
     sized_as_import: false,
     entry_days: None,
+    timeframe: None,
     engine: EngineKind::Family(Params {
         family: Family::Kendall {
             // `p["kendall"][1]`, which is `max(100, 10 * session)`. On USDJPY

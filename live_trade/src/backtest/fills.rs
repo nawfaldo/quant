@@ -86,6 +86,8 @@ fn broker_symbol(market: &str) -> Option<&'static str> {
         "xniusd" => "xniusd",
         "btc" => "btcusd",
         "nq" => "ustec",
+        "ustec" => "ustec",
+        "us500" => "us500",
         _ => return None,
     })
 }
@@ -99,6 +101,7 @@ fn point_size(market: &str) -> Option<f64> {
         "audusd" | "gbpusd" => 0.000_01,
         "ethusd" | "uk100" | "xalusd" | "btc" | "xniusd" | "nq" => 0.01,
         "jp225" => 0.1,
+        "ustec" | "us500" => 0.01,
         _ => return None,
     })
 }
@@ -141,6 +144,8 @@ pub struct MarketFills {
     spread_bp: Vec<f64>,
     entry_delay: i64,
     exit_delay: i64,
+    /// Feed lag plus bridge queue, for an exit on a candle that is not 30m.
+    lag: f64,
     /// Seconds to SUBTRACT from a candle stamp to reach the broker's clock.
     /// A shifted market's candles run `shift_hours` ahead of New York and its
     /// broker table does not (`fill_models.exness.clock_offset`).
@@ -181,6 +186,7 @@ impl MarketFills {
             spread_bp,
             entry_delay: whole_seconds(lag + BRIDGE_QUEUE_SECONDS),
             exit_delay: whole_seconds(BAR_SECONDS + lag + BRIDGE_QUEUE_SECONDS),
+            lag: lag + BRIDGE_QUEUE_SECONDS,
             offset: shift_hours * 3_600,
         }
     }
@@ -244,6 +250,13 @@ impl MarketFills {
     /// on and applied whatever the reason -- stop, target, session or clock.
     pub fn exit(&self, ts: i64, open: f64) -> Option<f64> {
         self.moved(ts, open, self.exit_delay)
+    }
+
+    /// `exit`, for a sleeve whose candle is `bar_seconds` long:
+    /// `exit_delay_seconds` is one WHOLE bar of the sleeve's own size plus the
+    /// lag and the queue.
+    pub fn exit_after(&self, ts: i64, open: f64, bar_seconds: i64) -> Option<f64> {
+        self.moved(ts, open, whole_seconds(bar_seconds as f64 + self.lag))
     }
 
     fn moved(&self, ts: i64, open: f64, delay: i64) -> Option<f64> {

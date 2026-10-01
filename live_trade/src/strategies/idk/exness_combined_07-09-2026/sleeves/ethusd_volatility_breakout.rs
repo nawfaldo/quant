@@ -19,6 +19,7 @@ pub(super) const SPEC: SleeveSpec = SleeveSpec {
     shown_equity: 3.0,
     sized_as_import: false,
     entry_days: None,
+    timeframe: None,
     engine: EngineKind::Family(Params {
         family: Family::VolatilityBreakout { fraction: 0.5 },
         direction: Direction::Follow,

@@ -36,6 +36,7 @@ pub(super) const SPEC: SleeveSpec = SleeveSpec {
     shown_equity: 2.0,
     sized_as_import: false,
     entry_days: None,
+    timeframe: None,
     engine: EngineKind::Family(Params {
         family: Family::VolumeThrust {
             volume_period: 5 * SESSION,

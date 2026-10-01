@@ -74,7 +74,7 @@ def main():
         print(f"\nwrote {len(book['settled'])} trades to "
               f"{os.environ['DUMP_TRADES']}")
 
-    print(f"\nCANON BOOK  25 sleeves  ${cb.CANON_INITIAL:,.0f}  "
+    print(f"\nCANON BOOK  {len(keys)} sleeves  ${cb.CANON_INITIAL:,.0f}  "
           f"risk {cb.CANON_RISK_SCALE}  gross cap {cb.CANON_GROSS_CAP}")
     print(f"  final     ${book['final']:,.2f}")
     print(f"  return    {book['return_pct']:+.2f}%")

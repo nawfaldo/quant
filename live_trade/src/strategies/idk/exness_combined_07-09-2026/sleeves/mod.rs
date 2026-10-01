@@ -56,6 +56,14 @@ mod usdjpy_kendall;
 mod usdjpy_pullback;
 mod usdjpy_rvol;
 mod usdjpy_volume_thrust;
+mod ustec_lux_body_momentum_5m;
+mod usdjpy_qp_ma_cross_30m;
+mod us500_lux_swing_sweep_mss_5m;
+mod gbpjpy_qp_ma_cross_15m;
+mod eurjpy_qp_ma_cross_60m;
+mod ethusd_td_ema_macd_15m;
+mod gbpjpy_luxalgo_manipulation_120m;
+mod gbpjpy_lux_htf_manipulation_15m;
 
 /// Everything the book knows about one sleeve.
 pub(super) struct SleeveSpec {
@@ -127,8 +135,23 @@ pub(super) struct SleeveSpec {
     /// It gates the signal only, as `cfd_families.ENTRY_DAYS` gates
     /// `tradeable`, so a position still exits by its own rules.
     pub(super) entry_days: Option<u8>,
+    /// The sleeve's own bar, when it is not the 30-minute candle every
+    /// `cfd_families` cell trades. `None` is 30 minutes and the contract's own
+    /// session count and `vol_target`.
+    pub(super) timeframe: Option<Timeframe>,
     /// Which machine trades it.
     pub(super) engine: EngineKind,
+}
+
+/// A TikTok cell's bar size and the two figures its context builds from it.
+#[derive(Clone, Copy)]
+pub(super) struct Timeframe {
+    pub(super) bar_minutes: i64,
+    /// `periods(symbol, bar)["session"]`.
+    pub(super) per_session: usize,
+    /// `ctx["vol_target"]` at this bar: the median trailing volatility over the
+    /// cell's in-sample window, the admission throttle's target.
+    pub(super) vol_target: f64,
 }
 
 /// Which machine a sleeve runs on.
@@ -196,5 +219,13 @@ pub(super) const fn spec(sleeve: super::Sleeve) -> &'static SleeveSpec {
         S::EthusdEfficiency => &ethusd_efficiency::SPEC,
         S::EthusdCci => &ethusd_cci::SPEC,
         S::EthusdLinregTrend => &ethusd_linreg_trend::SPEC,
+        S::UstecLuxBodyMomentum5m => &ustec_lux_body_momentum_5m::SPEC,
+        S::UsdjpyQpMaCross30m => &usdjpy_qp_ma_cross_30m::SPEC,
+        S::Us500LuxSwingSweepMss5m => &us500_lux_swing_sweep_mss_5m::SPEC,
+        S::GbpjpyQpMaCross15m => &gbpjpy_qp_ma_cross_15m::SPEC,
+        S::EurjpyQpMaCross60m => &eurjpy_qp_ma_cross_60m::SPEC,
+        S::EthusdTdEmaMacd15m => &ethusd_td_ema_macd_15m::SPEC,
+        S::GbpjpyLuxalgoManipulation120m => &gbpjpy_luxalgo_manipulation_120m::SPEC,
+        S::GbpjpyLuxHtfManipulation15m => &gbpjpy_lux_htf_manipulation_15m::SPEC,
     }
 }

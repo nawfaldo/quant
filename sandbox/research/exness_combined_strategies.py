@@ -7,6 +7,20 @@ READ THIS FIRST IF YOU ARE AN AGENT RUNNING THIS MODULE.
 See the same warning at the top of `cfd_families` -- it cost a session once
 ([[paste-results-into-the-reply]]).
 
+**"THE CANON RESULT" IS ONE FIXED REPORT, AND IT IS ALSO THE MEMBERSHIP TEST.**
+When the operator asks for canon's result, run
+
+    bash sandbox/research/run_canon_report.sh      (~20 min, 12 workers)
+
+and give them `sandbox/results/CANON_REPORT_canon19.md` in full: $500 cold
+start, Exness Pro, live fills; 2022-2026, 2022-2024, 2025-2026 and 2026 each
+realised AND Monte Carlo; the per-sleeve table for every window; every week's %
+against the balance that week opened with; and the opening week (a fresh $500
+every Monday) realised AND Monte Carlo. When canon MEMBERSHIP changes, run the
+candidate through the same script (`TAG=<name>`) and weigh ALL of it against
+the current canon's report -- every window, every sleeve, the weekly list and
+the opening week -- not one headline number.
+
 **EVERY REPORTED RESULT MUST INCLUDE THE PER-SLEEVE TABLE.** Not the book
 summary alone. For each sleeve: its P&L contribution, its share, its drawdown
 BOTH marked-to-market AND closed-trade, its trade count, and its standalone
@@ -933,8 +947,27 @@ def candidate_rows_exact(keys):
     parameter dictionaries, and one unavailable unrelated source can block the
     whole report.
     """
-    wanted = set(keys)
+    from sandbox.research import tt_book
     found = {}
+    for key in keys:
+        if tt_book.is_tt(key):
+            symbol, family, bar = tt_book.split(key)
+            cell = tt_book.sealed(key)
+            oos = cell.get("out_of_sample") or {}
+            found[key] = {
+                "symbol": symbol, "family": f"{family}@{bar}m", "tt": True,
+                "params": _retuple(cell["params"]),
+                "asset_class": cell.get("asset_class", "unknown"),
+                "oos_return": oos.get("return_pct", float("nan")),
+                "oos_dd": oos.get("max_dd_pct", float("nan")),
+                "oos_trades": oos.get("trades", 0),
+                "oos_pf": oos.get("pf", float("nan")),
+                "is_t": cell.get("in_sample", {}).get("edge_vs_drift_t_stat"),
+                "flip": None, "null_seeds": None,
+            }
+    wanted = {k for k in keys if k not in found}
+    if not wanted:
+        return found
     for name in sorted(os.listdir(SURVIVOR_DIR)):
         if not name.endswith(f"_{BAR}m.json"):
             continue
@@ -952,8 +985,10 @@ def candidate_rows_exact(keys):
             "oos_dd": oos.get("max_dd_pct", float("nan")),
             "oos_trades": oos.get("trades", 0),
             "oos_pf": oos.get("pf", float("nan")),
+            "is_t": cell.get("in_sample", {}).get("edge_vs_drift_t_stat"),
+            "flip": None, "null_seeds": None,
         }
-        if len(found) == len(wanted):
+        if len(found) == len(keys):
             break
     return found
 
@@ -1289,6 +1324,37 @@ def sleeve_trades(row, null_seed=None, lo=None, hi=None, shown=1.0):
     if key in _SLEEVE_MEMO:
         res, log, bars, ctx = _SLEEVE_MEMO[key]
         return res, [dict(t) for t in log], bars, ctx
+
+    if row.get("tt"):
+        # A TikTok cell runs under `cfd_tt_families`' registry, in a child
+        # process (`tt_book`). Every TT member of the book is generated in one
+        # call for this window and fill mode, so the children are paid once.
+        from sandbox.research import tt_book
+        sleeve = f"{row['symbol']}:{row['family']}"
+        keys = sorted({k for k in BOOK if tt_book.is_tt(k)} | {sleeve})
+        got = tt_book.logs(keys, ef.IS_END if lo is None else lo,
+                           ef.OOS_END if hi is None else hi, live=TICK_COSTS)
+        cell = got["cells"][sleeve]
+        result = {"return_pct": cell["return_pct"], "trades": cell["trades"],
+                  "max_dd_pct": cell.get("max_dd_pct", float("nan")),
+                  "trade_log": cell["log"]}
+        bars, ctx = got["bars30"][row["symbol"]], got["ctx"][row["symbol"]]
+        _SLEEVE_MEMO[key] = (result, cell["log"], bars, ctx)
+        for k_sleeve, c_cell in got["cells"].items():
+            if k_sleeve == sleeve:
+                continue
+            c_sym, c_fam = k_sleeve.split(":", 1)
+            c_res = {"return_pct": c_cell["return_pct"], "trades": c_cell["trades"],
+                     "max_dd_pct": c_cell.get("max_dd_pct", float("nan")),
+                     "trade_log": c_cell["log"]}
+            c_bars = got["bars30"].get(c_sym)
+            c_ctx = got["ctx"].get(c_sym)
+            c_cell_row = tt_book.sealed(k_sleeve) if tt_book.is_tt(k_sleeve) else None
+            c_params = c_cell_row.get("params") if c_cell_row else None
+            c_params_k = tuple(sorted(c_params.items())) if isinstance(c_params, dict) else (tuple(c_params) if isinstance(c_params, (list, tuple)) else c_params)
+            c_key = (c_sym, c_fam, c_params_k, null_seed, lo, hi, shown, FILL_FEED, SIGNAL_FEED, TICK_COSTS, BROKER_STOPS, ef.DECISION_LAG_BARS)
+            _SLEEVE_MEMO[c_key] = (c_res, c_cell["log"], c_bars, c_ctx)
+        return result, [dict(t) for t in cell["log"]], bars, ctx
 
     symbol = row["symbol"]
     bars, ctx = _context(symbol)
@@ -2247,181 +2313,41 @@ TARGET_FILL = 90.0
 #:
 #: RESEARCH ONLY SO FAR. The live rows, cost rules, market tables and the Rust
 #: const registry still carry the jp225 book ([[activating-a-book-is-four-places]]).
-BOOK = ("usdjpy:volume_thrust", "audusd:zscore",
-        "ethusd:confluence",
-        "ethusd:volatility_breakout", "gbpjpy:trap",
-        #: `ukoil:xma_cross` LEFT 2026-09-23 on decay, the one sleeve where every
-        #: test agreed: 0 wins in 6 over Aug-Sep 2026 (2.5% by chance at its 46%
-        #: win rate), its worst loss streak on record, bottom 13% of its own
-        #: 16-week windows for Jun-Sep, 2026 R +0.153 against +0.284 in
-        #: 2022-24 at t=0.48, and the only sleeve negative in 2026 dollars --
-        #: while UKOIL trended +23% at 90th-pct efficiency, the tape an MA cross
-        #: is built to win. Any single one of those is luck; five together are not.
-        "eurjpy:two_stage",
-        "usdjpy:pullback",
-        "ethusd:obv_break",
-        "ukoil:level_confluence",
-        #: `usdjpy:kendall` REMOVED 2026-09-26, operator decision, against the
-        #: advice below: 22 sleeves ran 964%/13.97 realised, MC median 731%,
-        #: dd p95/p99 26.51/32.68, P(dd>20) 25.4% (23 with it: 832%, 24.59/29.72).
-        "eurjpy:gated_orb",
-        #: SEATED 2026-09-22 into the freed jp225 seats. `usdjpy:aroon` is an
-        #: Aroon breakout, 43 OOS trades at pf 1.88 and the best win rate of the
-        #: three; `ethusd:break_retest` is a PDR level retested at VWAP, 193
-        #: trades pf 1.29; `eurjpy:swing_ma` is a 28/140 swing cross that earns
-        #: its seat on correlation rather than return -- it is the smallest
-        #: contributor in the book and lost money in 2023 and 2025.
-        #:
-        #: `eurjpy:xma_cross` WAS THE FOURTH AND IS DELIBERATELY ABSENT. It
-        #: scored better paired than `eurjpy:swing_ma` alone, and it shares that
-        #: cell's ENTRY exactly -- fast 28, slow 140, direction breakout -- so
-        #: seating both buys one moving-average cross twice and pays for two
-        #: ([[inert-gate-clones-a-family]]). `ethusd:day_of_week` is out for the
-        #: same class of reason: its axis is `weekday=3`, a label with no
-        #: neighbourhood, so its robustness gate reports 1/1 by construction
-        #: ([[all-categorical-axes-void-the-robustness-gate]]).
-        "usdjpy:aroon", "ethusd:break_retest",
-        #: `eurjpy:swing_ma` REMOVED 2026-09-26, operator decision (-$4 over
-        #: 2025-26, 103 trades).
-        #: SEATED 2026-09-04 on the HOLDOUT, not the long window. All three are
-        #: decay-clean, and `usdjpy:fracdiff` is accelerating -- 18.5R in eight
-        #: months of 2026 against 5.3R in all of 2025, a 2.49x ratio.
-        #:
-        #: `es:regime_breakout` WAS SEATED HERE AND REMOVED THE SAME DAY, on a
-        #: data dependency rather than on its record: it signals off `es_1m`,
-        #: the back-adjusted futures continuum, and the operator does not carry
-        #: that feed. It is the second cell lost to a subscription rather than
-        #: to a result ([[one-sleeve-cannot-pay-for-a-data-feed]]).
-        #:
-        #: IT WAS THE BEST HOLDOUT-TAIL SLEEVE MEASURED ALL SESSION and nothing
-        #: replaces it. With it the OOS band was p95 18.85 / p99 24.89; every
-        #: replacement lands at 19.0-20.1 / 26.2-27.5. `ethusd:pullback` and
-        #: `hk50:level_confluence` were taken together as the operator's choice:
-        #: they recover the RETURN (+844% OOS against +735% with es, +9,078%
-        #: full) and a positive month, and give back tail -- OOS p99 27.48,
-        #: spread 7.79 (1,000 paths, risk 0.13).
-        #:
-        #: THE FITTED WINDOW PAYS FOR THE HOLDOUT THROUGHOUT THIS BLOCK: full
-        #: p99 is 27.94 against the 20-sleeve book's 26.79, so canon sits
-        #: FURTHER from the operator's "p99 close to p95" target than before.
-        #: Taken knowingly -- 2022-2024 is in-sample for these cells' parameters
-        #: ([[exness-survivor-pool-is-oos-conditioned]]) and the holdout is the
-        #: window the account is about to trade.
-        "usdjpy:fracdiff", "ethusd:pullback",
-        #: SEATED 2026-09-19, REPLACING `jp225:volatility_breakout` AND
-        #: `jp225:break_retest`, and the reason is concentration rather than
-        #: either cell's record -- both were profitable over 2022-2026.
-        #:
-        #: EIGHT OF TWENTY-TWO SLEEVES STOOD ON ONE INDEX. Over 2026-09-07..18,
-        #: the worst opening fortnight in 123, jp225 carried 45 of 85 trades and
-        #: ukoil and jp225 together 96% of the loss, at a flat 3.0-lot minimum
-        #: that `risk_scale` cannot shrink ([[risk-dial-is-inert-on-a-pinned-account]],
-        #: [[sep-2026-fortnight-was-a-severe-cold-start]]). The eight are not one
-        #: rule eight times, but they share one session, one clock and one gap,
-        #: and on a fortnight when JP225 chopped sideways -- net +0.07% -- every
-        #: one of them was sawn up together.
-        #:
-        #: CHOSEN BY EXHAUSTIVE SEARCH, NOT GREEDILY. All 256 subsets of the
-        #: eight were replayed, then every pair from a 45-cell shortlist bounded
-        #: by the DATA FEED rather than by the gates -- a candidate on a symbol
-        #: `idk_market_live_data_feeds` does not carry is a vendor dependency,
-        #: not a strategy choice ([[one-sleeve-cannot-pay-for-a-data-feed]]).
-        #:
-        #: WHAT IT BUYS, on 1,000 paths at 14-day blocks, live fills:
-        #: p99 marked drawdown 35.30% -> 31.32%, worst path 60.26% -> 40.66%,
-        #: median return 13,065% -> 22,261%, and no path halves the account
-        #: where canon had one. The worst COLD opening fortnight at $450 goes
-        #: -28.12% -> -16.86% and its drawdown 34.59% -> 23.45%.
-        #:
-        #: WHAT IT COSTS: median path drawdown rises 13.56% -> 15.52%. A bumpier
-        #: ordinary ride for a materially shorter tail, taken knowingly.
-        #:
-        #: `usdjpy:half_life` REQUIRED A NEW RUST FAMILY -- the OU fit and its
-        #: prefix-sum z-score -- so it is the first cell seated here whose port
-        #: was written for the replacement rather than for the original book.
-        #: `ethusd:kalman` reuses `jp225:kalman`'s filter at its other arm, the
-        #: residual, which is a mean-reversion claim rather than a trend one.
-        #:
-        #: STILL NOT A HOLDOUT. The search window sits inside the period the
-        #: survivor pool was screened on ([[exness-survivor-pool-is-oos-conditioned]]).
-        "ethusd:kalman", "usdjpy:half_life",
-        #: SEATED 2026-09-23 after `ukoil:xma_cross` left, chosen on MONTE CARLO
-        #: RETURN with realised holdout drawdown held under 15% -- the operator's
-        #: rule, not the drawdown-neutral one used for the three above. A strict
-        #: screen (no window's drawdown up more than 0.5pp) admitted nothing that
-        #: also added return, so the trade here is explicit:
-        #:
-        #:     1,000 paths, live fills, 2025-26, $500     18 sleeves   +these 3
-        #:     median return                                527%        724%
-        #:     p5 return                                    242%        309%
-        #:     MTM dd p95 / p99                      23.38/28.81  25.28/29.92
-        #:     P(dd > 20%)                                  13.0%       22.7%
-        #:
-        #: Best of 130 memberships from the top nine single adds; the two runners-
-        #: up had LOWER return and a FATTER tail (p99 32.5% and 35.7%), so this
-        #: is not the highest-return row bought with the worst tail. Realised
-        #: holdout drawdown 13.84%, but 19.51% over 2022-2026 -- the 15% line
-        #: holds on the holdout only.
-        #:
-        #: Params diffed against every seated sleeve on the same symbol: only
-        #: generic knobs are shared, the signal-defining ones all differ.
-        #: CONCENTRATION RISES: ethusd 6 -> 8 sleeves, usdjpy 6 -> 7, and that is
-        #: where the extra tail comes from.
-        #: REMOVED 2026-09-26, operator decision, after the 2022-2026 Monte
-        #: Carlo reversed the 2025-26 one. Over five years the three cost far
-        #: more tail than the recent window showed:
-        #:
-        #:     2022-2026, 1,000 paths, live fills   base 18    with the three
-        #:     median return                          4,138%       6,734%
-        #:     MTM dd median / p99             17.93 / 34.48  22.30 / 44.35
-        #:     P(dd > 20%)                             33.1%        69.4%
-        #:
-        #: Every replacement tried sits on the same fed markets (usdjpy, ethusd)
-        #: as the sleeves already seated, so each added correlated risk rather
-        #: than spreading it -- the concentration the jp225 exit was meant to end.
-        #: "ethusd:roofing", "ethusd:level_confluence", "usdjpy:rvol"
-        #:
-        #: RE-SEATED 2026-09-26, operator decision, together with seven
-        #: WEEKEND-ONLY crypto cells (`WEEKEND_ONLY` below): the best-return
-        #: membership of all 4,096 subsets of these three plus nine weekend
-        #: candidates, on 2025-26.
-        #:
-        #:     2025-26, live fills, $500, 500 paths   base 18   A (+3)   this (+10)
-        #:     realised return / MTM dd       662% / 12.10  953% / 13.84  1,148% / 13.78
-        #:     median return                          528%      731%       888%
-        #:     MTM dd p95 / p99               23.30/29.05  25.22/29.92  25.68/30.86
-        #:     P(dd > 20%)                           11.8%     23.2%      23.8%
-        #:
-        #: THE 2022-2026 TAIL IS THE PRICE, and it was shown before the choice:
-        #: A + all nine weekend cells there ran median 7,431%, p99 dd 50.3%,
-        #: P(dd > 20%) 77.8% (base 18: 4,138%, 34.9%, 33.1%). The weekend cells
-        #: were picked on the 2025-26 window they are scored on, and `efficiency`
-        #: and `cci` only broke even over 2018-24.
-        "ethusd:roofing", "ethusd:level_confluence", "usdjpy:rvol",
-        "ethusd:efficiency", "ethusd:cci", "ethusd:linreg_trend",
-        #: REMOVED the same day, operator decision on their 2025-26 dollars:
-        #: `eurjpy:swing_ma` (above) and the weekend `ethusd:kendall` (+$1),
-        #: `ethusd:aroon` (+$29), `btc:dmi` (+$43, 7 trades), `ethusd:idio_break`
-        #: (+$55). 2025-26, live fills, $500, 500 paths:
-        #:
-        #:                           28 sleeves   23 (this)   22 (also no usdjpy:kendall)
-        #:     realised / MTM dd   1,148%/13.78  1,063%/13.97   964%/13.97
-        #:     MC median               888%          832%          731%
-        #:     MC dd p95 / p99     25.68/30.86   24.59/29.72   26.51/32.68
-        #:     P(dd > 20%)            23.8%         22.2%         25.4%
-        #:
-        #: `usdjpy:kendall` was advised to stay (dropping it costs ~100 points
-        #: of return AND fattens the tail); the operator removed it anyway.
-        )
+#: CANON BOOK, set 2026-09-30: Combo C with btc:jump replacing usdjpy:kendall.
+#: 23 sleeves: 15 cfd_families + 8 TT sleeves (@tf).
+BOOK = (
+    "usdjpy:volume_thrust",
+    "audusd:zscore",
+    "ethusd:confluence",
+    "ethusd:volatility_breakout",
+    "gbpjpy:trap",
+    "usdjpy:pullback",
+    "ethusd:obv_break",
+    "ukoil:level_confluence",
+    "ethusd:break_retest",
+    "ethusd:lux_body_momentum@15m",
+    "usdjpy:half_life",
+    "usdjpy:rvol",
+    "ustec:lux_body_momentum@5m",
+    "usdjpy:qp_ma_cross@30m",
+    "eurjpy:qp_ma_cross@60m",
+    "gbpjpy:luxalgo_manipulation@120m",
+    "gbpjpy:lux_supply_demand@30m",
+    "de40:lux_sweep_reclaim@60m",
+    "usdjpy:lux_htf_manipulation@60m",
+    "eurjpy:lux_ny_vwap_pullback@15m",
+    "uk100:xma_cross",
+    "usoil:xma_cross",
+    "btc:jump",
+)
 
 #: Cells that ENTER ON SATURDAY AND SUNDAY ONLY, inside their ordinary 09:30-16:00
 #: New York session. Their trades are `cfd_families.backtest` run with
 #: `ENTRY_DAYS` set to the weekend for that cell alone (`sleeve_trades`), which
 #: is exactly `EXNESS_ENTRY_DAYS=sat,sun`. None of them shares a family with an
 #: every-day ethusd sleeve, so no signal is traded twice.
-WEEKEND_ONLY = frozenset({
-    "ethusd:efficiency", "ethusd:cci", "ethusd:linreg_trend",
-})
+#: Empty since 2026-09-28, when the three weekend ethusd cells left the book.
+WEEKEND_ONLY = frozenset()
 
 
 
@@ -2760,6 +2686,25 @@ def replay(members, trades_by_sleeve, bars_by_symbol, ctx_by_symbol,
         right = bisect.bisect_left(stamps_all, hi)
         grid = stamps_all[left:right]
 
+    # EVERY TRADE IS OPENED AND SETTLED AT ITS OWN STAMP. The grid above is the
+    # 30-minute bars the book marks on, and a sleeve on a finer candle (the
+    # 5- and 15-minute TikTok cells) enters and exits BETWEEN those stamps --
+    # left to the grid, an 11:55 entry was sized at 12:00 against a balance
+    # that already held every exit up to 12:00, five minutes it could not have
+    # known. The account sizes at 11:55, and so does the live engine. For a
+    # 30-minute book every trade stamp is already on the grid and nothing moves.
+    #
+    # THOSE EXTRA STAMPS SETTLE AND OPEN, THEY DO NOT MARK. The marking rule
+    # values a position only where its own market printed, so at a stamp where
+    # almost nothing prints the book would read as flat -- a fake dip of every
+    # open profit. Marks stay on the bar grid.
+    extra = {stamp for t in pending for stamp in (t["entry_ts"], t["exit_ts"])
+             if lo <= stamp < hi}
+    marks = None
+    if extra:
+        marks = set(grid)
+        grid = sorted(marks | extra)
+
     equity = initial
     closed_peak, closed_dd = initial, 0.0
     marked_peak, marked_dd = initial, 0.0
@@ -2882,6 +2827,8 @@ def replay(members, trades_by_sleeve, bars_by_symbol, ctx_by_symbol,
                 "pnl": trade["points"] * lots * money})
 
         # 3. mark the book to market on this bar, per sleeve and in total
+        if marks is not None and stamp not in marks:
+            continue
         unrealized = 0.0
         open_by_sleeve = {}
         for position in open_positions:
@@ -3180,6 +3127,8 @@ def build(limit, max_rho, max_lift, null_seed=None, stale=True,
         # reports it.
         keep = list(members_exact)
         by_key = {f"{r['symbol']}:{r['family']}": r for r in rows}
+        exact_rows = candidate_rows_exact([k for k in keep if k not in EXTERNAL])
+        by_key.update(exact_rows)
         for name in keep:
             if name not in by_key and name in EXTERNAL:
                 symbol, family = name.split(":", 1)

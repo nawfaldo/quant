@@ -87,6 +87,11 @@ pub(super) enum Exit {
     /// candles on every market -- two hours, not four sessions. Getting that
     /// wrong is a plausible-looking number and a completely different strategy.
     Bars(usize),
+    /// `signal`: the family's own exit rule, read on each held candle's close
+    /// and acted on at the next candle's open (`EXIT_SIGNALS`).
+    Signal,
+    /// `days_N`: leave at the open once `N * per_session` candles have passed.
+    Days(usize),
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -327,6 +332,93 @@ pub(super) enum Family {
         slope: f64,
         min_fit: f64,
     },
+    // ---- the TikTok-creator families (`cfd_tt_families`), see `tt` ----
+    //
+    // Each returns its OWN stop distance with its side, so `stop_day` is
+    // inert for them, and they run on the sleeve's own bar size.
+    /// `qp_ma_cross`: a fast EMA crossing a slow one, stop `stop_atr` x ATR(14).
+    QpMaCross {
+        fast: usize,
+        slow: usize,
+        both: bool,
+        stop_atr: f64,
+    },
+    /// `lux_body_momentum`: two same-colour bodies averaging `mult` x the
+    /// 20-bar average body.
+    LuxBodyMomentum { mult: f64, stop: TtStop },
+    /// `lux_htf_manipulation`: the manipulation candle on an `htf_m`-bar candle.
+    LuxHtfManipulation {
+        htf_m: usize,
+        close_above: TtHtfClose,
+        prior: bool,
+        ema: usize,
+        stop: TtStop,
+    },
+    /// `lux_swing_sweep_mss`: a swing sweep, then a market-structure shift.
+    LuxSwingSweepMss {
+        k: usize,
+        w: usize,
+        mss_entry: bool,
+        ema: usize,
+    },
+    /// `luxalgo_manipulation`: a candle sweeping the previous one and engulfing it.
+    LuxalgoManipulation {
+        prior_bars: usize,
+        ema: usize,
+        engulf: TtEngulf,
+        stop: TtStop,
+        fade: bool,
+    },
+    /// `td_ema_macd`: close over EMA200, MACD above zero, crossed its signal
+    /// within `within` bars.
+    TdEmaMacd { within: usize, both: bool },
+}
+
+impl Family {
+    /// Whether this is a TikTok-creator family, which sets its own stop.
+    #[allow(dead_code, reason = "read by the tests and the warm-up guard")]
+    pub(super) fn is_tt(self) -> bool {
+        matches!(
+            self,
+            Self::QpMaCross { .. }
+                | Self::LuxBodyMomentum { .. }
+                | Self::LuxHtfManipulation { .. }
+                | Self::LuxSwingSweepMss { .. }
+                | Self::LuxalgoManipulation { .. }
+                | Self::TdEmaMacd { .. }
+        )
+    }
+}
+
+/// A TikTok family's `stop` axis.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) enum TtStop {
+    /// The last 3-bar swing on the losing side, floored at 0.2 ATR.
+    Swing,
+    /// The just-closed higher-timeframe candle's far extreme, floored.
+    Candle,
+    /// The setup candle's far extreme (`luxalgo_manipulation`).
+    Sweep,
+    /// `atr_K`: K x ATR. No seated cell uses it; kept so `atr_2`/`atr_5`
+    /// manipulation cells port without a new arm.
+    #[allow(dead_code, reason = "no seated cell uses an ATR manipulation stop")]
+    Atr(f64),
+}
+
+/// `luxalgo_manipulation`'s `engulf` axis.
+#[allow(dead_code, reason = "the unreached arm is what the reached one means")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum TtEngulf {
+    Range,
+    Body,
+}
+
+/// `lux_htf_manipulation`'s `close_above` axis.
+#[allow(dead_code, reason = "the unreached arm is what the reached one means")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum TtHtfClose {
+    High,
+    Close,
 }
 
 /// `efficiency`'s `regime` axis: trade a clean path, or a noisy one.
@@ -692,6 +784,21 @@ pub(super) struct FamilyEngine {
     /// same switch `cfd_families.ENTRY_DAYS` reads, and never by the live
     /// runtime.
     pub(super) entry_days: Option<u8>,
+
+    // ---- the sleeve's own timeframe ----
+    /// Seconds in one candle: 1,800 for every `cfd_families` cell, the sealed
+    /// bar for a TikTok cell.
+    pub(super) bar_seconds: i64,
+    /// `periods(symbol, bar)["session"]`: candles in one session at this bar.
+    pub(super) per_session: usize,
+    /// A TikTok family's state (`tt`), `None` for every other family.
+    pub(super) tt: Option<super::tt::TtState>,
+    /// `exit_signal(index - 1, ...)`: the family's own exit rule as read on the
+    /// PREVIOUS candle's close, for a position held through it.
+    pub(super) exit_flag: bool,
+    /// The day of the last source bar folded into the sizing throttle, for a
+    /// sleeve whose candles are NOT the 30-minute grid `replay` marks on.
+    pub(super) vol_day: Option<i64>,
 }
 
 impl FamilyEngine {
@@ -700,7 +807,7 @@ impl FamilyEngine {
         let params = sleeve
             .params()
             .expect("FamilyEngine built for an imported sleeve");
-        let session_bars = spec.per_session;
+        let session_bars = sleeve.per_session();
         let annual = spec.calendar * session_bars as f64;
         let trend = match params.trend {
             Trend::None => None,
@@ -725,7 +832,7 @@ impl FamilyEngine {
             session: SessionPath::new(),
             prior: PriorDay::new(),
             volatility_multiplier: VolatilityMultiplier::new(),
-            vol_target: spec.vol_target,
+            vol_target: sleeve.vol_target(),
             channel_high: None,
             channel_low: None,
             volume_mean: None,
@@ -774,6 +881,11 @@ impl FamilyEngine {
             fill_early: false,
             early_filled_candle: None,
             entry_days: sleeve.entry_days(),
+            bar_seconds: sleeve.bar_seconds(),
+            per_session: session_bars,
+            tt: None,
+            exit_flag: false,
+            vol_day: None,
         };
         engine.arm_family_state();
         engine
@@ -905,7 +1017,7 @@ impl FamilyEngine {
         match self
             .fills
             .as_ref()
-            .and_then(|fills| fills.exit(candle_ts, candle_open))
+            .and_then(|fills| fills.exit_after(candle_ts, candle_open, self.bar_seconds))
         {
             Some(price) => {
                 self.coverage.exits_priced += 1;
@@ -1065,6 +1177,14 @@ impl FamilyEngine {
             Family::LinregTrend { period, .. } => {
                 self.linreg = Some(LinearRegression::new(period));
             }
+            Family::QpMaCross { .. }
+            | Family::LuxBodyMomentum { .. }
+            | Family::LuxHtfManipulation { .. }
+            | Family::LuxSwingSweepMss { .. }
+            | Family::LuxalgoManipulation { .. }
+            | Family::TdEmaMacd { .. } => {
+                self.tt = super::tt::TtState::new(self.params.family);
+            }
         }
     }
 
@@ -1124,6 +1244,11 @@ impl FamilyEngine {
     /// bar by construction, so its channel must be read before the push, while
     /// `atr`, `mean` and `sigma` are inclusive and must be read after.
     pub(super) fn push_inclusive(&mut self, candle: &Candle, day: i64) {
+        // Every candle, held or flat: the TikTok families' state machines
+        // advance on every bar of the session array.
+        if let Some(tt) = &mut self.tt {
+            tt.push(candle, day);
+        }
         self.atr.push(candle);
         self.risk.push(candle, day);
         self.short_volatility.push(candle.close);
@@ -1416,6 +1541,10 @@ impl FamilyEngine {
             Exit::RewardMultiple(reward) => (Some(reward * distance), None, None),
             Exit::Trail(multiple) => (None, Some(multiple), None),
             Exit::Bars(bars) => (None, None, Some(bars)),
+            // `exit_plan_for`: the signal exit carries no target, trail or
+            // count; `days_N` is N sessions of THIS bar size.
+            Exit::Signal => (None, None, None),
+            Exit::Days(days) => (None, None, Some(days * self.per_session)),
         }
     }
 }
@@ -1507,7 +1636,34 @@ impl FamilyEngine {
                 slope,
                 min_fit,
             } => self.linreg_trend_signal(minute, period, slope, min_fit),
+            // Carried with their own stop distance: see `signal_with_distance`.
+            Family::QpMaCross { .. }
+            | Family::LuxBodyMomentum { .. }
+            | Family::LuxHtfManipulation { .. }
+            | Family::LuxSwingSweepMss { .. }
+            | Family::LuxalgoManipulation { .. }
+            | Family::TdEmaMacd { .. } => None,
         }
+    }
+
+    /// The side, and the signal's OWN stop distance where it names one.
+    ///
+    /// `backtest`: a signal returning `(side, distance)` places its own stop,
+    /// and lots are sized on that distance. Every `cfd_families` family
+    /// returns a bare side and gets `stop_day * risk`. A TikTok event is taken
+    /// only inside the entry cutoff, applied here as `_event_signal` applies it.
+    pub(super) fn signal_with_distance(
+        &self,
+        candle: &Candle,
+        minute: i64,
+    ) -> Option<(Side, Option<f64>)> {
+        if let Some(tt) = &self.tt {
+            if self.late(minute) {
+                return None;
+            }
+            return tt.event().map(|(side, distance)| (side, Some(distance)));
+        }
+        self.signal(candle, minute).map(|side| (side, None))
     }
 
     /// `efficiency_signal`: the move over `period`, if its path was the kind
@@ -2625,7 +2781,14 @@ impl FamilyEngine {
         // ([[vol-throttle-is-per-market-not-per-sleeve]]). `EXTERNAL` reaches no
         // market this book trades any more, so every sleeve is on its own
         // context bars.
-        self.volatility_multiplier.push(candle.close, day_changed);
+        //
+        // A SLEEVE ON ANOTHER BAR SIZE READS THE SAME 30-MINUTE GRID. `replay`
+        // keys the throttle per MARKET on the context bars of the 30m cells, so
+        // a 5m candle's close is not the day's close it uses; `update_all` feeds
+        // those sleeves from the source bars instead (`fold_throttle`).
+        if self.bar_seconds == BAR_SECONDS {
+            self.volatility_multiplier.push(candle.close, day_changed);
+        }
 
         let mut actions = Vec::new();
 
@@ -2692,6 +2855,11 @@ impl FamilyEngine {
                 {
                     price = Some(candle.open);
                 }
+                // The family's own exit, read on the PREVIOUS candle's close
+                // (`exit_signal(index - 1, ...)`) and taken at this open.
+                if price.is_none() && self.exit_flag {
+                    price = Some(candle.open);
+                }
             }
             match price {
                 Some(idealised) => {
@@ -2747,7 +2915,7 @@ impl FamilyEngine {
             && self.traded_day != Some(day)
             && tradeable
             && self.accepts_vol()
-            && let Some(side) = self.signal(&candle, minute)
+            && let Some((side, own_distance)) = self.signal_with_distance(&candle, minute)
         {
             // `present` on every one of these. A missing reading that reaches
             // `distance` stops being recoverable, and this is the guard that
@@ -2765,10 +2933,13 @@ impl FamilyEngine {
                 && self.accepts_trend(candle.close, side)
             {
                 let realized = self.short_volatility.value().unwrap_or(0.0);
+                let distance = own_distance
+                    .filter(|distance| distance.is_finite() && *distance > 0.0)
+                    .unwrap_or(self.params.stop_day * risk);
                 self.pending = Some(Pending {
                     side,
                     day,
-                    distance: self.params.stop_day * risk,
+                    distance,
                     realized,
                 });
             }
@@ -2808,7 +2979,34 @@ impl FamilyEngine {
             self.previous_cross = Some(fast - slow);
         }
 
+        // 5. The family's own exit rule at THIS close, for the position held
+        //    through it -- acted on at the next candle's open.
+        self.exit_flag = match (&self.position, &self.tt, self.params.exit) {
+            (Some(position), Some(tt), Exit::Signal) => tt.exit_now(position.side),
+            _ => false,
+        };
+
         actions
+    }
+
+    /// Folds one SOURCE bar into the sizing throttle for a sleeve whose candles
+    /// are not the 30-minute grid.
+    ///
+    /// `daily_multipliers` takes each day's LAST close among the market's
+    /// in-session 30-minute bars. A bar belongs to one when its 30-minute SLOT
+    /// is in session, which is `context`'s rule for the aggregated bar.
+    fn fold_throttle(&mut self, ts: i64, close: f64) {
+        if self.bar_seconds == BAR_SECONDS {
+            return;
+        }
+        let slot = ts.div_euclid(BAR_SECONDS) * BAR_SECONDS;
+        if !self.in_session(self.minute_of(slot)) {
+            return;
+        }
+        let day = self.day_of(ts);
+        let changed = self.vol_day != Some(day);
+        self.vol_day = Some(day);
+        self.volatility_multiplier.push(close, changed);
     }
 }
 
@@ -2825,7 +3023,8 @@ impl Strategy for FamilyEngine {
         // The shift is applied here, once, so every day and minute below sits on
         // the clock the Python study selected this cell on.
         let ts = bar.ts + self.spec.shift_hours * 3_600;
-        let slot = ts.div_euclid(BAR_SECONDS);
+        let width = self.bar_seconds;
+        let slot = ts.div_euclid(width);
         if let Some(previous) = self.last_bar_ts {
             let gap = ts - previous;
             if gap > 0 && self.source_step.is_none_or(|step| gap < step) {
@@ -2861,7 +3060,7 @@ impl Strategy for FamilyEngine {
                     // 09:00 one is built entirely from out-of-window minutes;
                     // reading the bar's own minute called that the end of the
                     // session and flattened an hour early at a worse price.
-                    let opening = slot * BAR_SECONDS;
+                    let opening = slot * width;
                     let last_of_day = !self.in_session(self.minute_of(opening))
                         || self.day_of(opening) != self.day_of(candle.ts);
                     actions = self.on_candle(candle, equity, last_of_day);
@@ -2870,9 +3069,12 @@ impl Strategy for FamilyEngine {
                     }
                 }
             }
+            // After the closed candle has been stepped on the day it belongs to,
+            // before anything is filled on the new one.
+            self.fold_throttle(ts, bar.close);
             self.slot = Some(slot);
             self.building = Some(Candle {
-                ts: slot * BAR_SECONDS,
+                ts: slot * width,
                 open: bar.open,
                 high: bar.high,
                 low: bar.low,
@@ -2883,7 +3085,7 @@ impl Strategy for FamilyEngine {
             // IS the candle's open -- the price the backtest books. See
             // `enable_early_fills`. Only for a candle `on_candle` will later
             // step, which is an in-session one.
-            let opening = slot * BAR_SECONDS;
+            let opening = slot * width;
             if self.fill_early
                 && self.in_session(self.minute_of(opening))
                 && let Some(enter) = self.fill_pending(opening, bar.open, equity, self.candles + 1)
@@ -2899,6 +3101,9 @@ impl Strategy for FamilyEngine {
             candle.low = candle.low.min(bar.low);
             candle.close = bar.close;
             candle.volume += bar.volume;
+            self.fold_throttle(ts, bar.close);
+        } else {
+            self.fold_throttle(ts, bar.close);
         }
         // ACT WHEN THE CANDLE IS FINISHED, NOT WHEN THE NEXT ONE STARTS.
         //
@@ -2933,7 +3138,7 @@ impl Strategy for FamilyEngine {
         // array does know, which is why the parity fixtures see the arrival rule
         // and only the live minute feed sees this one.
         if let (Some(step), true) = (self.source_step, self.building.is_some()) {
-            let slot_end = (slot + 1) * BAR_SECONDS;
+            let slot_end = (slot + 1) * width;
             // EXACTLY the slot's end, never merely past it. `source_step` is the
             // smallest gap seen so far, so early in a stream it can still be an
             // over-estimate, and `>=` would let one of those close a candle that
@@ -2941,7 +3146,7 @@ impl Strategy for FamilyEngine {
             // a miss costs nothing: the block above still closes the slot when
             // the next bar arrives, exactly as before. The same fall-back covers
             // a slot whose final period never printed.
-            if step < BAR_SECONDS && ts + step == slot_end {
+            if step < width && ts + step == slot_end {
                 let candle = self.building.take().expect("checked just above");
                 let candle_ts = candle.ts;
                 if self.in_session(self.minute_of(candle_ts)) {

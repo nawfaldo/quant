@@ -17,7 +17,7 @@ fn candle(ts: i64, open: f64, high: f64, low: f64, close: f64, volume: f64) -> C
 /// `replay` offers pending entries in `python_key` order, so a book that offers
 /// them differently refuses a different set whenever a cap is on.
 #[test]
-fn the_book_is_the_twenty_one_sealed_members() {
+fn the_book_is_the_twenty_seven_sealed_members() {
     let ids: Vec<&str> = BOOK.iter().map(|sleeve| sleeve.id()).collect();
     assert_eq!(
         ids,
@@ -41,9 +41,14 @@ fn the_book_is_the_twenty_one_sealed_members() {
             "ethusd_roofing",
             "ethusd_level_confluence",
             "usdjpy_rvol",
-            "ethusd_efficiency",
-            "ethusd_cci",
-            "ethusd_linreg_trend",
+            "ustec_lux_body_momentum_5m",
+            "usdjpy_qp_ma_cross_30m",
+            "us500_lux_swing_sweep_mss_5m",
+            "gbpjpy_qp_ma_cross_15m",
+            "eurjpy_qp_ma_cross_60m",
+            "ethusd_td_ema_macd_15m",
+            "gbpjpy_luxalgo_manipulation_120m",
+            "gbpjpy_lux_htf_manipulation_15m",
         ]
     );
 }
@@ -631,8 +636,9 @@ fn every_member_of_the_book_constructs() {
 fn every_sleeve_spec_is_internally_consistent() {
     for sleeve in BOOK {
         let spec = sleeve.spec();
-        // `id` is the Python key with its colon replaced.
-        assert_eq!(spec.id, spec.python_key.replace(':', "_"), "{}", spec.id);
+        // `id` is the Python key with its colon (and a TikTok cell's `@`)
+        // replaced.
+        assert_eq!(spec.id, spec.python_key.replace([':', '@'], "_"), "{}", spec.id);
         // `code` is the uppercase of `id`.
         assert_eq!(spec.code, spec.id.to_uppercase(), "{}", spec.id);
         // The Python key names the market it trades.

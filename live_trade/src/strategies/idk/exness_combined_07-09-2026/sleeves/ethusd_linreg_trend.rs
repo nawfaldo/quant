@@ -27,6 +27,7 @@ pub(super) const SPEC: SleeveSpec = SleeveSpec {
     shown_equity: 1.0,
     sized_as_import: false,
     entry_days: Some(WEEKEND),
+    timeframe: None,
     engine: EngineKind::Family(Params {
         family: Family::LinregTrend {
             // `p["linreg"]` resolves to 2 * session: 28 on ETHUSD.

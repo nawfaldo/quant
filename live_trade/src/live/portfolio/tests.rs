@@ -618,6 +618,7 @@ fn every_live_strategy_reports_its_real_session_end() {
             "eurjpy" => 870,
             "ukoil" => 870,
             "ethusd" => 960,
+            "ustec" | "us500" => 960,
             other => panic!("{other} has no expected session end"),
         };
         assert_eq!(session_end, expected, "{strategy} session end changed");

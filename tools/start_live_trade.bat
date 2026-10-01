@@ -94,6 +94,21 @@ REM the tables have been stale -- minutes after a weekend.
 if errorlevel 1 goto fail
 
 REM ------------------------------------------------------------------ 3. server
+REM THE PARITY GATE FIRST. Live must trade exactly what the sandbox backtested:
+REM every sleeve's Rust port is replayed against its Python trade log
+REM (`parity.rs`, fixtures from `_export_parity.py` and `tt_book.py parity`) and
+REM the book's own membership, markets and cost tables are checked. A single
+REM trade that differs -- entry bar, side, fill, stop or exit -- stops the launch
+REM here, before the server can place an order on logic the sandbox never ran.
+call :say "3/4 parity gate: live strategies against their sandbox trade logs"
+pushd "%WORKSPACE%\live_trade"
+cargo test --lib exness_combined
+set "PARITY=%ERRORLEVEL%"
+popd
+if not "%PARITY%"=="0" (
+  call :say "FAILED: the live book no longer reproduces the sandbox (cargo test exited %PARITY%)"
+  goto fail
+)
 REM BUILT, NOT JUST RUN. `cargo build` is a no-op when nothing changed and takes
 REM seconds; skipping it is how a stale `live_trade.exe` ends up trading yesterday's
 REM logic after an afternoon of edits. A build failure stops the launch here,
@@ -114,7 +129,8 @@ REM window silently opens in the wrong place or not at all. PORT is
 REM inherited from this shell, so it does not need passing either.
 start "Live Server (port %PORT%)" /D "%WORKSPACE%\live_trade" cmd /k target\release\live_trade.exe
 REM A cold start replays every active sleeve's warm-up before it answers, and
-REM that is months of bars across seven markets.
+REM that is months of bars across eight markets (the TT27 book adds USTEC and
+REM US500, and 5-minute sleeves replay many more candles than 30-minute ones).
 "%PYTHON%" "tools\live_stack_ready.py" server --timeout 900 --port %PORT%
 if errorlevel 1 goto fail
 

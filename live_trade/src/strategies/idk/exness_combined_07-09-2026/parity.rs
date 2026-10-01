@@ -82,7 +82,7 @@ fn load(sleeve: Sleeve, raw: &str) -> Fixture {
     );
     assert_eq!(
         payload["per_session"].as_u64().unwrap() as usize,
-        sleeve.contract().per_session,
+        sleeve.per_session(),
         "fixture disagrees with the frozen bucket count"
     );
 
@@ -156,7 +156,7 @@ fn replay(fixture: &Fixture) -> Vec<(Entry, i64)> {
     // bar in the following slot flushes it; the synthetic bar itself is left
     // half-built and never evaluated, so it cannot add a trade of its own.
     let flush = fixture.bars.last().map(|last| Bar {
-        ts: last.ts + BAR_SECONDS,
+        ts: last.ts + fixture.sleeve.bar_seconds(),
         ..*last
     });
     let stream: Vec<Bar> = fixture.bars.iter().chain(flush.iter()).copied().collect();
@@ -176,6 +176,7 @@ fn replay(fixture: &Fixture) -> Vec<(Entry, i64)> {
 /// the slot's FINAL minute carries the close. The gap between the first two is
 /// one minute, which is what teaches `source_step` before the third arrives.
 fn minute_stream(fixture: &Fixture) -> Vec<Bar> {
+    let width = fixture.sleeve.bar_seconds();
     let mut out = Vec::with_capacity(fixture.bars.len() * 3);
     for bar in &fixture.bars {
         out.push(Bar {
@@ -191,7 +192,7 @@ fn minute_stream(fixture: &Fixture) -> Vec<Bar> {
             ..*bar
         });
         out.push(Bar {
-            ts: bar.ts + BAR_SECONDS - 60,
+            ts: bar.ts + width - 60,
             open: bar.close,
             high: bar.close,
             low: bar.close,
@@ -663,7 +664,40 @@ fn dump() {
 /// One entry per SLEEVE, which since 2026-09-04 is the whole book --
 /// `every_sleeve_is_covered_by_a_parity_fixture` is what keeps the two lists
 /// from drifting apart.
-const ALL: [(Sleeve, &str); 31] = [
+const ALL: [(Sleeve, &str); 39] = [
+    (
+        Sleeve::UstecLuxBodyMomentum5m,
+        include_str!("../fixtures/parity_ustec_lux_body_momentum_5m.json"),
+    ),
+    (
+        Sleeve::UsdjpyQpMaCross30m,
+        include_str!("../fixtures/parity_usdjpy_qp_ma_cross_30m.json"),
+    ),
+    (
+        Sleeve::Us500LuxSwingSweepMss5m,
+        include_str!("../fixtures/parity_us500_lux_swing_sweep_mss_5m.json"),
+    ),
+    (
+        Sleeve::GbpjpyQpMaCross15m,
+        include_str!("../fixtures/parity_gbpjpy_qp_ma_cross_15m.json"),
+    ),
+    (
+        Sleeve::EurjpyQpMaCross60m,
+        include_str!("../fixtures/parity_eurjpy_qp_ma_cross_60m.json"),
+    ),
+    (
+        Sleeve::EthusdTdEmaMacd15m,
+        include_str!("../fixtures/parity_ethusd_td_ema_macd_15m.json"),
+    ),
+    (
+        Sleeve::GbpjpyLuxalgoManipulation120m,
+        include_str!("../fixtures/parity_gbpjpy_luxalgo_manipulation_120m.json"),
+    ),
+    (
+        Sleeve::GbpjpyLuxHtfManipulation15m,
+        include_str!("../fixtures/parity_gbpjpy_lux_htf_manipulation_15m.json"),
+    ),
+
     (
         Sleeve::EthusdEfficiency,
         include_str!("../fixtures/parity_ethusd_efficiency.json"),
@@ -809,7 +843,10 @@ fn every_sleeve_is_covered_by_a_parity_fixture() {
     // still holding `Cusum`, `ObvDivergence`, `VolRegime`, `MomentumStack`,
     // `XmaCross` and the jp225 arms of `Kalman` and `VolumeThrust` to their
     // Python. Any other stray is an error.
-    const RETIRED: [Sleeve; 9] = [
+    const RETIRED: [Sleeve; 12] = [
+        Sleeve::EthusdEfficiency,
+        Sleeve::EthusdCci,
+        Sleeve::EthusdLinregTrend,
         Sleeve::UkoilXmaCross,
         Sleeve::Jp225VolumeThrust,
         Sleeve::Jp225VolRegime,
@@ -876,17 +913,18 @@ fn ambiguous_bars(fixture: &Fixture) -> Vec<i64> {
     // on, and this has to sit where `update_all` does or a shifted market would
     // be tested against the wrong session entirely.
     let shift = fixture.shift_seconds;
+    let width = fixture.sleeve.bar_seconds();
     fixture
         .bars
         .windows(2)
         .filter_map(|pair| {
             let (bar, next) = (pair[0], pair[1]);
             // Contiguous: the arrival rule and the clock see the same successor.
-            if next.ts == bar.ts + BAR_SECONDS {
+            if next.ts == bar.ts + width {
                 return None;
             }
             let (bar_ts, next_ts) = (bar.ts + shift, next.ts + shift);
-            let slot_end = bar_ts + BAR_SECONDS;
+            let slot_end = bar_ts + width;
             // The clock calls this mid-session; the arrival rule, looking at a
             // bar that is a day away, calls it the end of the day.
             let clock_says_last =
@@ -913,9 +951,14 @@ fn minute_bars_reach_the_same_trades() {
     // boundary to disagree about and USDJPY's holes falling where this cell does
     // not trade. Anything that moves these numbers WITHOUT a membership change
     // is still the rule changing.
-    const MISSING: usize = 2;
+    //
+    // RE-PINNED 2026-09-28 FROM (2, 0, 7), MEMBERSHIP AGAIN: eight TikTok cells
+    // joined, three of them on 15-minute and two on 5-minute candles, which
+    // meet many more feed holes per day than a 30-minute candle does. Every
+    // difference is still asserted to sit downstream of a hole above.
+    const MISSING: usize = 5;
     const EXTRA: usize = 0;
-    const MOVED: usize = 7;
+    const MOVED: usize = 13;
 
     let (mut clean, mut missing, mut extra, mut moved) = (0, 0, 0, 0);
     for (sleeve, raw) in ALL {
@@ -1039,7 +1082,7 @@ fn early_fills_are_actually_early() {
             for action in engine.update_all(bar, UNLIMITED) {
                 if matches!(action, Action::Enter { .. }) {
                     let shifted = bar.ts + fixture.shift_seconds;
-                    if shifted.rem_euclid(BAR_SECONDS) == 0 {
+                    if shifted.rem_euclid(fixture.sleeve.bar_seconds()) == 0 {
                         first_minute += 1;
                     } else {
                         later += 1;

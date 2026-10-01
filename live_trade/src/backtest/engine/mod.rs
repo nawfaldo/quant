@@ -32,13 +32,39 @@ pub fn execute_combined(prepared: &PreparedRun, names: &[String]) -> Result<RunR
         .map(|name| build_strategy(name, prepared))
         .collect::<Result<Vec<_>, _>>()?;
     if prepared.symbol_bars.len() > 1 {
-        // Merge every market's bars into one timestamp-ordered stream. A stable
-        // sort keeps same-timestamp bars in symbol order, so a run is
+        // ONE STREAM PER (MARKET, CANDLE WIDTH), NOT PER MARKET.
+        //
+        // An aggregating sleeve emits candle S's decisions when the first bar
+        // of slot S + width arrives, so its stream is offered `width` early
+        // (see the lag below) to land them at S, where Python acts. Since the
+        // TT27 book a market can carry sleeves of several widths -- GBPJPY has
+        // 15-, 30- and 120-minute cells -- and one lag cannot be right for all
+        // of them. So each width on a market gets its OWN copy of that market's
+        // bars, offered at its own lag, and every sleeve is stepped on its
+        // width's copy. A market with one width keeps exactly one stream, so a
+        // 30-minute book runs precisely as before.
+        let mut series: Vec<(usize, i64)> = Vec::new();
+        let mut assignment: Vec<usize> = Vec::with_capacity(names.len());
+        for (strategy, name) in names.iter().enumerate() {
+            let symbol = prepared.strategy_symbols.get(strategy).copied().unwrap_or(0);
+            let width = crate::strategies::idk::exness_combined::Sleeve::from_display(name)
+                .map_or(0, |sleeve| sleeve.candle_seconds());
+            let index = match series.iter().position(|entry| *entry == (symbol, width)) {
+                Some(index) => index,
+                None => {
+                    series.push((symbol, width));
+                    series.len() - 1
+                }
+            };
+            assignment.push(index);
+        }
+        // Merge every series' bars into one timestamp-ordered stream. A stable
+        // sort keeps same-timestamp bars in series order, so a run is
         // reproducible rather than depending on which market happened to print
         // first.
         let mut stream: Vec<(usize, Bar)> = Vec::new();
-        for (index, bars) in prepared.symbol_bars.iter().enumerate() {
-            stream.extend(bars.iter().map(|bar| (index, *bar)));
+        for (index, (symbol, _)) in series.iter().enumerate() {
+            stream.extend(prepared.symbol_bars[*symbol].iter().map(|bar| (index, *bar)));
         }
         // THE ORDER MARKETS ARE VISITED AT ONE TIMESTAMP DECIDES WHO GETS THE
         // GROSS-CAP BUDGET, so it is Python's order and not the request's.
@@ -59,7 +85,7 @@ pub fn execute_combined(prepared: &PreparedRun, names: &[String]) -> Result<RunR
         // `nq:drift_vwap`, `nq:ofi`, `nq:volatility_breakout` -- among
         // themselves, which a symbol index cannot do because they share a
         // market.
-        let mut market_rank: Vec<&str> = vec![""; prepared.symbol_bars.len()];
+        let mut market_rank: Vec<&str> = vec![""; series.len()];
         // AND THE SHIFTED CLOCK, which changes WHEN a market's bars are offered
         // relative to every other market's.
         //
@@ -74,7 +100,7 @@ pub fn execute_combined(prepared: &PreparedRun, names: &[String]) -> Result<RunR
         // Ordering here is the only place it is reproduced: the recorded trade
         // timestamps stay real, because a shifted stamp in the trade log would
         // be wrong for anything that is not this comparison.
-        let mut market_shift: Vec<i64> = vec![0; prepared.symbol_bars.len()];
+        let mut market_shift: Vec<i64> = vec![0; series.len()];
         // AND THE ONE-BAR FLUSH LATENCY, which is the other reason a stream is
         // not offered where its decisions happen.
         //
@@ -93,14 +119,13 @@ pub fn execute_combined(prepared: &PreparedRun, names: &[String]) -> Result<RunR
         // ONLY THE AGGREGATING STREAMS. `nq:ofi` and `nq:drift_vwap` act on the
         // minute bar they are given and are already offered where they act;
         // moving them would introduce the error this removes.
-        /// One thirty-minute candle, the slot every family cell aggregates into.
-        const BAR_SECONDS: i64 = 1_800;
-        let mut market_lag: Vec<i64> = vec![0; prepared.symbol_bars.len()];
-        let mut market_known: Vec<bool> = vec![false; prepared.symbol_bars.len()];
+        //
+        // THE LAG IS THE SLEEVE'S OWN CANDLE: thirty minutes for a
+        // `cfd_families` cell, five for a 5-minute TikTok cell.
+        let mut market_lag: Vec<i64> = vec![0; series.len()];
+        let mut market_known: Vec<bool> = vec![false; series.len()];
         for (strategy, name) in names.iter().enumerate() {
-            let Some(symbol) = prepared.strategy_symbols.get(strategy).copied() else {
-                continue;
-            };
+            let symbol = assignment[strategy];
             let sleeve = crate::strategies::idk::exness_combined::Sleeve::from_display(name);
             let key = sleeve.map_or("", |sleeve| sleeve.python_key());
             if market_rank[symbol].is_empty() || key < market_rank[symbol] {
@@ -112,10 +137,11 @@ pub fn execute_combined(prepared: &PreparedRun, names: &[String]) -> Result<RunR
             // on four separate streams and the two that aggregate can be lagged
             // without touching the two that do not.
             let aggregates = sleeve.is_some_and(Sleeve::aggregates_candles);
+            let width = sleeve.map_or(0, Sleeve::candle_seconds);
             market_lag[symbol] = if market_known[symbol] {
-                market_lag[symbol].min(if aggregates { BAR_SECONDS } else { 0 })
+                market_lag[symbol].min(if aggregates { width } else { 0 })
             } else if aggregates {
-                BAR_SECONDS
+                width
             } else {
                 0
             };
@@ -135,10 +161,10 @@ pub fn execute_combined(prepared: &PreparedRun, names: &[String]) -> Result<RunR
         return Ok(run_engines_streams_at(
             &stream,
             &apply_keys,
-            prepared.symbol_bars.len(),
+            series.len(),
             strategies,
             names,
-            &prepared.strategy_symbols,
+            &assignment,
             engine,
         ));
     }
