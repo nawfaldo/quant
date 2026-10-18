@@ -53,6 +53,28 @@ immediately so `platform` takes its registry path. Import one of them first in
 any script that touches Arrow. Repairing WMI would fix this properly and has not
 been attempted.
 
+### Two machines: PC + Mac share one job list (`twohost`)
+
+A MacBook (8 cores, `ssh mac`, repo at `~/quant`, Python `.venv/bin/python`)
+can share heavy research runs with this PC. `sandbox/research/twohost.py` gives
+each unit of work an atomic `mkdir` claim on the Mac
+(`~/quant/.twohost/<run>/claims/<unit>`), so **no unit runs on both machines**;
+whichever host is free takes the next unit (the Mac walks the list from the other
+end). Each host stores results under `.twohost/<run>/results/`; the PC pulls the
+Mac's and merges them with `twohost.collect()`.
+
+    TWOHOST_PUSH="pool/data paths the Mac needs" \
+    bash sandbox/research/twohost_run.sh <run id> <pc workers> <mac workers> <module> [args]
+
+`twohost_run.sh` pushes `sandbox/research` + `TWOHOST_PUSH` (uncompressed tar, so
+the PC stays light), passes every `CFD_*`/`EXNESS_*`/`FN_*`/`TWOHOST_*` variable to
+the Mac, starts it under `caffeinate`, runs the PC side, and waits for the Mac's
+units. Mac log: `~/quant/.twohost/<run>/mac.log`. Same run id = resume; new work =
+new id. Wired into `sandbox/research/_leverage_fundednext.py` (screen, equal-dd
+leverage, ladder); to use it elsewhere, wrap each unit in
+`if twohost.claim(unit): ... twohost.finish(unit, result)` and `collect()` on the
+PC. The Mac's data tables must be current: push stale ones in `TWOHOST_PUSH`.
+
 The market-data cache deliberately builds blobs on demand. Do not replace this
 with eager startup prefetching; constructing every timeframe and VWAP together
 has previously exhausted this machine's memory.
@@ -60,7 +82,7 @@ has previously exhausted this machine's memory.
 ## Data and time conventions
 
 - `data/parquet/` is the source for market bars, ticks, depth and L2 features;
-  SQLite `live_trade/app.db` stores application state, environments, backtests,
+  SQLite `live_trade/app.db` stores application state, MT5 accounts, backtests,
   trades, and March configuration.
 - **QuestDB is retired.** Every table was exported to Parquet and dropped, so
   the running instance is empty and nothing reads it. A missing file is a
@@ -135,3 +157,7 @@ needs. Do not remove a guard without doing the port.
 The repository may contain active migrations and uncommitted experiments.
 Preserve unrelated edits, avoid destructive Git commands, and keep changes
 scoped to the requested component.
+
+## Open findings
+- **FundedNext commission mismatch** (measured 2026-10-14): terminal charges a flat $3/lot at the close on forex and oil, $0 on indices; the backtest models $7/lot at the open (forex) and 0.0016% of notional (oil). Backtest oil is optimistic, forex pessimistic. Details and fix steps: `mt5/FUNDEDNEXT_COMMISSION.md`.
+- FundedNext orders go through `mt5/hand.py` (window-driving), never `order_send`; see `mt5/README.md`.

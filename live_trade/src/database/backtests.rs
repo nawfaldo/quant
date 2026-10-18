@@ -58,7 +58,7 @@ const BACKTEST_COLUMNS: &[(&str, ColumnKind)] = &[
     ("max_daily_loss_date", ColumnKind::Text),
     ("avg_daily_loss", ColumnKind::Real),
     ("contribution", ColumnKind::Json),
-    ("environment_id", ColumnKind::Integer),
+    ("model", ColumnKind::Text),
 ];
 
 const REPORT_FIELDS: &[&str] = &[
@@ -114,10 +114,7 @@ impl Database {
     pub async fn backtests(&self) -> Result<Vec<JsonValue>, ApiError> {
         let select = BACKTEST_COLUMNS
             .iter()
-            .map(|(name, _)| match *name {
-                "environment_id" => "COALESCE(environment_id,0)",
-                other => other,
-            })
+            .map(|(name, _)| *name)
             .collect::<Vec<_>>()
             .join(",");
         let rows = self
@@ -226,7 +223,7 @@ impl Database {
     pub async fn save_backtest(
         &self,
         strategy: &str,
-        environment_id: Option<i64>,
+        model: &str,
         report: &JsonValue,
         trades: &[Trade],
         monte_carlo_drawdown_ruin_limit: Option<f64>,
@@ -236,7 +233,7 @@ impl Database {
         let placeholders = vec!["?"; REPORT_FIELDS.len()].join(",");
         let statement = format!(
             concat!(
-                "INSERT INTO backtests(strategy,run_at,{columns},environment_id) ",
+                "INSERT INTO backtests(strategy,run_at,{columns},model) ",
                 "VALUES (?,datetime('now'),{placeholders},?)",
             ),
             columns = columns,
@@ -251,7 +248,7 @@ impl Database {
                 json_db_value(&report[*field])
             }
         }));
-        values.push(environment_id.into());
+        values.push(model.to_owned().into());
         let id = transaction
             .execute(Statement::from_sql_and_values(
                 DatabaseBackend::Sqlite,
@@ -491,6 +488,8 @@ fn trade_from_row(row: QueryResult) -> Result<Trade, ApiError> {
         quantity: row.try_get_by_index(6)?,
         entry_raw: row.try_get_by_index(7)?,
         exit_raw: row.try_get_by_index(8)?,
+        distance: f64::NAN,
+        vol_mult: f64::NAN,
     })
 }
 

@@ -38,7 +38,7 @@ pub struct Bar {
     pub depth_events: u64,
     /// True when this bar was built from the level-two feed rather than the
     /// OHLCV table. `PreferredData::Combined` unions the two, and level-two
-    /// strategies must ignore the OHLCV half — see `idk::from_level_two_feed`.
+    /// strategies must ignore the OHLCV half — see `from_level_two_feed`.
     pub level_two: bool,
     pub order_flow: OrderFlowFeatures,
     /// The BENCHMARK market's close for this bar's own 30-minute slot, carried
@@ -84,6 +84,12 @@ pub struct Trade {
     pub entry_raw: f64,
     #[serde(skip_serializing)]
     pub exit_raw: f64,
+    /// `entry_sizing` at the open: the stop distance and the volatility
+    /// multiplier, NaN for a strategy that does not report them.
+    #[serde(skip_serializing)]
+    pub distance: f64,
+    #[serde(skip_serializing)]
+    pub vol_mult: f64,
 }
 
 impl Trade {
@@ -201,6 +207,12 @@ pub(crate) trait Strategy {
     /// the admission question would be answered against an equity the backtest
     /// never had. Both would make live take trades the study does not.
     fn abandon_open_position(&mut self) {}
+    /// BACKTEST ONLY: the stamp of the next bar of this strategy's own market,
+    /// `None` at the end of the data, handed over just before `update_all`. A
+    /// replay knows its successor; the live runtime never calls this.
+    /// `data_continues` is false when the store holds nothing past the run, so
+    /// the missing successor is the end of the data rather than of the window.
+    fn set_next_bar(&mut self, _next_ts: Option<i64>, _data_continues: bool) {}
     fn session_end_minute(&self) -> Option<usize> {
         None
     }
@@ -238,17 +250,28 @@ pub(crate) trait Strategy {
     fn flattens_itself(&self) -> bool {
         false
     }
+    /// Whether the strategy HOLDS THROUGH ITS SESSION CLOSE by design (the
+    /// `multiday` regime), so no clock-driven flatten may close it. Its own
+    /// stop, target and clock exits still run on every bar it is fed.
+    fn holds_overnight(&self) -> bool {
+        false
+    }
     /// Whether this strategy deliberately sizes below the market's `volume_min`.
     ///
     /// The engine refuses an order under the broker's minimum, which is right
     /// for anything that sizes itself against a contract spec. The two sleeves
-    /// imported into `exness_combined` do not: their Python path floors to the
+    /// imported into `oct_12_2026` do not: their Python path floors to the
     /// 0.01 lot STEP and never consults `volume_min`, so refusing them here
     /// would make the Rust book stricter than the record it is measured against.
     fn sizes_below_broker_minimum(&self) -> bool {
         false
     }
     fn entry_risk_fraction(&self) -> Option<f64> {
+        None
+    }
+    /// `(stop distance, sizing multiplier)` of the position just opened, which
+    /// is what re-sizes the same trade on another balance (`backtest::challenge`).
+    fn entry_sizing(&self) -> Option<(f64, f64)> {
         None
     }
     fn entry_stop_price(&self) -> Option<f64> {

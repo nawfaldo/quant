@@ -109,16 +109,18 @@ def prepare():
         if "params" in member:
             member["params"] = ecs._retuple(member["params"])
         members.append(member)
-        ecs.ef.resolve(member["symbol"], allow_stale=True)
+        ecs.ef.resolve(member["symbol"].split("~", 1)[0], allow_stale=True)
         _r, log, bars, ctx = ecs.sleeve_trades(member)
         if key in WEEKEND:
             # 1970-01-01 was a Thursday: +3 makes Monday 0, Saturday 5.
             log = [t for t in log if (t["entry_ts"] // 86400 + 3) % 7 >= 5]
             print(f"  {key}: weekend entries only, {len(log)} trades", flush=True)
         logs[key] = log
-        bars_by[member["symbol"]] = bars
+        from sandbox.research import tt_book   # `<symbol>~off` for off-hours sleeves
+        series = tt_book.row_symbol(key) if member.get("tt") else member["symbol"]
+        bars_by[series] = bars
         # Contexts are 1 GB across a book and `replay` reads only `cfg`.
-        ctx_by[member["symbol"]] = {"cfg": ctx["cfg"],
+        ctx_by[series] = {"cfg": ctx["cfg"],
                                     "symbol": ctx.get("symbol", member["symbol"])}
         ecs._SLEEVE_MEMO.clear()
     return {"members": members, "logs": logs,

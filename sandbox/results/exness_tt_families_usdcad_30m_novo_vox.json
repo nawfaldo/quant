@@ -1,0 +1,127 @@
+{
+  "asset_class": "forex",
+  "bar_minutes": 30,
+  "families": {
+    "novo_crt_5am": null
+  },
+  "protocol": {
+    "account": "Exness Pro 416209807",
+    "benchmark": null,
+    "broker": "exness",
+    "calendar": 252.0,
+    "candidate_counts": {
+      "novo_crt_5am": 12
+    },
+    "contract": {
+      "broker": "USDCAD",
+      "contract_size": 100000.0,
+      "currency_profit": "CAD",
+      "fx_to_usd": 0.7207726683004181,
+      "multiplier": 72071.03321033211,
+      "tick_size": 1e-05,
+      "tick_value": 0.7207103321033211,
+      "volume_max": 200.0,
+      "volume_min": 0.01,
+      "volume_step": 0.01
+    },
+    "cost_model": "spread only; commission measured at 0.0000",
+    "data": {
+      "first_row": "2014-12-31",
+      "last_row": "2026-08-14",
+      "source": "1m",
+      "table": "usdcad_1m",
+      "warmup": "2014-01-01"
+    },
+    "execution": {
+      "bars_priced": 81545,
+      "bridge_queue_seconds": 1.0,
+      "entry_days": null,
+      "exit": "market order one whole bar + lag + queue after the bar it fired on; no broker-side stop on this account",
+      "feed_lag_seconds": 0.6,
+      "fill_model": "exness",
+      "fills_only": false,
+      "financing": "multiday: 17:00 New York rollover schedule; current swap rates for every year",
+      "full_day": false,
+      "model": "live",
+      "modelled_cost": "v3:[('crypto', 1.0), ('forex', 0.6), ('index', 0.98)]:2020-01:exness_audusd_1m:2521628|22517733|1791614730;exness_eurjpy_1m:2525291|24211047|1791614769;exness_gbpjpy_1m:2523845|25147863|1791614776;exness_gbpusd_1m:3089459|27181289|1788219159;exness_usdjpy_1m:2524567|23474790|1791614796",
+      "mtm_peak": true,
+      "spread_at_entry": "exness_usdcad_1m",
+      "swap_free": false,
+      "window": "rth"
+    },
+    "family_groups": {
+      "novo_crt_5am": "novo_vox"
+    },
+    "holding": {
+      "novo_crt_5am": "session"
+    },
+    "holdout": "2025-01-01 through 2026-08-16",
+    "in_sample_years": [
+      2020,
+      2021,
+      2022,
+      2023,
+      2024
+    ],
+    "initial_balance": 1000.0,
+    "risk_unit": "stop_day x average true daily range over 14 days -- timeframe invariant",
+    "select_rank": "tstat",
+    "session_minutes": [
+      150,
+      870
+    ],
+    "shift_hours": 0,
+    "sizing": "1.5% volatility-throttled stop risk, MT5 lots, 4x notional ceiling",
+    "slippage_bp": 0.2,
+    "spread_bp": 0.7177,
+    "spread_quoted_at": "session",
+    "total_cost_bp": 0.9177,
+    "warning": null
+  },
+  "refused": {
+    "novo_crt_5am": {
+      "best_by_return": {
+        "fill_rate": 98.9,
+        "max_dd_pct": 16.29,
+        "params": {
+          "exit_mode": "rr_2",
+          "last_entry_minute": 750,
+          "stop_day": 0.2,
+          "trend": "none",
+          "vol_mode": "none",
+          "win": 60
+        },
+        "pf": 0.819,
+        "positive_years": 1,
+        "return_pct": -12.47,
+        "trades": 276
+      },
+      "binding": [
+        "profit_factor",
+        "positive_years"
+      ],
+      "cells": 12,
+      "refused_by": {
+        "annual_dd": 0,
+        "fill_rate": 0,
+        "max_dd": 8,
+        "positive_years": 12,
+        "profit_factor": 12,
+        "trades": 0
+      },
+      "requires": {
+        "max_dd_pct": 20.0,
+        "of_years": 5,
+        "positive_years": 4,
+        "profit_factor": 1.05,
+        "trades": 125
+      }
+    }
+  },
+  "scope": "novo_vox",
+  "seal_sha256": "55dc5d040b0dbd2374c132cc51ff54b42eb27756f3c2b03cbc07281293985a4e",
+  "sealed": true,
+  "symbol": "usdcad",
+  "timeframe": "30m",
+  "validation": {}
+}

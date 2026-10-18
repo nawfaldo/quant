@@ -125,11 +125,11 @@ from sandbox.research import cfd_families as ef
 RESULTS = ef.RESULTS
 OUT_PATH = os.path.join(RESULTS, "exness_combined_strategies.json")
 
-#: The source refresh performed on 2026-08-21 is complete through the prior
+#: Moved 2026-10-10 to data through 2026-10-09 (was 2026-08-20). The source is complete through the prior
 #: local market day. This is an EXCLUSIVE boundary: every query/replay below
-#: may consume 2026-08-20, but never a partial 2026-08-21 session.
-CANON_DATA_THROUGH = "2026-08-20"
-CANON_DATA_END = "2026-08-21"
+#: may consume 2026-10-09, but never a partial 2026-10-10 session.
+CANON_DATA_THROUGH = "2026-10-09"
+CANON_DATA_END = "2026-10-10"
 ef.OOS_END = int(datetime.fromisoformat(CANON_DATA_END)
                  .replace(tzinfo=timezone.utc).timestamp())
 
@@ -527,7 +527,7 @@ TARGET_MTM_DD = 15.0
 #: inside a selection grid scores every cell at a size the search itself chose
 #: and manufactures its own winner ([[usoil-intraday-fails-twice]]). Members
 #: here were picked at 0.135 throughout and the dial was moved once, afterwards.
-CANON_RISK_SCALE = 0.130
+CANON_RISK_SCALE = 0.100   # 2026-10-12: dial set once, after membership (see BOOK)
 
 #: Max simultaneous notional, in multiples of equity. OFF since 2026-08-25.
 #:
@@ -955,7 +955,7 @@ def candidate_rows_exact(keys):
             cell = tt_book.sealed(key)
             oos = cell.get("out_of_sample") or {}
             found[key] = {
-                "symbol": symbol, "family": f"{family}@{bar}m", "tt": True,
+                "symbol": symbol, "family": key.split(":", 1)[1], "tt": True,
                 "params": _retuple(cell["params"]),
                 "asset_class": cell.get("asset_class", "unknown"),
                 "oos_return": oos.get("return_pct", float("nan")),
@@ -1338,7 +1338,9 @@ def sleeve_trades(row, null_seed=None, lo=None, hi=None, shown=1.0):
         result = {"return_pct": cell["return_pct"], "trades": cell["trades"],
                   "max_dd_pct": cell.get("max_dd_pct", float("nan")),
                   "trade_log": cell["log"]}
-        bars, ctx = got["bars30"][row["symbol"]], got["ctx"][row["symbol"]]
+        # An off-hours sleeve's series is filed under `<symbol>~off` (tt_book.row_symbol).
+        alias = tt_book.row_symbol(sleeve)
+        bars, ctx = got["bars30"][alias], got["ctx"][alias]
         _SLEEVE_MEMO[key] = (result, cell["log"], bars, ctx)
         for k_sleeve, c_cell in got["cells"].items():
             if k_sleeve == sleeve:
@@ -1347,8 +1349,8 @@ def sleeve_trades(row, null_seed=None, lo=None, hi=None, shown=1.0):
             c_res = {"return_pct": c_cell["return_pct"], "trades": c_cell["trades"],
                      "max_dd_pct": c_cell.get("max_dd_pct", float("nan")),
                      "trade_log": c_cell["log"]}
-            c_bars = got["bars30"].get(c_sym)
-            c_ctx = got["ctx"].get(c_sym)
+            c_bars = got["bars30"].get(tt_book.row_symbol(k_sleeve))
+            c_ctx = got["ctx"].get(tt_book.row_symbol(k_sleeve))
             c_cell_row = tt_book.sealed(k_sleeve) if tt_book.is_tt(k_sleeve) else None
             c_params = c_cell_row.get("params") if c_cell_row else None
             c_params_k = tuple(sorted(c_params.items())) if isinstance(c_params, dict) else (tuple(c_params) if isinstance(c_params, (list, tuple)) else c_params)
@@ -2315,6 +2317,26 @@ TARGET_FILL = 90.0
 #: const registry still carry the jp225 book ([[activating-a-book-is-four-places]]).
 #: CANON BOOK, set 2026-09-30: Combo C with btc:jump replacing usdjpy:kendall.
 #: 23 sleeves: 15 cfd_families + 8 TT sleeves (@tf).
+#:
+#: PORTED TO RUST 2026-10-03 and the live book since: `exness_combined::BOOK`
+#: holds these 23, every one passes its parity fixture, and the whole book over
+#: 2025-01-01..2026-08-20 at $500 on live fills matches `_canon_book` on all
+#: 3,581 trades (entry, exit, lots, P&L), final $6,106.79 on both. The live
+#: rows are switched by `tools/go_live_canon_23.py`, which
+#: `start_live_trade.bat` runs before it starts anything.
+#: CANON BOOK, set 2026-10-12 (evening; data through 2026-10-09), run at
+#: CANON_RISK_SCALE 0.10. Built from the 22-sleeve morning book by dropping
+#: eurjpy:jump@15m-barlb, eurjpy:squeeze@5m-barlb and gbpjpy:pql_rvol_spike@5m
+#: (weak in 2026 inside the book) and searching replacements over the WHOLE
+#: survivor pool (native 30m, every TikTok cell, native 5m/60m/240m, barlb and
+#: off-hours, decay rule on all; every sleeve >= +$10 in 2026 and > 0 in 2025-26
+#: in-book). Two rounds of 1-3 adds, paired 300-path MC, then the dial.
+#: Off-hours sleeves (`-off`) mark on their own 24h series `<symbol>~off`
+#: (tt_book.row_symbol); `-nat` = native cfd_families cell at a non-30m bar.
+#: 300 paths vs the 10-11 canon (0.13): 22-24 +3,145% 26.2/33.6 (was +2,150%
+#: 32.4/38.1); 25-26 +1,429% 21.8/25.5 (was +1,428% 21.9/24.5); 26 +542%
+#: 14.9/17.0 (was +456% 15.5/18.7).
+#: RESEARCH ONLY: the Rust registry and live rows still carry the 2026-10-03 book.
 BOOK = (
     "usdjpy:volume_thrust",
     "audusd:zscore",
@@ -2324,21 +2346,23 @@ BOOK = (
     "usdjpy:pullback",
     "ethusd:obv_break",
     "ukoil:level_confluence",
-    "ethusd:break_retest",
-    "ethusd:lux_body_momentum@15m",
-    "usdjpy:half_life",
-    "usdjpy:rvol",
     "ustec:lux_body_momentum@5m",
-    "usdjpy:qp_ma_cross@30m",
     "eurjpy:qp_ma_cross@60m",
     "gbpjpy:luxalgo_manipulation@120m",
     "gbpjpy:lux_supply_demand@30m",
-    "de40:lux_sweep_reclaim@60m",
-    "usdjpy:lux_htf_manipulation@60m",
-    "eurjpy:lux_ny_vwap_pullback@15m",
     "uk100:xma_cross",
     "usoil:xma_cross",
     "btc:jump",
+    "usdjpy:yf_alphatrend@30m",
+    "gbpjpy:mql_big_move_cont@60m",
+    "usdjpy:adaptive_pullback@60m-barlb",
+    "usdjpy:failed_break@5m-barlb",
+    "usdjpy:momentum_stack@30m-barlb-off",
+    "usdjpy:sar@30m-barlb-off",
+    "gbpusd:qp_rsi2_pullback@30m-off",
+    "eurjpy:qc_ema_cross@30m",
+    "eurjpy:dt_rsi_dip_vol@15m",
+    "ethusd:sb_bollinger@240m-nat",
 )
 
 #: Cells that ENTER ON SATURDAY AND SUNDAY ONLY, inside their ordinary 09:30-16:00

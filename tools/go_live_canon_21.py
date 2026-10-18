@@ -8,8 +8,6 @@
    database no longer thinks it is open. MT5 was checked: 0 positions.
 3. Runs `activate_canonical_live --apply` -- rows straight from the Rust
    registry, `live_started_at` reset.
-4. Clears `environment_cost_rules`; the server rebuilds it on boot
-   ([[activating-a-book-is-four-places]]).
 
 Then start the stack with tools\\start_live_trade.bat.
 """
@@ -48,13 +46,10 @@ if result.returncode != 0:
 print("3. activated")
 
 db = sqlite3.connect(DB, timeout=30)
-with db:
-    n3 = db.execute("DELETE FROM environment_cost_rules").rowcount
 rows = db.execute(
     "SELECT strategy, symbol, active FROM mt5_account_strategies "
     "WHERE active=1 ORDER BY id").fetchall()
 db.close()
-print(f"4. cleared     {n3} stale cost rows")
 print(f"\n{len(rows)} active live rows:")
 for strategy, symbol, _ in rows:
     print(f"   {strategy:28} {symbol}")

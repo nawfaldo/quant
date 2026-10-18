@@ -35,7 +35,7 @@ an order for size: `nq_orders` and `drift_vwap_order_rows` emit a symbolic
 separate question, tested separately in `tests.rs`; what this asks is whether
 the two engines fire on the same bars.
 
-    py -m sandbox.research.export_rust_import_fixtures live_trade/src/strategies/idk/fixtures
+    py -m sandbox.research.export_rust_import_fixtures live_trade/src/strategies/exness/oct-12-2026/fixtures
 """
 import json
 import os

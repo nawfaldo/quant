@@ -27,12 +27,8 @@ const COLUMN_MIGRATIONS: &[&str] = &[
     "ALTER TABLE backtests ADD COLUMN skew REAL NOT NULL DEFAULT 0",
     "ALTER TABLE backtests ADD COLUMN lower_tail REAL NOT NULL DEFAULT 0",
     "ALTER TABLE backtests ADD COLUMN upper_tail REAL NOT NULL DEFAULT 0",
-    concat!(
-        "ALTER TABLE mt5_accounts ADD COLUMN environment_id INTEGER ",
-        "REFERENCES environments(id) ON DELETE CASCADE"
-    ),
-    "ALTER TABLE mt5_execution_commands ADD COLUMN environment_trade_id INTEGER NOT NULL DEFAULT -1",
-    "ALTER TABLE mt5_execution_commands ADD COLUMN closed_environment_trade_id INTEGER NOT NULL DEFAULT -1",
+    "ALTER TABLE mt5_execution_commands ADD COLUMN account_trade_id INTEGER NOT NULL DEFAULT -1",
+    "ALTER TABLE mt5_execution_commands ADD COLUMN closed_account_trade_id INTEGER NOT NULL DEFAULT -1",
     "ALTER TABLE mt5_account_strategies ADD COLUMN live_started_at INTEGER NOT NULL DEFAULT 0",
     // WHICH SEALED BOOK A LIVE ROW BELONGS TO.
     //
@@ -62,8 +58,6 @@ const COLUMN_MIGRATIONS: &[&str] = &[
     "ALTER TABLE live_trades ADD COLUMN closed_at TEXT NOT NULL DEFAULT ''",
 ];
 
-const RETIRED_ENVIRONMENT_COLUMNS: &[&str] = &["is_mt5", "server", "login", "password"];
-
 /// `live_trades` named the strategy engine's own prices and times `zig_*` from
 /// when the engine was written in Zig. It is Rust now and nothing in the tree
 /// is Zig, so the columns say `engine_*`. Renames are skipped when the old
@@ -75,45 +69,29 @@ const RENAMED_LIVE_TRADE_COLUMNS: &[(&str, &str)] = &[
     ("zig_close_time", "engine_close_time"),
 ];
 
-const RETIRED_ENVIRONMENTS_CLEANUP: &str = r#"
-DELETE FROM mt5_account_strategies
-WHERE account_id IN (
-  SELECT id FROM mt5_accounts WHERE environment_id IN (
-    SELECT id FROM environments WHERE name IN ('local', 'paper', 'paper2', 'fn') COLLATE NOCASE
-  )
-);
-DELETE FROM montecarlo_paths
-WHERE mc_id IN (
-  SELECT id FROM montecarlo WHERE source_id IN (
-    SELECT id FROM backtests WHERE environment_id IN (
-      SELECT id FROM environments WHERE name IN ('local', 'paper', 'paper2', 'fn') COLLATE NOCASE
-    )
-  )
-);
-DELETE FROM montecarlo
-WHERE source_id IN (
-  SELECT id FROM backtests WHERE environment_id IN (
-    SELECT id FROM environments WHERE name IN ('local', 'paper', 'paper2', 'fn') COLLATE NOCASE
-  )
-);
-DELETE FROM fx_trades
-WHERE backtest_id IN (
-  SELECT id FROM backtests WHERE environment_id IN (
-    SELECT id FROM environments WHERE name IN ('local', 'paper', 'paper2', 'fn') COLLATE NOCASE
-  )
-);
-DELETE FROM trades
-WHERE backtest_id IN (
-  SELECT id FROM backtests WHERE environment_id IN (
-    SELECT id FROM environments WHERE name IN ('local', 'paper', 'paper2', 'fn') COLLATE NOCASE
-  )
-);
-DELETE FROM backtests
-WHERE environment_id IN (
-  SELECT id FROM environments WHERE name IN ('local', 'paper', 'paper2', 'fn') COLLATE NOCASE
-);
-DELETE FROM environments WHERE name IN ('local', 'paper', 'paper2', 'fn') COLLATE NOCASE;
-"#;
+/// Columns that carried an environment's trade id, renamed when environments
+/// were removed. `(table, old, new)`; skipped once the old column is gone.
+const RENAMED_ACCOUNT_TRADE_COLUMNS: &[(&str, &str, &str)] = &[
+    (
+        "mt5_execution_commands",
+        "environment_trade_id",
+        "account_trade_id",
+    ),
+    (
+        "mt5_execution_commands",
+        "closed_environment_trade_id",
+        "closed_account_trade_id",
+    ),
+    (
+        "mt5_strategy_positions",
+        "environment_trade_id",
+        "account_trade_id",
+    ),
+];
+
+/// Tables that used to carry an `environment_id` foreign key and are rebuilt
+/// from `SCHEMA` without it.
+const ENVIRONMENT_SCOPED_TABLES: &[&str] = &["mt5_accounts", "backtests"];
 
 const OFI_ML_PROMOTION: &str = r#"
 BEGIN IMMEDIATE;
@@ -124,9 +102,9 @@ UPDATE backtests
 SET strategy=REPLACE(strategy,'OFI_MOMENTUM_LEGACY_ML','OFI_MOMENTUM')
 WHERE strategy LIKE '%OFI_MOMENTUM_LEGACY_ML%';
 
-UPDATE environment_trades SET strategy_name='ofi_momentum_legacy'
+UPDATE account_trades SET strategy_name='ofi_momentum_legacy'
 WHERE strategy_name='ofi_momentum';
-UPDATE environment_trades SET strategy_name='ofi_momentum'
+UPDATE account_trades SET strategy_name='ofi_momentum'
 WHERE strategy_name='ofi_momentum_ml';
 UPDATE live_trades SET strategy_name='ofi_momentum_legacy'
 WHERE strategy_name='ofi_momentum';
@@ -189,7 +167,11 @@ impl Database {
         connection
             .execute_unprepared("PRAGMA journal_mode=WAL")
             .await?;
+        connection
+            .execute_unprepared("PRAGMA foreign_keys=ON")
+            .await?;
         connection.execute_unprepared(SCHEMA).await?;
+        self.drop_environments().await?;
         // Best-effort column additions for databases created before the column
         // existed. SQLite rejects a duplicate column, which we treat as success.
         for statement in COLUMN_MIGRATIONS {
@@ -229,7 +211,7 @@ impl Database {
             .await?;
         connection
             .execute_unprepared(
-                "UPDATE environment_trades SET mt5_exit_time=mt5_entry_time \
+                "UPDATE account_trades SET mt5_exit_time=mt5_entry_time \
                  WHERE mt5_exit_time!='' AND mt5_entry_time!='' \
                  AND mt5_exit_time < mt5_entry_time",
             )
@@ -239,41 +221,6 @@ impl Database {
                 "UPDATE mt5_accounts SET account_type='mt5' \
                  WHERE account_type='' OR account_type IN ('demo','live')",
             )
-            .await?;
-        connection
-            .execute_unprepared(concat!(
-                "CREATE INDEX IF NOT EXISTS idx_mt5_accounts_environment ",
-                "ON mt5_accounts(environment_id)"
-            ))
-            .await?;
-        for column in RETIRED_ENVIRONMENT_COLUMNS {
-            let exists = connection
-                .query_one(Statement::from_sql_and_values(
-                    DatabaseBackend::Sqlite,
-                    "SELECT 1 FROM pragma_table_info('environments') WHERE name=?",
-                    [(*column).to_owned().into()],
-                ))
-                .await?
-                .is_some();
-            if exists {
-                connection
-                    .execute_unprepared(&format!("ALTER TABLE environments DROP COLUMN {column}"))
-                    .await?;
-            }
-        }
-        connection
-            .execute_unprepared(RETIRED_ENVIRONMENTS_CLEANUP)
-            .await?;
-        // THE OLD EDITABLE RULES TABLE. `environment_rules` held one
-        // user-typed `spread`/`slippage`/`commission` number per environment,
-        // and the engine overrode every one of them with its own Exness Pro
-        // figures before a bar was replayed -- so what the screen showed and
-        // what the backtest charged were unrelated numbers. Nothing has read it
-        // since; the surviving row here was a `spread` of 0.2 written in July.
-        // It goes rather than being migrated, because there is nothing in it
-        // worth carrying into `environment_cost_rules`.
-        connection
-            .execute_unprepared("DROP TABLE IF EXISTS environment_rules")
             .await?;
         for (key, value) in DEFAULT_SETTINGS {
             connection
@@ -297,6 +244,40 @@ impl Database {
         Ok(())
     }
 
+    /// Removes environments from a database written before they were retired.
+    ///
+    /// An environment was a named row every account, backtest and account trade
+    /// hung off, and exactly one ever ran anything. What replaces it: accounts
+    /// stand alone, a backtest records the cost MODEL it was priced under, and
+    /// `environment_trades` is `account_trades`.
+    ///
+    /// A NO-OP ON A CURRENT DATABASE, and every step checks before it acts, so
+    /// it runs on every boot.
+    ///
+    /// ONE CONNECTION, FOREIGN KEYS OFF. `mt5_accounts` is the parent of four
+    /// `ON DELETE CASCADE` tables, and rebuilding it with foreign keys on would
+    /// empty every one of them. `foreign_keys` is per connection and cannot be
+    /// changed inside a transaction, so this opens its own single connection
+    /// rather than borrowing one from the pool. `legacy_alter_table` stops the
+    /// rename of the old table from rewriting the children's references to
+    /// follow it, so they keep pointing at the rebuilt table by name.
+    ///
+    /// ALL OR NOTHING: the whole change is one transaction, and the foreign keys
+    /// are checked before it is accepted.
+    async fn drop_environments(&self) -> Result<(), ApiError> {
+        let url = format!("sqlite://{}?mode=rwc", self.path.display());
+        let mut options = ConnectOptions::new(url);
+        options
+            .max_connections(1)
+            .min_connections(1)
+            .connect_timeout(Duration::from_secs(5))
+            .sqlx_logging(false);
+        let connection = SeaDatabase::connect(options).await?;
+        let result = drop_environments_on(&connection).await;
+        connection.close().await?;
+        result
+    }
+
     pub async fn orm(&self) -> Result<&DatabaseConnection, ApiError> {
         self.connection
             .get_or_try_init(|| async {
@@ -312,4 +293,169 @@ impl Database {
             .await
             .map_err(ApiError::from)
     }
+}
+
+async fn table_exists(connection: &DatabaseConnection, table: &str) -> Result<bool, ApiError> {
+    Ok(connection
+        .query_one(Statement::from_sql_and_values(
+            DatabaseBackend::Sqlite,
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+            [table.to_owned().into()],
+        ))
+        .await?
+        .is_some())
+}
+
+async fn columns(connection: &DatabaseConnection, table: &str) -> Result<Vec<String>, ApiError> {
+    connection
+        .query_all(Statement::from_sql_and_values(
+            DatabaseBackend::Sqlite,
+            "SELECT name FROM pragma_table_info(?) ORDER BY cid",
+            [table.to_owned().into()],
+        ))
+        .await?
+        .into_iter()
+        .map(|row| row.try_get_by_index::<String>(0).map_err(ApiError::from))
+        .collect()
+}
+
+async fn has_column(
+    connection: &DatabaseConnection,
+    table: &str,
+    column: &str,
+) -> Result<bool, ApiError> {
+    Ok(columns(connection, table)
+        .await?
+        .iter()
+        .any(|c| c == column))
+}
+
+/// Copies every column `from` and `to` share, then drops `from`. A column only
+/// the new table has takes its default, which is how `backtests.model` gets
+/// `exness_pro`.
+async fn move_rows(connection: &DatabaseConnection, from: &str, to: &str) -> Result<(), ApiError> {
+    let target = columns(connection, to).await?;
+    let shared = columns(connection, from)
+        .await?
+        .into_iter()
+        .filter(|column| target.contains(column))
+        .collect::<Vec<_>>()
+        .join(",");
+    connection
+        .execute_unprepared(&format!(
+            "INSERT INTO {to}({shared}) SELECT {shared} FROM {from}; DROP TABLE {from};"
+        ))
+        .await?;
+    Ok(())
+}
+
+/// Every row whose foreign key points nowhere, as `(table, rowid, parent)`.
+async fn foreign_key_violations(
+    connection: &DatabaseConnection,
+) -> Result<std::collections::BTreeSet<(String, i64, String)>, ApiError> {
+    connection
+        .query_all(Statement::from_string(
+            DatabaseBackend::Sqlite,
+            "SELECT \"table\",COALESCE(rowid,-1),parent FROM pragma_foreign_key_check",
+        ))
+        .await?
+        .into_iter()
+        .map(|row| {
+            Ok((
+                row.try_get_by_index(0)?,
+                row.try_get_by_index(1)?,
+                row.try_get_by_index(2)?,
+            ))
+        })
+        .collect()
+}
+
+async fn drop_environments_on(connection: &DatabaseConnection) -> Result<(), ApiError> {
+    let mut pending = false;
+    for table in [
+        "environments",
+        "environment_trades",
+        "environment_cost_rules",
+        "environment_rules",
+    ] {
+        pending |= table_exists(connection, table).await?;
+    }
+    for table in ENVIRONMENT_SCOPED_TABLES {
+        pending |= has_column(connection, table, "environment_id").await?;
+    }
+    for (table, old, _) in RENAMED_ACCOUNT_TRADE_COLUMNS {
+        pending |= has_column(connection, table, old).await?;
+    }
+    if !pending {
+        return Ok(());
+    }
+    connection
+        .execute_unprepared("PRAGMA foreign_keys=OFF; PRAGMA legacy_alter_table=ON;")
+        .await?;
+    connection.execute_unprepared("BEGIN IMMEDIATE").await?;
+    let migrated = async {
+        // Violations already present are not this migration's to judge: the
+        // live database carries `mt5_strategy_positions` rows whose strategy
+        // row an activation deleted with foreign keys off. Only a violation
+        // this change INTRODUCES refuses it.
+        let before = foreign_key_violations(connection).await?;
+        for (table, old, new) in RENAMED_ACCOUNT_TRADE_COLUMNS {
+            if has_column(connection, table, old).await? {
+                connection
+                    .execute_unprepared(&format!(
+                        "ALTER TABLE {table} RENAME COLUMN {old} TO {new}"
+                    ))
+                    .await?;
+            }
+        }
+        let mut rebuilt = Vec::new();
+        for table in ENVIRONMENT_SCOPED_TABLES {
+            if has_column(connection, table, "environment_id").await? {
+                // Its indexes travel with it and are dropped with it.
+                connection
+                    .execute_unprepared(&format!(
+                        "ALTER TABLE {table} RENAME TO {table}_environment_old"
+                    ))
+                    .await?;
+                rebuilt.push(*table);
+            }
+        }
+        // Recreates whatever was renamed away, from the one canonical schema.
+        connection.execute_unprepared(SCHEMA).await?;
+        for table in rebuilt {
+            move_rows(connection, &format!("{table}_environment_old"), table).await?;
+        }
+        if table_exists(connection, "environment_trades").await? {
+            move_rows(connection, "environment_trades", "account_trades").await?;
+        }
+        connection
+            .execute_unprepared(concat!(
+                "DROP TABLE IF EXISTS environment_rules;",
+                "DROP TABLE IF EXISTS environment_cost_rules;",
+                "DROP TABLE IF EXISTS environments;",
+            ))
+            .await?;
+        let introduced = foreign_key_violations(connection)
+            .await?
+            .difference(&before)
+            .count();
+        if introduced > 0 {
+            return Err(ApiError::Internal(format!(
+                "dropping environments would break {introduced} foreign keys"
+            )));
+        }
+        Ok::<_, ApiError>(())
+    }
+    .await;
+    match migrated {
+        Ok(()) => connection.execute_unprepared("COMMIT").await?,
+        Err(error) => {
+            connection.execute_unprepared("ROLLBACK").await?;
+            return Err(error);
+        }
+    };
+    connection
+        .execute_unprepared("PRAGMA legacy_alter_table=OFF; PRAGMA foreign_keys=ON;")
+        .await?;
+    Ok(())
 }

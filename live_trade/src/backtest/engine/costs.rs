@@ -3,9 +3,9 @@
 //!
 //! THERE IS NOTHING TO CONFIGURE, and that is the point. Costs used to be three
 //! per-environment numbers a user typed in -- spread, slippage and commission --
-//! and every one of them was replaced by the figures below the moment the run
-//! was an `idk` run, which every run is. What the environment screen showed and
-//! what the backtest charged were unrelated numbers.
+//! and every one of them was replaced by the figures below before a bar was
+//! replayed, so what the screen showed and what the backtest charged were
+//! unrelated numbers. Environments are gone; a run names this model instead.
 //!
 //! What is charged instead: the EXNESS LIVE-FILL MODEL (`backtest::fills`) --
 //! the broker's own spread in the entry minute plus a 0.2 bp slippage allowance,
@@ -17,6 +17,7 @@
 //! ([[pro-commission-is-measured-zero]]).
 
 use super::*;
+use crate::strategies::cfd::Book;
 use serde::Serialize;
 
 pub(super) fn market_point_value(market: &str) -> f64 {
@@ -26,7 +27,10 @@ pub(super) fn market_point_value(market: &str) -> f64 {
         // JPY crosses: the same lot, converted at 0.0062767546667670945.
         "usdjpy" | "gbpjpy" | "eurjpy" => 627.647_889_533_971_6,
         "jp225" => 0.006_276_478_895_339_715,
-        "ukoil" => 1_000.0,
+        "ukoil" | "usoil" => 1_000.0,
+        // DE40 is quoted in EUR with a contract size of one, so its point value
+        // IS its USD rate, as the FTSE below.
+        "de40" => 1.157,
         // Spot aluminium and the FTSE CFD both carry a contract size of one; the
         // FTSE is quoted in GBP, so its point value IS its USD rate.
         "xalusd" => 1.0,
@@ -68,6 +72,8 @@ pub fn market_spread_bp(market: &str) -> Option<f64> {
         "gbpjpy" => 0.743_7,
         "gbpusd" => 0.518_4,
         "ukoil" => 2.744_5,
+        "usoil" => 1.647_7,
+        "de40" => 0.189_2,
         "eurjpy" => 0.598_7,
         // The widest quote in the book by an order of magnitude, and the reason
         // this sleeve had to clear its null on a proportional charge rather than
@@ -90,8 +96,33 @@ pub fn market_spread_bp(market: &str) -> Option<f64> {
 /// "nq" for an unregistered name. That fall-through would hand an unknown
 /// strategy NQ's 0.30 bp quote -- the cheapest in the book -- instead of
 /// refusing to price it.
+///
+/// PER BOOK. An Exness sleeve pays the Exness Pro quote for its market; a
+/// FundedNext sleeve pays its own contract's FundedNext snapshot plus the same
+/// 0.2 bp allowance, which is `cfd_families.cost_bp` under `CFD_BROKER=fundednext`.
+/// Commission is not here: `FamilyEngine::entry_cost_bp` adds it, and returns
+/// a figure whenever a contract charges one.
 pub(super) fn sleeve_spread_bp(name: &str) -> Option<f64> {
-    market_spread_bp(Sleeve::from_display(name)?.market())
+    let sleeve = Sleeve::from_display(name)?;
+    match sleeve.book() {
+        Book::Exness => market_spread_bp(sleeve.market()),
+        Book::FundedNext => Some(sleeve.contract_spread_bp() + crate::strategies::cfd::SLIPPAGE_BP),
+    }
+}
+
+/// Account currency per price unit per lot for the sleeve a slot runs: the
+/// sleeve's own frozen contract, which for an Exness sleeve equals
+/// `market_point_value` (`frozen_point_values_match_the_strategy_specs`) and for
+/// a FundedNext one is FundedNext's. A slot that is not a sleeve keeps the
+/// market table.
+pub(super) fn sleeve_point_value(name: &str, market: &str) -> f64 {
+    Sleeve::from_display(name).map_or_else(|| market_point_value(market), Sleeve::point_value)
+}
+
+/// The broker floor for the sleeve a slot runs, read off its contract for the
+/// same reason as `sleeve_point_value`.
+pub(super) fn sleeve_broker_minimum(name: &str, market: &str) -> f64 {
+    Sleeve::from_display(name).map_or_else(|| broker_minimum(market), Sleeve::broker_minimum_lots)
 }
 
 /// The entry charge for one sleeve: `(absolute points, proportional bp)`.
@@ -116,7 +147,7 @@ pub(super) fn sleeve_entry_cost(name: &str) -> (f64, Option<f64>) {
 /// ([[four-hundred-dollars-selects-the-sleeves-for-you]]).
 ///
 /// JP225's floor is THREE whole lots, not a hundredth of one. These must equal
-/// `Instrument::<MARKET>.volume_min` in `exness_combined`, or the engine and the
+/// `Instrument::<MARKET>.volume_min` in `oct_12_2026`, or the engine and the
 /// strategy disagree about what is placeable.
 pub fn broker_minimum(market: &str) -> f64 {
     match market {
@@ -124,10 +155,11 @@ pub fn broker_minimum(market: &str) -> f64 {
         "ethusd" => 0.10,
         "jp225" => 3.0,
         "uk100" => 0.05,
+        "de40" => 0.07,
         "ustec" => 0.05,
         "us500" => 0.14,
         "usdjpy" | "audusd" | "gbpjpy" | "gbpusd" | "ukoil" | "eurjpy" | "xalusd" | "btc"
-        | "xniusd" => 0.01,
+        | "xniusd" | "usoil" => 0.01,
         _ => 0.0,
     }
 }
@@ -200,6 +232,33 @@ pub(super) fn financing_nights(entry_ts: i64, exit_ts: i64) -> i64 {
     (exit_ts.div_euclid(86_400) - entry_ts.div_euclid(86_400)).max(0)
 }
 
+/// Swap charges between two REAL-clock stamps for a `multiday` sleeve: Python's
+/// `cfd_families.rollover_charges`, ported 2026-10-12.
+///
+/// One charge per 17:00 New York rollover the position is open through. A
+/// 365-day market (crypto) pays every night with no triple; any other pays
+/// nothing on a Saturday or Sunday rollover and three on Wednesday, the
+/// Python default when `swap_rollover3days` is unset. Every older family keeps
+/// `financing_nights` and its sealed numbers.
+pub(super) fn rollover_charges(calendar: f64, entry_ts: i64, exit_ts: i64) -> i64 {
+    const OFFSET: i64 = 1_020 * 60;
+    let first = (entry_ts - OFFSET).div_euclid(86_400) + 1;
+    let last = (exit_ts - OFFSET).div_euclid(86_400);
+    if last < first {
+        return 0;
+    }
+    if calendar >= 365.0 {
+        return last - first + 1;
+    }
+    (first..=last)
+        .map(|day| match (day + 3).rem_euclid(7) {
+            5 | 6 => 0,
+            2 => 3,
+            _ => 1,
+        })
+        .sum()
+}
+
 /// Seconds added to a trade's stamps before its nights are counted.
 ///
 /// THE ASIAN SESSIONS CROSS REAL MIDNIGHT AND MUST NOT BE CHARGED FOR IT.
@@ -247,8 +306,14 @@ pub(super) fn net_pnl(pos: &Position, exit: f64) -> f64 {
 /// 2025-07-03 and closed 2025-07-04 booked one night at 5.717 points, and the
 /// port booked nothing.
 pub(super) fn net_pnl_after_financing(pos: &Position, exit: f64, exit_ts: i64, name: &str) -> f64 {
-    let shift = financing_shift(name);
-    let nights = financing_nights(pos.ts + shift, exit_ts + shift);
+    let calendar = Sleeve::from_display(name).and_then(Sleeve::rollover_calendar);
+    let nights = match calendar {
+        Some(calendar) => rollover_charges(calendar, pos.ts, exit_ts),
+        None => {
+            let shift = financing_shift(name);
+            financing_nights(pos.ts + shift, exit_ts + shift)
+        }
+    };
     if nights == 0 {
         return net_pnl(pos, exit);
     }
@@ -269,7 +334,7 @@ pub struct MarketCost {
 
 /// THE COST MODEL, as one self-describing rule.
 ///
-/// This is what the environment's "Backtest Rules" used to be three editable
+/// This is what an environment's "Backtest Rules" used to be three editable
 /// numbers for. It is served rather than stored because the figures are compiled
 /// into the engine: a rule a user could type would be a number the run then
 /// ignored, which is exactly what the spread/slippage/commission rows were.
@@ -281,11 +346,58 @@ pub struct CostModel {
     pub markets: Vec<MarketCost>,
 }
 
+/// The id of the Exness Pro cost model, as a saved backtest records it, and the
+/// default when a request names none.
+pub const MODEL_ID: &str = "exness_pro";
+
+/// The id of the FundedNext cost model: the FundedNext book, priced on
+/// FundedNext's spreads, commission and `fundednext_<broker>_1m` fills.
+pub const FUNDEDNEXT_MODEL_ID: &str = "fundednext";
+
+/// The book a cost model prices. A run names a model and every strategy in it
+/// must belong to that model's book.
+pub fn model_book(model: &str) -> Option<Book> {
+    match model {
+        MODEL_ID => Some(Book::Exness),
+        FUNDEDNEXT_MODEL_ID => Some(Book::FundedNext),
+        _ => None,
+    }
+}
+
+/// The FundedNext model, described from the FundedNext book's own contracts.
+pub fn fundednext_cost_model() -> CostModel {
+    let mut markets: Vec<MarketCost> = Vec::new();
+    for sleeve in crate::strategies::fundednext::oct_18_2026::BOOK {
+        if markets.iter().any(|line| line.market == sleeve.market()) {
+            continue;
+        }
+        markets.push(MarketCost {
+            market: sleeve.market(),
+            spread_bp: sleeve.contract_spread_bp() + crate::strategies::cfd::SLIPPAGE_BP,
+            minimum_lots: sleeve.broker_minimum_lots(),
+        });
+    }
+    markets.sort_by_key(|line| line.market);
+    CostModel {
+        id: FUNDEDNEXT_MODEL_ID,
+        name: "FundedNext",
+        detail: concat!(
+            "The FundedNext book on FundedNext fills: the same execution path as ",
+            "Exness (entry one feed lag after the candle opens, every exit a market ",
+            "order one whole candle later), read off fundednext_<broker>_1m, plus ",
+            "FundedNext's commission once per trade: forex and commodities $3 a lot ",
+            "(measured; the broker bills it at the close), indices free. The per-market spread below, with ",
+            "the 0.2 bp slippage allowance, is charged where that table has no minute.",
+        ),
+        markets,
+    }
+}
+
 /// The rule every backtest is priced under, built from the same tables the
 /// engine charges so the two cannot drift.
 pub fn cost_model() -> CostModel {
     CostModel {
-        id: "exness_pro",
+        id: MODEL_ID,
         name: "Exness Pro",
         detail: concat!(
             "Filled the way this account fills: the entry at the broker's price ",

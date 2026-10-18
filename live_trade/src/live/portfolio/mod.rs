@@ -10,7 +10,10 @@ use crate::{
     },
     database::{Database, LiveCloseRequest, LiveStrategyTarget, StrategyPosition},
     state::AppState,
-    strategies::idk::exness_combined::{self, ExnessCombined, Sleeve},
+    strategies::{
+        cfd::{CfdSleeve, Sleeve},
+        exness::oct_12_2026,
+    },
 };
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
@@ -47,6 +50,7 @@ enum LiveFeed {
     Ohlcv,
     LevelTwo,
 }
+mod quotes;
 mod routing;
 mod slot;
 
@@ -127,6 +131,7 @@ pub fn spawn(state: AppState) {
 
 async fn run(state: AppState) -> Result<(), crate::error::ApiError> {
     let initial_targets = state.db.live_strategy_targets().await?;
+    quotes::set_store(&state.store);
     let warmup = WarmupPlan::for_targets(&initial_targets);
     if warmup.strategies.is_empty() {
         state
@@ -235,10 +240,6 @@ async fn run(state: AppState) -> Result<(), crate::error::ApiError> {
         benchmark_closes,
         benchmark_latest,
         warm_strategies: warmup.strategies,
-        // Learned from the first bar. Until then the clock-driven close simply
-        // does not fire, which is the right answer for a runtime that has not
-        // yet been told what time New York thinks it is.
-        ny_skew_seconds: None,
     };
     if runtime.refresh_targets(latest).await? {
         return Err(crate::error::ApiError::Internal(
@@ -581,14 +582,20 @@ async fn run(state: AppState) -> Result<(), crate::error::ApiError> {
             // a delay far smaller than the one every entry then carried.
             // Where the clock is known the rule is now `entry_is_fresh`; the
             // poll-based rule stays only for the first bar, before it is.
-            let entries_current = match runtime.store_now() {
-                Some(now) => entry_is_fresh(bar.ts, symbol, now),
+            // The AGE of the bar's decision, in seconds, judged per sleeve in
+            // `LiveSlot::entry_refusal` against that sleeve's own candle width.
+            // `None` only on a host clock before the epoch, where the old
+            // poll-based rule stands: the newest bar of a settled watermark is
+            // current and nothing else is.
+            let entry_age = match runtime.store_now() {
+                Some(now) => Some(entry_age_seconds(bar.ts, symbol, now)),
                 None => {
-                    bar.ts == source_latest
-                        && completed_watermarks.get(&(symbol, feed)) == Some(&source_latest)
+                    let current = bar.ts == source_latest
+                        && completed_watermarks.get(&(symbol, feed)) == Some(&source_latest);
+                    Some(if current { 0 } else { i64::MAX })
                 }
             };
-            runtime.on_bar(symbol, feed, bar, entries_current).await;
+            runtime.on_bar(symbol, feed, bar, entry_age).await;
         }
         // AFTER the bars, so a strategy that DID get its bar this tick has
         // already emitted its own exit and has nothing left for this to find.
@@ -702,24 +709,6 @@ struct PortfolioRuntime {
     /// can warm correctly instead of silently constructing it from an empty
     /// slice.
     warm_strategies: HashSet<String>,
-    /// Seconds to add to real UTC to get New York wall clock, LEARNED FROM THE
-    /// BARS rather than from a timezone database this process does not have.
-    ///
-    /// WHY IT IS LEARNED AND NOT COMPUTED. Every bar table stores New York wall
-    /// clock, and the crate has no `chrono-tz`, so the only honest way to know
-    /// what New York thinks the time is has been to read the newest bar. That
-    /// works until the bars stop, which is exactly when a session close still
-    /// has to be honoured.
-    ///
-    /// So the offset is taken from each arriving bar -- its close in NY terms
-    /// minus real UTC now, rounded to the hour, which absorbs both the feed lag
-    /// and any sub-hour jitter -- and then SURVIVES the feed. Re-learning on
-    /// every bar means daylight saving is picked up on the first bar after the
-    /// change rather than encoded as a rule that a law can invalidate.
-    ///
-    /// `None` until the first bar. A runtime that has never seen one cannot
-    /// know the time and does not guess.
-    ny_skew_seconds: Option<i64>,
 }
 
 impl PortfolioRuntime {
@@ -886,8 +875,7 @@ impl PortfolioRuntime {
     /// was single-symbol and is a correctness bug the moment it is not: a BTC
     /// strategy stepped with an NQ bar would breakout off the wrong price and
     /// send a real order for it.
-    async fn on_bar(&mut self, symbol: &str, feed: LiveFeed, bar: Bar, entries_current: bool) {
-        self.observe_clock(symbol, bar);
+    async fn on_bar(&mut self, symbol: &str, feed: LiveFeed, bar: Bar, entry_age: Option<i64>) {
         if symbol == SYMBOL {
             match feed {
                 LiveFeed::LevelTwo => self.level_two_history.push(bar),
@@ -909,7 +897,7 @@ impl PortfolioRuntime {
             let Some(slot) = self.slots.get_mut(&id) else {
                 continue;
             };
-            slot.on_bar(&self.db, bar, entries_current).await;
+            slot.on_bar(&self.db, bar, entry_age).await;
         }
     }
 
@@ -1050,39 +1038,23 @@ impl PortfolioRuntime {
             .map(|since| since.as_secs() as i64)
     }
 
-    /// Now, on the clock the STORE is written in.
+    /// Now, on the clock the STORE is written in: New York wall clock
+    /// relabelled UTC, from the host clock and the US daylight-saving rule.
     ///
-    /// Every bar table holds New York wall clock relabelled UTC, so a timestamp
-    /// from the store cannot be compared against `utc_now` directly. The offset
-    /// is already learned from arriving bars by `observe_clock`; this is the
-    /// same conversion applied the other way, and it is `None` until some bar
-    /// has taught it -- which is the correct answer at start-up, when nothing
-    /// may be assumed about the clock.
+    /// IT USED TO BE LEARNED FROM THE NEWEST BAR, and that is how the runtime
+    /// sent real orders for three-week-old signals: a catch-up replayed old bars
+    /// through the live loop, each one "taught" an offset of minus however old
+    /// it was, and every stale signal then read as fresh. A clock no bar can
+    /// move cannot be fooled that way. See `new_york_offset_seconds`.
     fn store_now(&self) -> Option<i64> {
-        Some(self.utc_now()? + self.ny_skew_seconds?)
+        let utc = self.utc_now()?;
+        Some(utc + crate::backtest::data::new_york_offset_seconds(utc))
     }
 
-    /// Re-learn the New York offset from a bar that has just arrived.
-    ///
-    /// The bar's CLOSE is the instant it describes, and it reaches here a few
-    /// seconds later, so the raw difference is the offset minus the feed lag.
-    /// Rounding to the hour discards that lag -- and any clock drift short of
-    /// half an hour -- while keeping the only part that matters, which of the
-    /// two US offsets is currently in force.
-    fn observe_clock(&mut self, symbol: &str, bar: Bar) {
-        let Some(utc) = self.utc_now() else { return };
-        let raw = bar.ts + market_step(symbol) - utc;
-        self.ny_skew_seconds = Some((raw as f64 / 3_600.0).round() as i64 * 3_600);
-    }
-
-    /// Seconds into the New York day, from THIS PROCESS'S OWN CLOCK.
-    ///
-    /// Unlike `market_clock_minute` this does not need any market to be
-    /// printing: once the offset has been learned the host clock carries it,
-    /// which is what lets a session close be honoured while the vendor is dark.
+    /// Seconds into the New York day, from THIS PROCESS'S OWN CLOCK, so a
+    /// session close is honoured while the vendor is dark.
     fn ny_second_of_day(&self) -> Option<i64> {
-        let (utc, skew) = (self.utc_now()?, self.ny_skew_seconds?);
-        Some((utc + skew).rem_euclid(86_400))
+        Some(self.store_now()?.rem_euclid(86_400))
     }
 
     /// Close everything still open more than one bar past its own session
@@ -1109,27 +1081,34 @@ impl PortfolioRuntime {
             return;
         };
         let minute = second / 60;
-        let mut markets: Vec<String> = self
-            .slots
-            .values()
-            .filter(|slot| slot.session_overdue(second))
-            .map(|slot| strategy_symbol(&slot.target.strategy).to_string())
-            .collect();
-        markets.sort();
-        markets.dedup();
-        for market in markets {
+        // ONLY THE SLOTS THAT ARE OVERDUE, NOT THEIR WHOLE MARKET. Sleeves on
+        // one market can have different candles and so different deadlines: on
+        // 2026-10-08 the 30-minute USDJPY sleeve was late at 13:30:10 and the
+        // market-wide close took the 60-minute sleeve with it, half an hour
+        // before its own exit.
+        let mut overdue: std::collections::BTreeMap<String, Vec<i64>> =
+            std::collections::BTreeMap::new();
+        for (id, slot) in &self.slots {
+            if slot.session_overdue(second) {
+                overdue
+                    .entry(strategy_symbol(&slot.target.strategy).to_string())
+                    .or_default()
+                    .push(*id);
+            }
+        }
+        for (market, ids) in overdue {
             tracing::warn!(
                 market,
                 minute,
                 "position held past its session close; flattening on the clock"
             );
-            self.forced_flatten(&market, None, "session_end_overdue", false)
+            self.forced_flatten(&market, None, "session_end_overdue", false, Some(&ids))
                 .await;
         }
     }
 
     async fn emergency_flatten(&mut self, market: &str, feed: Option<LiveFeed>, reason: &str) {
-        self.forced_flatten(market, feed, reason, true).await;
+        self.forced_flatten(market, feed, reason, true, None).await;
     }
 
     /// Hand back a sleeve the feed watchdog stopped, once its market is
@@ -1193,12 +1172,14 @@ impl PortfolioRuntime {
     /// The shared body. `block` is what separates a watchdog stop -- the runtime
     /// has lost sight of the market and must not trade it again unattended --
     /// from a routine overdue close, which is the day ending as it should.
+    /// `only` limits it to those slot ids; `None` is every slot on the market.
     async fn forced_flatten(
         &mut self,
         market: &str,
         feed: Option<LiveFeed>,
         reason: &str,
         block: bool,
+        only: Option<&[i64]>,
     ) {
         let history = if market == SYMBOL && feed == Some(LiveFeed::Ohlcv) {
             &self.ohlcv_history
@@ -1215,8 +1196,11 @@ impl PortfolioRuntime {
             .unwrap_or_default();
         let price = history.last().map(|bar| bar.close).unwrap_or(0.0);
         let mut flattened = false;
-        for slot in self.slots.values_mut() {
+        for (id, slot) in self.slots.iter_mut() {
             if strategy_symbol(&slot.target.strategy) != market {
+                continue;
+            }
+            if only.is_some_and(|ids| !ids.contains(id)) {
                 continue;
             }
             if market == SYMBOL
@@ -1254,6 +1238,9 @@ impl PortfolioRuntime {
                 {
                     tracing::error!(%error, position_key = key, "emergency flatten enqueue failed");
                 }
+                // The STRATEGY still holds it, as the backtest does: its own
+                // exit, whenever it comes, must not be sent again.
+                slot.ghosts.insert(key.clone());
                 // The command still needs a broker acknowledgement. Retain
                 // ownership and let the normal owed-exit loop retry a failed
                 // or rejected emergency close.

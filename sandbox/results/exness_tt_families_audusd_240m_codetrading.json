@@ -1,0 +1,737 @@
+{
+  "asset_class": "forex",
+  "bar_minutes": 240,
+  "families": {
+    "ct_alligator_break": null,
+    "ct_ema3_fast_cross": null,
+    "ct_harris_pattern": null,
+    "ct_hoffman_irb": null,
+    "ct_hull_rsi_linreg": null,
+    "ct_ichimoku_retrace": null,
+    "ct_ma_new_low": null,
+    "ct_macd_ema_pullback": null,
+    "ct_pin_bar_trend": null,
+    "ct_rsi_adx_engulf": null,
+    "ct_rsi_scalp_ema": null,
+    "ct_session_break_prev_day": null,
+    "ct_trend_bb_dip": null,
+    "ct_vwap_bb_rsi": null,
+    "ct_vwap_candle": null
+  },
+  "protocol": {
+    "account": "Exness Pro 416209807",
+    "benchmark": null,
+    "broker": "exness",
+    "calendar": 252.0,
+    "candidate_counts": {
+      "ct_alligator_break": 12,
+      "ct_ema3_fast_cross": 24,
+      "ct_harris_pattern": 12,
+      "ct_hoffman_irb": 12,
+      "ct_hull_rsi_linreg": 16,
+      "ct_ichimoku_retrace": 24,
+      "ct_ma_new_low": 24,
+      "ct_macd_ema_pullback": 24,
+      "ct_pin_bar_trend": 24,
+      "ct_rsi_adx_engulf": 24,
+      "ct_rsi_scalp_ema": 24,
+      "ct_session_break_prev_day": 16,
+      "ct_trend_bb_dip": 48,
+      "ct_vwap_bb_rsi": 24,
+      "ct_vwap_candle": 12
+    },
+    "contract": {
+      "broker": "AUDUSD",
+      "contract_size": 100000.0,
+      "currency_profit": "USD",
+      "fx_to_usd": 1.0,
+      "multiplier": 99999.99999999999,
+      "tick_size": 1e-05,
+      "tick_value": 1.0,
+      "volume_max": 200.0,
+      "volume_min": 0.01,
+      "volume_step": 0.01
+    },
+    "cost_model": "spread only; commission measured at 0.0000",
+    "data": {
+      "first_row": "2014-12-31",
+      "last_row": "2026-10-02",
+      "source": "1m",
+      "table": "audusd_1m",
+      "warmup": "2014-01-01"
+    },
+    "execution": {
+      "bars_priced": 10436,
+      "bridge_queue_seconds": 1.0,
+      "entry_days": null,
+      "exit": "market order one whole bar + lag + queue after the bar it fired on; no broker-side stop on this account",
+      "feed_lag_seconds": 0.6,
+      "fill_model": "exness",
+      "fills_only": false,
+      "financing": "multiday: 17:00 New York rollover schedule; current swap rates for every year",
+      "full_day": false,
+      "model": "live",
+      "modelled_cost": null,
+      "mtm_peak": true,
+      "spread_at_entry": "exness_audusd_1m",
+      "swap_free": false,
+      "window": "rth"
+    },
+    "family_groups": {
+      "ct_alligator_break": "codetrading",
+      "ct_ema3_fast_cross": "codetrading",
+      "ct_harris_pattern": "codetrading",
+      "ct_hoffman_irb": "codetrading",
+      "ct_hull_rsi_linreg": "codetrading",
+      "ct_ichimoku_retrace": "codetrading",
+      "ct_ma_new_low": "codetrading",
+      "ct_macd_ema_pullback": "codetrading",
+      "ct_pin_bar_trend": "codetrading",
+      "ct_rsi_adx_engulf": "codetrading",
+      "ct_rsi_scalp_ema": "codetrading",
+      "ct_session_break_prev_day": "codetrading",
+      "ct_trend_bb_dip": "codetrading",
+      "ct_vwap_bb_rsi": "codetrading",
+      "ct_vwap_candle": "codetrading"
+    },
+    "holding": {
+      "ct_alligator_break": "session",
+      "ct_ema3_fast_cross": "session",
+      "ct_harris_pattern": "session",
+      "ct_hoffman_irb": "session",
+      "ct_hull_rsi_linreg": "session",
+      "ct_ichimoku_retrace": "session",
+      "ct_ma_new_low": "session",
+      "ct_macd_ema_pullback": "session",
+      "ct_pin_bar_trend": "session",
+      "ct_rsi_adx_engulf": "session",
+      "ct_rsi_scalp_ema": "session",
+      "ct_session_break_prev_day": "session",
+      "ct_trend_bb_dip": "session",
+      "ct_vwap_bb_rsi": "session",
+      "ct_vwap_candle": "session"
+    },
+    "holdout": "2025-01-01 through 2026-08-16",
+    "in_sample_years": [
+      2020,
+      2021,
+      2022,
+      2023,
+      2024
+    ],
+    "initial_balance": 1000.0,
+    "risk_unit": "stop_day x average true daily range over 14 days -- timeframe invariant",
+    "select_rank": "tstat",
+    "session_minutes": [
+      60,
+      840
+    ],
+    "shift_hours": 0,
+    "sizing": "1.5% volatility-throttled stop risk, MT5 lots, 4x notional ceiling",
+    "slippage_bp": 0.2,
+    "spread_bp": 0.8496,
+    "spread_quoted_at": "session",
+    "total_cost_bp": 1.0496,
+    "warning": null
+  },
+  "refused": {
+    "ct_alligator_break": {
+      "best_by_return": {
+        "fill_rate": 57.3,
+        "max_dd_pct": 4.34,
+        "params": {
+          "back": 10,
+          "exit_mode": "trail_0.25",
+          "last_entry_minute": 720,
+          "stop_day": 0.2,
+          "trend": "none",
+          "vol_mode": "none"
+        },
+        "pf": 1.035,
+        "positive_years": 3,
+        "return_pct": 0.46,
+        "trades": 63
+      },
+      "binding": [
+        "trades",
+        "profit_factor",
+        "positive_years",
+        "fill_rate"
+      ],
+      "cells": 12,
+      "refused_by": {
+        "annual_dd": 0,
+        "fill_rate": 12,
+        "max_dd": 0,
+        "positive_years": 12,
+        "profit_factor": 12,
+        "trades": 12
+      },
+      "requires": {
+        "max_dd_pct": 20.0,
+        "of_years": 5,
+        "positive_years": 4,
+        "profit_factor": 1.05,
+        "trades": 125
+      }
+    },
+    "ct_ema3_fast_cross": {
+      "best_by_return": {
+        "fill_rate": 83.3,
+        "max_dd_pct": 0.69,
+        "params": {
+          "exit_mode": "rr_1",
+          "fast": 50,
+          "last_entry_minute": 720,
+          "stop": 1.5,
+          "stop_day": 0.2,
+          "tail": 0.1,
+          "trend": "none",
+          "vol_mode": "none"
+        },
+        "pf": 6.68,
+        "positive_years": 5,
+        "return_pct": 8.14,
+        "trades": 20
+      },
+      "binding": [
+        "trades"
+      ],
+      "cells": 24,
+      "refused_by": {
+        "annual_dd": 0,
+        "fill_rate": 0,
+        "max_dd": 0,
+        "positive_years": 18,
+        "profit_factor": 8,
+        "trades": 24
+      },
+      "requires": {
+        "max_dd_pct": 20.0,
+        "of_years": 5,
+        "positive_years": 4,
+        "profit_factor": 1.05,
+        "trades": 125
+      }
+    },
+    "ct_harris_pattern": {
+      "best_by_return": {
+        "fill_rate": 71.6,
+        "max_dd_pct": 6.33,
+        "params": {
+          "exit_mode": "time_5",
+          "last_entry_minute": 720,
+          "stop": 2.0,
+          "stop_day": 0.2,
+          "trend": "none",
+          "vol_mode": "none"
+        },
+        "pf": 1.284,
+        "positive_years": 2,
+        "return_pct": 7.76,
+        "trades": 144
+      },
+      "binding": [
+        "positive_years"
+      ],
+      "cells": 12,
+      "refused_by": {
+        "annual_dd": 0,
+        "fill_rate": 0,
+        "max_dd": 0,
+        "positive_years": 12,
+        "profit_factor": 2,
+        "trades": 0
+      },
+      "requires": {
+        "max_dd_pct": 20.0,
+        "of_years": 5,
+        "positive_years": 4,
+        "profit_factor": 1.05,
+        "trades": 125
+      }
+    },
+    "ct_hoffman_irb": {
+      "best_by_return": {
+        "fill_rate": 90.2,
+        "max_dd_pct": 16.7,
+        "params": {
+          "exit_mode": "rr_2",
+          "last_entry_minute": 720,
+          "slope": 1.0,
+          "stop_day": 0.2,
+          "trend": "none",
+          "vol_mode": "none"
+        },
+        "pf": 0.527,
+        "positive_years": 0,
+        "return_pct": -13.9,
+        "trades": 55
+      },
+      "binding": [
+        "profit_factor",
+        "positive_years"
+      ],
+      "cells": 12,
+      "refused_by": {
+        "annual_dd": 0,
+        "fill_rate": 0,
+        "max_dd": 6,
+        "positive_years": 12,
+        "profit_factor": 12,
+        "trades": 6
+      },
+      "requires": {
+        "max_dd_pct": 20.0,
+        "of_years": 5,
+        "positive_years": 4,
+        "profit_factor": 1.05,
+        "trades": 125
+      }
+    },
+    "ct_hull_rsi_linreg": {
+      "best_by_return": {
+        "fill_rate": 51.2,
+        "max_dd_pct": 4.45,
+        "params": {
+          "exit_mode": "trail_0.5",
+          "last_entry_minute": 720,
+          "lr": 50,
+          "rsi": 52,
+          "stop": 3.0,
+          "stop_day": 0.2,
+          "trend": "none",
+          "vol_mode": "none"
+        },
+        "pf": 0.893,
+        "positive_years": 2,
+        "return_pct": -0.71,
+        "trades": 41
+      },
+      "binding": [
+        "trades",
+        "profit_factor",
+        "positive_years",
+        "fill_rate"
+      ],
+      "cells": 16,
+      "refused_by": {
+        "annual_dd": 0,
+        "fill_rate": 16,
+        "max_dd": 0,
+        "positive_years": 16,
+        "profit_factor": 16,
+        "trades": 16
+      },
+      "requires": {
+        "max_dd_pct": 20.0,
+        "of_years": 5,
+        "positive_years": 4,
+        "profit_factor": 1.05,
+        "trades": 125
+      }
+    },
+    "ct_ichimoku_retrace": {
+      "best_by_return": {
+        "fill_rate": 58.8,
+        "max_dd_pct": 2.73,
+        "params": {
+          "ema": 100,
+          "exit_mode": "rr_1.5",
+          "last_entry_minute": 720,
+          "share": 8,
+          "stop": 1.5,
+          "stop_day": 0.2,
+          "trend": "none",
+          "vol_mode": "none"
+        },
+        "pf": 0.911,
+        "positive_years": 3,
+        "return_pct": -0.31,
+        "trades": 10
+      },
+      "binding": [
+        "trades",
+        "profit_factor",
+        "positive_years",
+        "fill_rate"
+      ],
+      "cells": 24,
+      "refused_by": {
+        "annual_dd": 0,
+        "fill_rate": 24,
+        "max_dd": 0,
+        "positive_years": 24,
+        "profit_factor": 24,
+        "trades": 24
+      },
+      "requires": {
+        "max_dd_pct": 20.0,
+        "of_years": 5,
+        "positive_years": 4,
+        "profit_factor": 1.05,
+        "trades": 125
+      }
+    },
+    "ct_ma_new_low": {
+      "best_by_return": {
+        "fill_rate": 77.8,
+        "max_dd_pct": 5.95,
+        "params": {
+          "back": 15,
+          "exit_mode": "rr_1",
+          "last_entry_minute": 720,
+          "ma": 100,
+          "stop": 1.5,
+          "stop_day": 0.2,
+          "trend": "none",
+          "vol_mode": "none"
+        },
+        "pf": 1.387,
+        "positive_years": 3,
+        "return_pct": 15.08,
+        "trades": 119
+      },
+      "binding": [
+        "positive_years"
+      ],
+      "cells": 24,
+      "refused_by": {
+        "annual_dd": 0,
+        "fill_rate": 0,
+        "max_dd": 0,
+        "positive_years": 24,
+        "profit_factor": 18,
+        "trades": 6
+      },
+      "requires": {
+        "max_dd_pct": 20.0,
+        "of_years": 5,
+        "positive_years": 4,
+        "profit_factor": 1.05,
+        "trades": 125
+      }
+    },
+    "ct_macd_ema_pullback": {
+      "best_by_return": {
+        "fill_rate": 66.7,
+        "max_dd_pct": 1.17,
+        "params": {
+          "ema": 100,
+          "exit_mode": "rr_1",
+          "last_entry_minute": 720,
+          "stop": 1.5,
+          "stop_day": 0.2,
+          "thr": 0.15,
+          "trend": "none",
+          "vol_mode": "none"
+        },
+        "pf": 0.899,
+        "positive_years": 2,
+        "return_pct": -0.15,
+        "trades": 4
+      },
+      "binding": [
+        "trades",
+        "profit_factor",
+        "positive_years"
+      ],
+      "cells": 24,
+      "refused_by": {
+        "annual_dd": 0,
+        "fill_rate": 12,
+        "max_dd": 0,
+        "positive_years": 24,
+        "profit_factor": 24,
+        "trades": 24
+      },
+      "requires": {
+        "max_dd_pct": 20.0,
+        "of_years": 5,
+        "positive_years": 4,
+        "profit_factor": 1.05,
+        "trades": 125
+      }
+    },
+    "ct_pin_bar_trend": {
+      "best_by_return": {
+        "fill_rate": 66.0,
+        "max_dd_pct": 7.45,
+        "params": {
+          "exit_mode": "time_50",
+          "last_entry_minute": 720,
+          "sr": 0,
+          "stop": 0.5,
+          "stop_day": 0.2,
+          "trend": "none",
+          "vol_mode": "none"
+        },
+        "pf": 1.281,
+        "positive_years": 4,
+        "return_pct": 6.92,
+        "trades": 66
+      },
+      "binding": [
+        "trades"
+      ],
+      "cells": 24,
+      "refused_by": {
+        "annual_dd": 0,
+        "fill_rate": 12,
+        "max_dd": 0,
+        "positive_years": 18,
+        "profit_factor": 0,
+        "trades": 24
+      },
+      "requires": {
+        "max_dd_pct": 20.0,
+        "of_years": 5,
+        "positive_years": 4,
+        "profit_factor": 1.05,
+        "trades": 125
+      }
+    },
+    "ct_rsi_adx_engulf": {
+      "best_by_return": {
+        "fill_rate": 71.4,
+        "max_dd_pct": 1.42,
+        "params": {
+          "adx": 25,
+          "back": 3,
+          "exit_mode": "rr_1",
+          "last_entry_minute": 720,
+          "stop_day": 0.2,
+          "trend": "none",
+          "vol_mode": "none"
+        },
+        "pf": 1.987,
+        "positive_years": 4,
+        "return_pct": 2.54,
+        "trades": 10
+      },
+      "binding": [
+        "trades"
+      ],
+      "cells": 24,
+      "refused_by": {
+        "annual_dd": 0,
+        "fill_rate": 12,
+        "max_dd": 0,
+        "positive_years": 20,
+        "profit_factor": 0,
+        "trades": 24
+      },
+      "requires": {
+        "max_dd_pct": 20.0,
+        "of_years": 5,
+        "positive_years": 4,
+        "profit_factor": 1.05,
+        "trades": 125
+      }
+    },
+    "ct_rsi_scalp_ema": {
+      "best_by_return": {
+        "fill_rate": 69.5,
+        "max_dd_pct": 3.25,
+        "params": {
+          "exit_mode": "time_20",
+          "last_entry_minute": 720,
+          "lvl": 10,
+          "n": 3,
+          "stop": 1.5,
+          "stop_day": 0.2,
+          "trend": "none",
+          "vol_mode": "none"
+        },
+        "pf": 1.511,
+        "positive_years": 5,
+        "return_pct": 7.49,
+        "trades": 57
+      },
+      "binding": [],
+      "cells": 24,
+      "refused_by": {
+        "annual_dd": 0,
+        "fill_rate": 12,
+        "max_dd": 0,
+        "positive_years": 18,
+        "profit_factor": 14,
+        "trades": 6
+      },
+      "requires": {
+        "max_dd_pct": 20.0,
+        "of_years": 5,
+        "positive_years": 4,
+        "profit_factor": 1.05,
+        "trades": 125
+      }
+    },
+    "ct_session_break_prev_day": {
+      "best_by_return": {
+        "fill_rate": 0.0,
+        "max_dd_pct": 0.0,
+        "params": {
+          "exit_mode": "rr_10",
+          "hours": 2,
+          "last_entry_minute": 720,
+          "stop": 2.0,
+          "stop_day": 0.2,
+          "trend": "none",
+          "vol_mode": "none"
+        },
+        "pf": 0.0,
+        "positive_years": 0,
+        "return_pct": 0.0,
+        "trades": 0
+      },
+      "binding": [
+        "profit_factor",
+        "positive_years",
+        "fill_rate"
+      ],
+      "cells": 16,
+      "refused_by": {
+        "annual_dd": 8,
+        "fill_rate": 16,
+        "max_dd": 0,
+        "positive_years": 16,
+        "profit_factor": 16,
+        "trades": 8
+      },
+      "requires": {
+        "max_dd_pct": 20.0,
+        "of_years": 5,
+        "positive_years": 4,
+        "profit_factor": 1.05,
+        "trades": 125
+      }
+    },
+    "ct_trend_bb_dip": {
+      "best_by_return": {
+        "fill_rate": 64.7,
+        "max_dd_pct": 1.25,
+        "params": {
+          "dev": 2.5,
+          "exit_mode": "signal",
+          "last_entry_minute": 720,
+          "ma": 150,
+          "rsi_x": 50,
+          "stop": 2.0,
+          "stop_day": 0.2,
+          "trend": "none",
+          "vol_mode": "none"
+        },
+        "pf": 1.525,
+        "positive_years": 3,
+        "return_pct": 1.3,
+        "trades": 11
+      },
+      "binding": [
+        "trades",
+        "positive_years",
+        "fill_rate"
+      ],
+      "cells": 48,
+      "refused_by": {
+        "annual_dd": 0,
+        "fill_rate": 48,
+        "max_dd": 0,
+        "positive_years": 48,
+        "profit_factor": 24,
+        "trades": 48
+      },
+      "requires": {
+        "max_dd_pct": 20.0,
+        "of_years": 5,
+        "positive_years": 4,
+        "profit_factor": 1.05,
+        "trades": 125
+      }
+    },
+    "ct_vwap_bb_rsi": {
+      "best_by_return": {
+        "fill_rate": 100.0,
+        "max_dd_pct": 0.9,
+        "params": {
+          "back": 75,
+          "exit_mode": "rr_1.5",
+          "last_entry_minute": 720,
+          "stop": 2.0,
+          "stop_day": 0.2,
+          "trend": "none",
+          "vol_mode": "none"
+        },
+        "pf": 1.25,
+        "positive_years": 3,
+        "return_pct": 0.44,
+        "trades": 7
+      },
+      "binding": [
+        "trades",
+        "positive_years"
+      ],
+      "cells": 24,
+      "refused_by": {
+        "annual_dd": 0,
+        "fill_rate": 0,
+        "max_dd": 0,
+        "positive_years": 24,
+        "profit_factor": 0,
+        "trades": 24
+      },
+      "requires": {
+        "max_dd_pct": 20.0,
+        "of_years": 5,
+        "positive_years": 4,
+        "profit_factor": 1.05,
+        "trades": 125
+      }
+    },
+    "ct_vwap_candle": {
+      "best_by_return": {
+        "fill_rate": 60.0,
+        "max_dd_pct": 33.5,
+        "params": {
+          "exit_mode": "trail_0.5",
+          "gap": 0.25,
+          "last_entry_minute": 720,
+          "stop": 1.5,
+          "stop_day": 0.2,
+          "trend": "none",
+          "vol_mode": "none"
+        },
+        "pf": 0.859,
+        "positive_years": 1,
+        "return_pct": -27.12,
+        "trades": 579
+      },
+      "binding": [
+        "profit_factor",
+        "max_dd",
+        "positive_years"
+      ],
+      "cells": 12,
+      "refused_by": {
+        "annual_dd": 8,
+        "fill_rate": 6,
+        "max_dd": 12,
+        "positive_years": 12,
+        "profit_factor": 12,
+        "trades": 0
+      },
+      "requires": {
+        "max_dd_pct": 20.0,
+        "of_years": 5,
+        "positive_years": 4,
+        "profit_factor": 1.05,
+        "trades": 125
+      }
+    }
+  },
+  "scope": "codetrading",
+  "seal_sha256": "b9200f640e84b9a4f0eb646edb5c4c8349b9224c5a1761aff27c27dbbb9f257c",
+  "sealed": true,
+  "symbol": "audusd",
+  "timeframe": "240m",
+  "validation": {}
+}

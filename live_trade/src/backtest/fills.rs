@@ -39,6 +39,7 @@
 
 use crate::api::parquet_store::{self, NANOS_PER_SECOND, ParquetStore};
 use crate::error::ApiError;
+use crate::strategies::cfd::Book;
 
 /// Everything between the runtime deciding and MT5 executing, in seconds.
 /// `fill_models.exness.BRIDGE_QUEUE_SECONDS`: 0.25s store poll, 0.13s bridge
@@ -79,6 +80,9 @@ fn broker_symbol(market: &str) -> Option<&'static str> {
         "gbpjpy" => "gbpjpy",
         "gbpusd" => "gbpusd",
         "ukoil" => "ukoil",
+        "usoil" => "usoil",
+        // The broker calls its DAX CFD `DE30`.
+        "de40" => "de30",
         "ethusd" => "ethusd",
         "jp225" => "jp225",
         "uk100" => "uk100",
@@ -97,7 +101,8 @@ fn broker_symbol(market: &str) -> Option<&'static str> {
 /// reads it first.
 fn point_size(market: &str) -> Option<f64> {
     Some(match market {
-        "usdjpy" | "eurjpy" | "gbpjpy" | "ukoil" => 0.001,
+        "usdjpy" | "eurjpy" | "gbpjpy" | "ukoil" | "usoil" => 0.001,
+        "de40" => 0.1,
         "audusd" | "gbpusd" => 0.000_01,
         "ethusd" | "uk100" | "xalusd" | "btc" | "xniusd" | "nq" => 0.01,
         "jp225" => 0.1,
@@ -109,6 +114,56 @@ fn point_size(market: &str) -> Option<f64> {
 /// `exness_<broker>_1m`, the table `cfd_families.broker_minute_table` names.
 pub fn broker_table(market: &str) -> Option<String> {
     broker_symbol(market).map(|broker| format!("exness_{broker}_1m"))
+}
+
+/// FundedNext's name for a market (the `broker` field of `fundednext_specs.json`
+/// as the parity fixtures record it) and its point -- the unit its M1 `spread`
+/// column counts in. Only the FundedNext book's markets.
+fn fundednext_source(market: &str) -> Option<(&'static str, f64)> {
+    Some(match market {
+        "audusd" => ("audusd", 0.000_01),
+        "eurusd" => ("eurusd", 0.000_01),
+        "gbpusd" => ("gbpusd", 0.000_01),
+        "gbpjpy" => ("gbpjpy", 0.001),
+        "usdjpy" => ("usdjpy", 0.001),
+        "usoil" => ("usousd", 0.001),
+        "de40" => ("ger30", 0.01),
+        "fr40" => ("fra40", 0.01),
+        "uk100" => ("uk100", 0.01),
+        "hk50" => ("hk50", 0.01),
+        "us500" => ("spx500", 0.01),
+        "ustec" => ("ndx100", 0.01),
+        "audjpy" => ("audjpy", 0.001),
+        "cadjpy" => ("cadjpy", 0.001),
+        "chfjpy" => ("chfjpy", 0.001),
+        "euraud" => ("euraud", 0.000_01),
+        "eurjpy" => ("eurjpy", 0.001),
+        "gbpaud" => ("gbpaud", 0.000_01),
+        "nzdusd" => ("nzdusd", 0.000_01),
+        "us2000" => ("us2000", 0.1),
+        "us30" => ("us30", 0.01),
+        "usdcad" => ("usdcad", 0.000_01),
+        "usdchf" => ("usdchf", 0.000_01),
+        "xauusd" => ("xauusd", 0.01),
+        _ => return None,
+    })
+}
+
+/// The broker minute table and point for `market` under `book`'s broker:
+/// `cfd_families.broker_minute_table` with `CFD_BROKER` set to that broker.
+fn broker_source(market: &str, book: Book) -> Option<(String, f64)> {
+    match book {
+        Book::Exness => Some((broker_table(market)?, point_size(market)?)),
+        Book::FundedNext => {
+            let (broker, point) = fundednext_source(market)?;
+            Some((format!("fundednext_{broker}_1m"), point))
+        }
+    }
+}
+
+/// The broker minute table `market` reads under `book`'s broker.
+pub fn broker_minute_table(market: &str, book: Book) -> Option<String> {
+    broker_source(market, book).map(|(table, _)| table)
 }
 
 /// Python's `int(round(x))` on the delays, which are never exactly half a
@@ -138,6 +193,9 @@ pub struct MarketFills {
     /// unique. Only minutes with a positive open, close and spread are kept --
     /// `_read_minutes`' `good` mask -- so a zeroed row is a hole, not a price.
     stamps: Vec<i64>,
+    /// EVERY broker minute stamp, priced or not -- what `CFD_BROKER_HOURS`
+    /// reads as "the broker quoted": `parquet_store.read_bars` keeps any row.
+    quoted: Vec<i64>,
     opens: Vec<f64>,
     /// `1e4 * spread_points * point / close`, basis points of the minute's own
     /// close.
@@ -155,12 +213,23 @@ pub struct MarketFills {
 impl MarketFills {
     /// Builds a market's fills from already-decoded minutes. `rows` is
     /// `(stamp, open, close, spread_points)` in any order.
-    pub fn from_rows(market: &str, shift_hours: i64, mut rows: Vec<(i64, f64, f64, f64)>) -> Self {
-        let point = point_size(market).unwrap_or(0.0);
+    pub fn from_rows(market: &str, shift_hours: i64, rows: Vec<(i64, f64, f64, f64)>) -> Self {
+        Self::from_rows_at(market, point_size(market).unwrap_or(0.0), shift_hours, rows)
+    }
+
+    /// `from_rows` at an explicit point, for a broker other than Exness.
+    fn from_rows_at(
+        market: &str,
+        point: f64,
+        shift_hours: i64,
+        mut rows: Vec<(i64, f64, f64, f64)>,
+    ) -> Self {
         // STABLE, so a stamp stored twice keeps its LAST row -- the one
         // `np.searchsorted(side="right") - 1` lands on after the Python's stable
         // argsort.
         rows.sort_by_key(|row| row.0);
+        let mut quoted: Vec<i64> = rows.iter().map(|row| row.0).collect();
+        quoted.dedup();
         let mut stamps = Vec::with_capacity(rows.len());
         let mut opens = Vec::with_capacity(rows.len());
         let mut spread_bp = Vec::with_capacity(rows.len());
@@ -182,6 +251,7 @@ impl MarketFills {
         let lag = feed_lag_seconds(market);
         Self {
             stamps,
+            quoted,
             opens,
             spread_bp,
             entry_delay: whole_seconds(lag + BRIDGE_QUEUE_SECONDS),
@@ -197,11 +267,12 @@ impl MarketFills {
     pub fn load(
         store: &ParquetStore,
         market: &str,
+        book: Book,
         shift_hours: i64,
         from: Option<i64>,
         to: Option<i64>,
     ) -> Result<Option<Self>, ApiError> {
-        let Some(table) = broker_table(market) else {
+        let Some((table, point)) = broker_source(market, book) else {
             return Ok(None);
         };
         if !store.has_table(&table) {
@@ -222,7 +293,22 @@ impl MarketFills {
                 ));
             }
         }
-        Ok(Some(Self::from_rows(market, shift_hours, rows)))
+        Ok(Some(Self::from_rows_at(market, point, shift_hours, rows)))
+    }
+
+    /// `CFD_BROKER_HOURS`: whether the vendor candle stamped `bucket` (on the
+    /// sleeve's own clock, `width` seconds long) survives -- the broker printed
+    /// a minute inside it, or it predates the broker table's first bucket.
+    pub fn quoted(&self, bucket: i64, width: i64) -> bool {
+        let Some(first) = self.quoted.first() else {
+            return true;
+        };
+        let start = bucket - self.offset;
+        if bucket < (first + self.offset).div_euclid(width) * width {
+            return true;
+        }
+        let at = self.quoted.partition_point(|stamp| *stamp < start);
+        at < self.quoted.len() && self.quoted[at] < start + width
     }
 
     /// The last kept minute at or before `at`, if it is that minute itself.
@@ -268,6 +354,22 @@ impl MarketFills {
         let moved = self.minute_at(at + delay)?;
         let base = self.opens[anchor];
         (base > 0.0).then(|| open * self.opens[moved] / base)
+    }
+}
+
+/// The broker table as the backtest's `CFD_BROKER_HOURS` source. Its bars are
+/// already filtered at each sleeve's own width (`execute_combined`); the engine
+/// asks this for the 30-minute buckets its sizing throttle reads.
+impl crate::strategies::cfd::BrokerQuotes for MarketFills {
+    fn quoted_real(&self, start: i64, end: i64) -> bool {
+        let Some(first) = self.quoted.first() else {
+            return true;
+        };
+        if end <= *first {
+            return true;
+        }
+        let at = self.quoted.partition_point(|stamp| *stamp < start);
+        at < self.quoted.len() && self.quoted[at] < end
     }
 }
 

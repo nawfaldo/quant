@@ -1,0 +1,260 @@
+{
+  "asset_class": "forex",
+  "bar_minutes": 240,
+  "families": {
+    "atp_alligator_ema200": null,
+    "atp_gaussian_kijun_vap": null,
+    "atp_st_macd_adx": null,
+    "atp_zl_macd_ema200": null
+  },
+  "protocol": {
+    "account": "Exness Pro 416209807",
+    "benchmark": null,
+    "broker": "exness",
+    "calendar": 252.0,
+    "candidate_counts": {
+      "atp_alligator_ema200": 12,
+      "atp_gaussian_kijun_vap": 24,
+      "atp_st_macd_adx": 24,
+      "atp_zl_macd_ema200": 24
+    },
+    "contract": {
+      "broker": "USDJPY",
+      "contract_size": 100000.0,
+      "currency_profit": "JPY",
+      "fx_to_usd": 0.0062767546667670945,
+      "multiplier": 627.6478895339716,
+      "tick_size": 0.001,
+      "tick_value": 0.6276478895339715,
+      "volume_max": 300.0,
+      "volume_min": 0.01,
+      "volume_step": 0.01
+    },
+    "cost_model": "spread only; commission measured at 0.0000",
+    "data": {
+      "first_row": "2014-12-31",
+      "last_row": "2026-10-09",
+      "source": "1m",
+      "table": "usdjpy_1m",
+      "warmup": "2014-01-01"
+    },
+    "execution": {
+      "bars_priced": 10484,
+      "bridge_queue_seconds": 1.0,
+      "entry_days": null,
+      "exit": "market order one whole bar + lag + queue after the bar it fired on; no broker-side stop on this account",
+      "feed_lag_seconds": 0.6,
+      "fill_model": "exness",
+      "fills_only": false,
+      "financing": "multiday: 17:00 New York rollover schedule; current swap rates for every year",
+      "full_day": false,
+      "model": "live",
+      "modelled_cost": null,
+      "mtm_peak": true,
+      "spread_at_entry": "exness_usdjpy_1m",
+      "swap_free": false,
+      "window": "rth"
+    },
+    "family_groups": {
+      "atp_alligator_ema200": "algotradepro0",
+      "atp_gaussian_kijun_vap": "algotradepro0",
+      "atp_st_macd_adx": "algotradepro0",
+      "atp_zl_macd_ema200": "algotradepro0"
+    },
+    "holding": {
+      "atp_alligator_ema200": "session",
+      "atp_gaussian_kijun_vap": "session",
+      "atp_st_macd_adx": "session",
+      "atp_zl_macd_ema200": "session"
+    },
+    "holdout": "2025-01-01 through 2026-08-16",
+    "in_sample_years": [
+      2020,
+      2021,
+      2022,
+      2023,
+      2024
+    ],
+    "initial_balance": 1000.0,
+    "risk_unit": "stop_day x average true daily range over 14 days -- timeframe invariant",
+    "select_rank": "tstat",
+    "session_minutes": [
+      0,
+      780
+    ],
+    "shift_hours": 0,
+    "sizing": "1.5% volatility-throttled stop risk, MT5 lots, 4x notional ceiling",
+    "slippage_bp": 0.2,
+    "spread_bp": 0.4398,
+    "spread_quoted_at": "session",
+    "total_cost_bp": 0.6398,
+    "warning": null
+  },
+  "refused": {
+    "atp_alligator_ema200": {
+      "best_by_return": {
+        "fill_rate": 75.7,
+        "max_dd_pct": 5.1,
+        "params": {
+          "exit_mode": "trail_0.25",
+          "last_entry_minute": 660,
+          "stop_atr": 3.0,
+          "stop_day": 0.2,
+          "trend": "none",
+          "vol_mode": "none"
+        },
+        "pf": 0.794,
+        "positive_years": 2,
+        "return_pct": -3.04,
+        "trades": 78
+      },
+      "binding": [
+        "trades",
+        "profit_factor",
+        "positive_years"
+      ],
+      "cells": 12,
+      "refused_by": {
+        "annual_dd": 0,
+        "fill_rate": 6,
+        "max_dd": 0,
+        "positive_years": 12,
+        "profit_factor": 12,
+        "trades": 12
+      },
+      "requires": {
+        "max_dd_pct": 20.0,
+        "of_years": 5,
+        "positive_years": 4,
+        "profit_factor": 1.05,
+        "trades": 125
+      }
+    },
+    "atp_gaussian_kijun_vap": {
+      "best_by_return": {
+        "fill_rate": 76.7,
+        "max_dd_pct": 5.15,
+        "params": {
+          "exit_mode": "trail_0.25",
+          "last_entry_minute": 660,
+          "stop_atr": 3.0,
+          "stop_day": 0.2,
+          "trend": "none",
+          "vap": 5.0,
+          "vlen": 10,
+          "vol_mode": "none"
+        },
+        "pf": 0.92,
+        "positive_years": 2,
+        "return_pct": -0.91,
+        "trades": 66
+      },
+      "binding": [
+        "trades",
+        "profit_factor",
+        "positive_years"
+      ],
+      "cells": 24,
+      "refused_by": {
+        "annual_dd": 0,
+        "fill_rate": 14,
+        "max_dd": 0,
+        "positive_years": 24,
+        "profit_factor": 24,
+        "trades": 24
+      },
+      "requires": {
+        "max_dd_pct": 20.0,
+        "of_years": 5,
+        "positive_years": 4,
+        "profit_factor": 1.05,
+        "trades": 125
+      }
+    },
+    "atp_st_macd_adx": {
+      "best_by_return": {
+        "fill_rate": 78.3,
+        "max_dd_pct": 3.95,
+        "params": {
+          "adx": 20,
+          "exit_mode": "trail_0.25",
+          "last_entry_minute": 660,
+          "stop_atr": 2.0,
+          "stop_day": 0.2,
+          "trend": "none",
+          "vol_mode": "none"
+        },
+        "pf": 0.955,
+        "positive_years": 2,
+        "return_pct": -0.26,
+        "trades": 18
+      },
+      "binding": [
+        "trades",
+        "profit_factor",
+        "positive_years",
+        "annual_dd"
+      ],
+      "cells": 24,
+      "refused_by": {
+        "annual_dd": 24,
+        "fill_rate": 21,
+        "max_dd": 0,
+        "positive_years": 24,
+        "profit_factor": 24,
+        "trades": 24
+      },
+      "requires": {
+        "max_dd_pct": 20.0,
+        "of_years": 5,
+        "positive_years": 4,
+        "profit_factor": 1.05,
+        "trades": 125
+      }
+    },
+    "atp_zl_macd_ema200": {
+      "best_by_return": {
+        "fill_rate": 93.2,
+        "max_dd_pct": 4.62,
+        "params": {
+          "exit_mode": "rr_1",
+          "last_entry_minute": 660,
+          "stop_atr": 2.0,
+          "stop_day": 0.2,
+          "trend": "none",
+          "vol_mode": "none",
+          "zl": 0
+        },
+        "pf": 1.281,
+        "positive_years": 5,
+        "return_pct": 3.53,
+        "trades": 55
+      },
+      "binding": [
+        "trades"
+      ],
+      "cells": 24,
+      "refused_by": {
+        "annual_dd": 0,
+        "fill_rate": 9,
+        "max_dd": 0,
+        "positive_years": 14,
+        "profit_factor": 12,
+        "trades": 24
+      },
+      "requires": {
+        "max_dd_pct": 20.0,
+        "of_years": 5,
+        "positive_years": 4,
+        "profit_factor": 1.05,
+        "trades": 125
+      }
+    }
+  },
+  "scope": "algotradepro0",
+  "seal_sha256": "f9096be3564b8806fea3659333fa7f94cc6430d12629c3c2ed0b4a2b19e798f9",
+  "sealed": true,
+  "symbol": "usdjpy",
+  "timeframe": "240m",
+  "validation": {}
+}

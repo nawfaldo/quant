@@ -9,7 +9,7 @@ impl Database {
     pub async fn live_trades(&self) -> Result<Vec<LiveTrade>, ApiError> {
         let rows = self
             .query(concat!(
-                "SELECT l.id,a.id,COALESCE(a.login,''),COALESCE(a.name,''),a.environment_id,",
+                "SELECT l.id,a.id,COALESCE(a.login,''),COALESCE(a.name,''),",
                 "l.strategy_name,l.side,l.contract,l.engine_entry_price,",
                 "l.engine_close_price,l.mt5_entry_price,l.mt5_close_price,",
                 "l.engine_open_time,l.engine_close_time,l.mt5_open_time,l.mt5_close_time,",
@@ -27,21 +27,20 @@ impl Database {
                     account_id: row.try_get_by_index(1)?,
                     account_login: row.try_get_by_index(2)?,
                     account_name: row.try_get_by_index(3)?,
-                    environment_id: row.try_get_by_index(4)?,
-                    strategy_name: row.try_get_by_index(5)?,
-                    side: row.try_get_by_index(6)?,
-                    contract: row.try_get_by_index(7)?,
-                    engine_entry_price: row.try_get_by_index(8)?,
-                    engine_close_price: row.try_get_by_index(9)?,
-                    mt5_entry_price: row.try_get_by_index(10)?,
-                    mt5_close_price: row.try_get_by_index(11)?,
-                    engine_open_time: row.try_get_by_index(12)?,
-                    engine_close_time: row.try_get_by_index(13)?,
-                    mt5_open_time: row.try_get_by_index(14)?,
-                    mt5_close_time: row.try_get_by_index(15)?,
-                    position_key: row.try_get_by_index(16)?,
-                    exit_reason: row.try_get_by_index(17)?,
-                    closed_at: row.try_get_by_index(18)?,
+                    strategy_name: row.try_get_by_index(4)?,
+                    side: row.try_get_by_index(5)?,
+                    contract: row.try_get_by_index(6)?,
+                    engine_entry_price: row.try_get_by_index(7)?,
+                    engine_close_price: row.try_get_by_index(8)?,
+                    mt5_entry_price: row.try_get_by_index(9)?,
+                    mt5_close_price: row.try_get_by_index(10)?,
+                    engine_open_time: row.try_get_by_index(11)?,
+                    engine_close_time: row.try_get_by_index(12)?,
+                    mt5_open_time: row.try_get_by_index(13)?,
+                    mt5_close_time: row.try_get_by_index(14)?,
+                    position_key: row.try_get_by_index(15)?,
+                    exit_reason: row.try_get_by_index(16)?,
+                    closed_at: row.try_get_by_index(17)?,
                 })
             })
             .collect()
@@ -145,7 +144,18 @@ impl Database {
                 account_id.into(),
                 input.strategy.clone().into(),
                 input.symbol.clone().into(),
-                crate::strategies::idk::exness_combined::book_of(&input.strategy).into(),
+                {
+                    let exness = crate::strategies::exness::oct_12_2026::book_of(&input.strategy);
+                    if exness.is_empty()
+                        && crate::strategies::fundednext::oct_18_2026::BOOK
+                            .iter()
+                            .any(|sleeve| sleeve.id() == input.strategy)
+                    {
+                        crate::strategies::fundednext::oct_18_2026::BOOK_ID.into()
+                    } else {
+                        exness.into()
+                    }
+                },
             ],
         );
         Ok(self.orm().await?.execute(statement).await?.last_insert_id() as i64)
@@ -180,15 +190,15 @@ impl Database {
         volume: f64,
         trade_id: i64,
         closed_trade_id: i64,
-        environment_trade_id: i64,
-        closed_environment_trade_id: i64,
+        account_trade_id: i64,
+        closed_account_trade_id: i64,
     ) -> Result<i64, ApiError> {
         let statement = Statement::from_sql_and_values(
             DatabaseBackend::Sqlite,
             concat!(
                 "INSERT INTO mt5_execution_commands",
                 "(account_id,strategy,action,symbol,volume,trade_id,closed_trade_id,",
-                "environment_trade_id,closed_environment_trade_id,created_at) ",
+                "account_trade_id,closed_account_trade_id,created_at) ",
                 "VALUES (?,?,?,?,?,?,?,?,?,datetime('now'))",
             ),
             [
@@ -199,8 +209,8 @@ impl Database {
                 volume.into(),
                 trade_id.into(),
                 closed_trade_id.into(),
-                environment_trade_id.into(),
-                closed_environment_trade_id.into(),
+                account_trade_id.into(),
+                closed_account_trade_id.into(),
             ],
         );
         Ok(self.orm().await?.execute(statement).await?.last_insert_id() as i64)
@@ -347,8 +357,8 @@ impl Database {
         let find = Statement::from_sql_and_values(
             DatabaseBackend::Sqlite,
             concat!(
-                "SELECT c.trade_id,c.closed_trade_id,c.environment_trade_id,",
-                "c.closed_environment_trade_id,c.action,c.account_strategy_id,",
+                "SELECT c.trade_id,c.closed_trade_id,c.account_trade_id,",
+                "c.closed_account_trade_id,c.action,c.account_strategy_id,",
                 "c.position_key,c.close_fraction,c.volume ",
                 "FROM mt5_execution_commands c ",
                 "JOIN mt5_accounts a ON a.id=c.account_id WHERE c.id=? AND a.login=?",
@@ -361,8 +371,8 @@ impl Database {
         };
         let trade_id = row.try_get_by_index::<i64>(0)?;
         let closed_trade_id = row.try_get_by_index::<i64>(1)?;
-        let environment_trade_id = row.try_get_by_index::<i64>(2)?;
-        let closed_environment_trade_id = row.try_get_by_index::<i64>(3)?;
+        let account_trade_id = row.try_get_by_index::<i64>(2)?;
+        let closed_account_trade_id = row.try_get_by_index::<i64>(3)?;
         let action = row.try_get_by_index::<String>(4)?;
         let account_strategy_id = row.try_get_by_index::<i64>(5)?;
         let position_key = row.try_get_by_index::<String>(6)?;
@@ -497,36 +507,36 @@ impl Database {
                 ))
                 .await?;
         }
-        if filled && environment_trade_id >= 0 && entry_price > 0.0 {
+        if filled && account_trade_id >= 0 && entry_price > 0.0 {
             transaction
                 .execute(Statement::from_sql_and_values(
                     DatabaseBackend::Sqlite,
                     concat!(
-                        "UPDATE environment_trades SET mt5_entry_time=?,",
+                        "UPDATE account_trades SET mt5_entry_time=?,",
                         "mt5_entry_price=? WHERE id=? AND mt5_entry_time=''"
                     ),
                     [
                         fill_time.to_owned().into(),
                         entry_price.into(),
-                        environment_trade_id.into(),
+                        account_trade_id.into(),
                     ],
                 ))
                 .await?;
         }
-        if filled && closed_environment_trade_id >= 0 {
+        if filled && closed_account_trade_id >= 0 {
             transaction
                 .execute(Statement::from_sql_and_values(
                     DatabaseBackend::Sqlite,
                     concat!(
                         // Clamped for the same reason as live_trades above.
-                        "UPDATE environment_trades SET mt5_exit_time=MAX(?,mt5_entry_time),",
+                        "UPDATE account_trades SET mt5_exit_time=MAX(?,mt5_entry_time),",
                         "mt5_exit_price=?,mt5pnl=? WHERE id=? AND mt5_exit_time=''"
                     ),
                     [
                         fill_time.to_owned().into(),
                         close_price.into(),
                         mt5pnl.into(),
-                        closed_environment_trade_id.into(),
+                        closed_account_trade_id.into(),
                     ],
                 ))
                 .await?;
@@ -622,7 +632,7 @@ impl Database {
     pub async fn mt5_positions(&self) -> Result<Vec<Mt5Position>, ApiError> {
         let rows = self
             .query(concat!(
-                "WITH mapped AS (SELECT p.*,a.login,a.name,a.environment_id,",
+                "WITH mapped AS (SELECT p.*,a.login,a.name,",
                 "COALESCE(sp.strategy,(SELECT s.strategy FROM mt5_account_strategies s ",
                 "WHERE s.account_id=p.account_id AND upper(s.symbol)=upper(p.symbol) ",
                 "AND s.active=1 ORDER BY s.id LIMIT 1),'') strategy,sp.live_trade_id ",
@@ -631,7 +641,7 @@ impl Database {
                 "AND sp.ticket=p.ticket AND sp.status IN ('open','pending_close') ",
                 "JOIN mt5_bridge_heartbeats h ON h.account_id=p.account_id ",
                 "WHERE h.seen_at >= datetime('now','-15 seconds')) ",
-                "SELECT login,name,environment_id,ticket,position_type,symbol,volume,profit,open_price,strategy,",
+                "SELECT login,name,ticket,position_type,symbol,volume,profit,open_price,strategy,",
                 "COALESCE((SELECT engine_entry_price FROM live_trades l WHERE l.id=m.live_trade_id),",
                 "open_price),open_time FROM mapped m ",
                 "ORDER BY login,ticket",
@@ -642,16 +652,15 @@ impl Database {
                 Ok(Mt5Position {
                     account: row.try_get_by_index(0)?,
                     account_name: row.try_get_by_index(1)?,
-                    environment_id: row.try_get_by_index(2)?,
-                    ticket: row.try_get_by_index(3)?,
-                    position_type: row.try_get_by_index(4)?,
-                    symbol: row.try_get_by_index(5)?,
-                    volume: row.try_get_by_index(6)?,
-                    profit: row.try_get_by_index(7)?,
-                    open_price: row.try_get_by_index(8)?,
-                    strategy: row.try_get_by_index(9)?,
-                    engine_entry_price: row.try_get_by_index(10)?,
-                    engine_entry_time: row.try_get_by_index(11)?,
+                    ticket: row.try_get_by_index(2)?,
+                    position_type: row.try_get_by_index(3)?,
+                    symbol: row.try_get_by_index(4)?,
+                    volume: row.try_get_by_index(5)?,
+                    profit: row.try_get_by_index(6)?,
+                    open_price: row.try_get_by_index(7)?,
+                    strategy: row.try_get_by_index(8)?,
+                    engine_entry_price: row.try_get_by_index(9)?,
+                    engine_entry_time: row.try_get_by_index(10)?,
                 })
             })
             .collect()

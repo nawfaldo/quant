@@ -7,7 +7,7 @@ binary, and the repository directory are all named `live_trade`.
 
 - Serve the JSON and little-endian binary API consumed by `web/src/api.ts`.
 - Read Parquet market data on demand without prefetching every table.
-- Persist settings, environments, backtests, trades, March state, and MT5 state
+- Persist settings, MT5 accounts, backtests, trades, March state, and MT5 state
   in SQLite.
 - Run backtests, portfolio combinations, and Monte Carlo simulations.
 - Aggregate optional Bookmap ticks and coordinate the MT5 execution bridge.
@@ -20,8 +20,15 @@ Three things are fixed rather than configurable, and each was made fixed after
 the configurable version turned out to be inert:
 
 - The STRATEGIES are the twenty-two sleeves below and nothing else.
-- The COST MODEL is Exness Pro (`backtest::engine::costs`). Environments used to
-  carry editable spread/slippage/commission; the engine overrode all three.
+- The COST MODEL is Exness Pro (`backtest::engine::costs`) by default, or
+  `fundednext`, which prices the FundedNext book (`strategies/fundednext/
+  oct-13-2026`, backtest only) on FundedNext spreads, commission and
+  `fundednext_<broker>_1m` fills. The model picks the book: a run's strategies
+  must all belong to it. A saved backtest records it in `backtests.model`;
+  anything else is refused. Environments used to carry editable
+  spread/slippage/commission; the engine overrode all three.
+  `cargo run --release --bin fundednext_book` diffs the FundedNext book trade for
+  trade against `sandbox/results/fundednext_canon_trades.json`.
 - The INSTRUMENT is Forex, 0.01 lots. An `Instrument` enum used to carry futures
   multipliers on arms `prepare` refused.
 
@@ -30,9 +37,9 @@ previous book; `prepare` rejected it outright, so every branch behind it was
 unreachable. The tuner was the same story: it refused any strategy but a retired
 one, and swept sizing knobs no sleeve reads.
 
-## The only strategies are the 2026-09-07 Exness book
+## The only strategies are the 2026-10-12 Exness book
 
-`strategies/idk/exness_combined_07-09-2026/` holds all twenty-two sleeves and is
+`strategies/exness/oct-12-2026/` holds every sleeve of the book and is
 the entire strategy surface. Nothing else is live in either the backtest or the
 live runtime, and code that supports another strategy is dead by definition — the
 overlay, the VIX and session-close series, and the canonical replay were all
@@ -50,20 +57,20 @@ build error rather than a sleeve that inherits another's settings.
 
 The directory name is deliberate: the book is a sealed selection made on one day
 against one data snapshot, so a rebuild is a different book, not a new version of
-this one. It is not a valid module path, which is why `strategies/idk/mod.rs`
+this one. It is not a valid module path, which is why `strategies/exness/mod.rs`
 reaches it through `#[path]`.
 
 ## Layout
 
 ```text
 live_trade/src/
-├── main.rs               # environment, database initialization, and bind address
+├── main.rs               # env vars, database initialization, and bind address
 ├── lib.rs                # public module surface
 ├── api/                  # Actix setup, route handlers, Parquet store, and market cache
 ├── database/             # SQLite connection, models, schema, and persistence
 ├── backtest/             # data, execution, reporting, FX, and Monte Carlo
 │   └── engine/           # the streaming replay loop, plus its cost and sizing models
-├── strategies/idk/       # the 2026-09-07 book
+├── strategies/exness/    # the book: oct-12-2026/
 │   └── .../sleeves/      # one file per sleeve: twenty-two of each
 ├── live/                 # the portfolio runtime, its per-slot execution, and the MT5 bridge
 └── tools/                # diagnostic drivers, declared as `[[bin]]` in Cargo.toml
@@ -116,10 +123,12 @@ Do not add machine-specific absolute paths or secrets to source control.
 - Treat `web/src/api.ts` and `web/src/types.ts` as consumers of the server
   contract. Coordinate changes across both components.
 - Preserve response status codes, JSON field names, and binary layout/endianness.
-- Backtest costs are NOT configurable. `GET /api/environments/{id}/rules` reports
-  the one Exness Pro rule, built from the tables `backtest::engine::costs`
-  charges. It used to be a table of spread/slippage/commission rows a user could
+- Backtest costs are NOT configurable. `GET /api/model` reports the Exness
+  Pro rule (`GET /api/models` both models), built from the tables `backtest::engine::costs` charges. It used to be a table of spread/slippage/commission rows a user could
   edit, every one of which the engine overrode before replaying a single bar.
+- There are NO ENVIRONMENTS. Accounts (`/api/accounts`), their strategies and
+  the strategy registry (`/api/strategies`) stand alone; the boot migration in
+  `database::connection` removes the old tables from a database that has them.
 - Keep request limits and structured JSON errors intact.
 - Keep timestamps as fake-UTC ET. Do not apply an `America/New_York` conversion.
 - Keep Parquet reads bounded and on demand. Never log binary route bodies or

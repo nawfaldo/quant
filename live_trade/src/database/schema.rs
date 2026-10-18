@@ -1,28 +1,9 @@
 pub(super) const SCHEMA: &str = r#"
-PRAGMA journal_mode=WAL;
-PRAGMA foreign_keys=ON;
 CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY, value TEXT NOT NULL
 );
-CREATE TABLE IF NOT EXISTS environments (
+CREATE TABLE IF NOT EXISTS account_trades (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  name TEXT NOT NULL COLLATE NOCASE,
-  created_at TEXT NOT NULL DEFAULT ''
-);
-CREATE UNIQUE INDEX IF NOT EXISTS environments_name_unique ON environments(name COLLATE NOCASE);
-CREATE TABLE IF NOT EXISTS environment_cost_rules (
-  environment_id INTEGER NOT NULL REFERENCES environments(id) ON DELETE CASCADE,
-  rule_id TEXT NOT NULL,
-  name TEXT NOT NULL,
-  detail TEXT NOT NULL,
-  market TEXT NOT NULL,
-  spread_bp REAL NOT NULL,
-  minimum_lots REAL NOT NULL,
-  PRIMARY KEY(environment_id, rule_id, market)
-);
-CREATE TABLE IF NOT EXISTS environment_trades (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  environment_id INTEGER NOT NULL REFERENCES environments(id) ON DELETE CASCADE,
   strategy_name TEXT NOT NULL,
   mt5pnl REAL NOT NULL DEFAULT 0,
   bookmap_entry_time TEXT NOT NULL DEFAULT '',
@@ -35,8 +16,6 @@ CREATE TABLE IF NOT EXISTS environment_trades (
   mt5_exit_price REAL NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT ''
 );
-CREATE INDEX IF NOT EXISTS idx_environment_trades_environment
-  ON environment_trades(environment_id,id);
 CREATE TABLE IF NOT EXISTS backtests (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   strategy TEXT NOT NULL DEFAULT '', run_at TEXT NOT NULL DEFAULT '',
@@ -73,9 +52,9 @@ CREATE TABLE IF NOT EXISTS backtests (
   max_daily_loss_date TEXT NOT NULL DEFAULT '',
   avg_daily_loss REAL NOT NULL DEFAULT 0,
   contribution TEXT NOT NULL DEFAULT '[]',
-  environment_id INTEGER REFERENCES environments(id)
+  -- The cost model the run was priced under. Exness Pro is the only one.
+  model TEXT NOT NULL DEFAULT 'exness_pro'
 );
-CREATE INDEX IF NOT EXISTS idx_backtests_environment ON backtests(environment_id);
 CREATE TABLE IF NOT EXISTS trades (
   id INTEGER PRIMARY KEY AUTOINCREMENT, backtest_id INTEGER NOT NULL,
   side TEXT NOT NULL DEFAULT 'long', entry_ts TEXT NOT NULL DEFAULT '',
@@ -115,7 +94,6 @@ CREATE TABLE IF NOT EXISTS mt5_accounts (
   id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL DEFAULT '',
   login TEXT NOT NULL DEFAULT '', password TEXT NOT NULL DEFAULT '',
   server TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT '',
-  environment_id INTEGER REFERENCES environments(id) ON DELETE CASCADE,
   equity_chart_range TEXT NOT NULL DEFAULT 'all',
   history_range TEXT NOT NULL DEFAULT '1week',
   account_type TEXT NOT NULL DEFAULT 'mt5'
@@ -169,8 +147,8 @@ CREATE TABLE IF NOT EXISTS mt5_execution_commands (
   strategy TEXT NOT NULL, action TEXT NOT NULL, symbol TEXT NOT NULL,
   volume REAL NOT NULL DEFAULT 0, trade_id INTEGER NOT NULL DEFAULT -1,
   closed_trade_id INTEGER NOT NULL DEFAULT -1,
-  environment_trade_id INTEGER NOT NULL DEFAULT -1,
-  closed_environment_trade_id INTEGER NOT NULL DEFAULT -1,
+  account_trade_id INTEGER NOT NULL DEFAULT -1,
+  closed_account_trade_id INTEGER NOT NULL DEFAULT -1,
   account_strategy_id INTEGER NOT NULL DEFAULT -1,
   position_key TEXT NOT NULL DEFAULT '',
   target_ticket INTEGER NOT NULL DEFAULT 0,
@@ -207,7 +185,7 @@ CREATE TABLE IF NOT EXISTS mt5_strategy_positions (
   ticket INTEGER NOT NULL DEFAULT 0,
   status TEXT NOT NULL DEFAULT 'pending_open',
   live_trade_id INTEGER NOT NULL DEFAULT -1,
-  environment_trade_id INTEGER NOT NULL DEFAULT -1,
+  account_trade_id INTEGER NOT NULL DEFAULT -1,
   updated_at TEXT NOT NULL DEFAULT '',
   PRIMARY KEY(account_strategy_id,position_key)
 );

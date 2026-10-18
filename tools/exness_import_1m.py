@@ -204,6 +204,52 @@ FUNDEDNEXT = {
     "xagusd": "XAGUSD",
     "xptusd": "XPTUSD",
     "xauusd": "XAUUSD",
+    "audcad": "AUDCAD",
+    "audchf": "AUDCHF",
+    "audnzd": "AUDNZD",
+    "audsgd": "AUDSGD",
+    "cadchf": "CADCHF",
+    "cadjpy": "CADJPY",
+    "chfjpy": "CHFJPY",
+    "euraud": "EURAUD",
+    "eurcad": "EURCAD",
+    "eurchf": "EURCHF",
+    "eurgbp": "EURGBP",
+    "eurhkd": "EURHKD",
+    "eurhuf": "EURHUF",
+    "eurnok": "EURNOK",
+    "eurnzd": "EURNZD",
+    "eursgd": "EURSGD",
+    "gbpaud": "GBPAUD",
+    "gbpcad": "GBPCAD",
+    "gbpchf": "GBPCHF",
+    "gbpnzd": "GBPNZD",
+    "gbpsgd": "GBPSGD",
+    "mxnjpy": "MXNJPY",
+    "nokjpy": "NOKJPY",
+    "nzdcad": "NZDCAD",
+    "nzdchf": "NZDCHF",
+    "nzdjpy": "NZDJPY",
+    "nzdsgd": "NZDSGD",
+    "nzdusd": "NZDUSD",
+    "sgdjpy": "SGDJPY",
+    "usdchf": "USDCHF",
+    "usdcnh": "USDCNH",
+    "usddkk": "USDDKK",
+    "usdhkd": "USDHKD",
+    "usdhuf": "USDHUF",
+    "usdmxn": "USDMXN",
+    "usdnok": "USDNOK",
+    "usdsek": "USDSEK",
+    "usdsgd": "USDSGD",
+    "usdzar": "USDZAR",
+    "zarjpy": "ZARJPY",
+    "nth25": "NTH25",
+    "swi20": "SWI20",
+    "us2000": "US2000",
+    "us30": "US30",
+    "vixcfd": "VIX",
+    "us500": "SPX500",
 }
 
 #: Everything that differs between brokers. `clock` says what the terminal's
@@ -422,7 +468,7 @@ def settled_span(table):
     return table_span(table) or (None, None, 0)
 
 
-def import_symbol(key, broker, writer, cutoff, first_year, table_prefix):
+def import_symbol(key, broker, writer, cutoff, first_year, table_prefix, start=None):
     table = safe_table(f"{table_prefix}{broker.lower()}_1m")
     if not mt5.symbol_select(broker, True):
         raise RuntimeError(f"cannot select {broker}: {mt5.last_error()}")
@@ -431,9 +477,11 @@ def import_symbol(key, broker, writer, cutoff, first_year, table_prefix):
     cutoff_seconds = int(cutoff.timestamp())
     total, empty_run = 0, 0
     for year in range(cutoff.year, first_year - 1, -1):
-        start = datetime(year, 1, 1, tzinfo=UTC)
+        year_start = datetime(year, 1, 1, tzinfo=UTC)
+        if start is not None:
+            year_start = max(year_start, start)
         stop = min(datetime(year + 1, 1, 1, tzinfo=UTC), cutoff)
-        if stop <= start:
+        if stop <= year_start:
             continue
         # ONE MONTH PER REQUEST, WRITTEN AS IT ARRIVES. The year is still the
         # unit the walk backwards counts in -- a year with no month in it is
@@ -441,7 +489,7 @@ def import_symbol(key, broker, writer, cutoff, first_year, table_prefix):
         # Writing per month also means an interrupted deep import keeps what it
         # already fetched instead of losing the year it was in the middle of.
         written = 0
-        for edge, following in month_windows(start, stop):
+        for edge, following in month_windows(year_start, stop):
             rows = settled_rates(broker, edge, following)
             if rows:
                 written += writer.write(table, rows, cutoff_seconds,
@@ -484,6 +532,10 @@ def parse_args():
                         help="last INCLUSIVE New York date to import "
                              "(default: two days ago)")
     parser.add_argument("--first-year", type=int, default=EARLIEST_YEAR)
+    parser.add_argument("--from-date", default=None,
+                        help="first INCLUSIVE New York date to import; with it "
+                             "only the months from that date on are fetched, "
+                             "which is what a same-day comparison needs")
     parser.add_argument("--terminal", type=Path, default=None,
                         help="default: the broker's own terminal")
     parser.add_argument("--timezone", default="America/New_York")
@@ -519,6 +571,11 @@ def main():
     # instant MT5 timestamps are expressed in before it filters anything.
     cutoff_ny = datetime.fromisoformat(args.to_date) + timedelta(days=1)
     cutoff = cutoff_ny.replace(tzinfo=wall_clock).astimezone(UTC)
+    start = None
+    if args.from_date:
+        start = (datetime.fromisoformat(args.from_date)
+                 .replace(tzinfo=wall_clock).astimezone(UTC))
+        args.first_year = start.year
 
     if not mt5.initialize(path=str(args.terminal)):
         print(f"MT5 initialization failed: {mt5.last_error()}", file=sys.stderr)
@@ -551,7 +608,8 @@ def main():
             log(f"{key} -> {symbol_map[key]}")
             try:
                 summary = import_symbol(key, symbol_map[key], writer, cutoff,
-                                        args.first_year, args.table_prefix)
+                                        args.first_year, args.table_prefix,
+                                        start)
             except Exception as error:  # noqa: BLE001 - one symbol must not
                 # cost the other ten; an unquoted CFD is a normal outcome.
                 log(f"{key}: {type(error).__name__}: {error}")

@@ -26,11 +26,6 @@ async fn main() -> anyhow::Result<()> {
 
     let db = Database::from_env()?;
     db.initialize().await?;
-    // The rules screen reads stored rows, and those rows are a view of the
-    // engine's compiled cost tables. Refreshing them here is what stops the two
-    // drifting: a binary that charges new spreads writes them before it serves
-    // its first request.
-    db.sync_environment_cost_rules().await?;
     let store = ParquetStore::from_env()?;
     let port = std::env::var("PORT")
         .ok()

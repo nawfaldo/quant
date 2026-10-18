@@ -49,6 +49,9 @@ pub fn combine_realized(
         initial,
         symbol: symbol.clone(),
         start_day: first.div_euclid(86400),
+        admission_day: None,
+        ended_markets: Vec::new(),
+        canon_replay: false,
         // Report-only, as with the quote rates below: this path re-reads stored
         // trades and opens nothing, so there is no exposure to cap.
         gross_cap: None,

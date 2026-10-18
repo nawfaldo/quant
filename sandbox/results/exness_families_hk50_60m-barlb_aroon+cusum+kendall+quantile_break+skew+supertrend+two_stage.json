@@ -1,0 +1,960 @@
+{
+  "asset_class": "index",
+  "bar_minutes": 60,
+  "families": {
+    "aroon": {
+      "in_sample": {
+        "annual": {
+          "2023": {
+            "max_dd_pct": 2.77,
+            "pnl": 18.24,
+            "return_pct": 1.82,
+            "trades": 27
+          },
+          "2024": {
+            "max_dd_pct": 3.66,
+            "pnl": 37.4,
+            "return_pct": 3.67,
+            "trades": 36
+          }
+        },
+        "breakeven_bp": 19.9326,
+        "drift_bp_per_trade": 0.1699,
+        "edge_vs_drift_bp": 19.7627,
+        "edge_vs_drift_t_stat": 2.14,
+        "fill_rate": 100.0,
+        "fills": 63,
+        "final": 1055.64,
+        "gross_bp_per_trade": 19.9326,
+        "long_share": 0.603,
+        "max_dd_pct": 3.66,
+        "monthly_sharpe": 0.157,
+        "n_months": 22,
+        "pf": 1.36,
+        "pnl": 55.64,
+        "positive_months": 14,
+        "return_pct": 5.56,
+        "signals": 63,
+        "trades": 63,
+        "win_rate": 0.524
+      },
+      "params": {
+        "direction": "fade",
+        "exit_mode": "rr_1",
+        "last_entry_minute": 480,
+        "min_strength": 70.0,
+        "period": 20,
+        "stop_day": 0.7,
+        "trend": "none",
+        "vol_mode": "calm"
+      },
+      "robust_neighbours": "3/4",
+      "score": 7.458472
+    },
+    "cusum": null,
+    "kendall": null,
+    "quantile_break": {
+      "in_sample": {
+        "annual": {
+          "2023": {
+            "max_dd_pct": 8.86,
+            "pnl": 15.71,
+            "return_pct": 1.57,
+            "trades": 114
+          },
+          "2024": {
+            "max_dd_pct": 3.14,
+            "pnl": 216.92,
+            "return_pct": 21.36,
+            "trades": 112
+          }
+        },
+        "breakeven_bp": 17.913,
+        "drift_bp_per_trade": -0.0714,
+        "edge_vs_drift_bp": 17.9844,
+        "edge_vs_drift_t_stat": 3.11,
+        "fill_rate": 100.0,
+        "fills": 226,
+        "final": 1232.63,
+        "gross_bp_per_trade": 17.913,
+        "long_share": 0.442,
+        "max_dd_pct": 8.86,
+        "monthly_sharpe": 0.389,
+        "n_months": 24,
+        "pf": 1.352,
+        "pnl": 232.63,
+        "positive_months": 14,
+        "return_pct": 23.26,
+        "signals": 226,
+        "trades": 226,
+        "win_rate": 0.558
+      },
+      "params": {
+        "buffer_atr": 0.0,
+        "channel": 120,
+        "direction": "breakout",
+        "exit_mode": "time_4",
+        "last_entry_minute": 480,
+        "share": 0.9,
+        "stop_day": 0.7,
+        "trend": "ema_20d",
+        "vol_mode": "none"
+      },
+      "robust_neighbours": "4/5",
+      "score": 20.40376
+    },
+    "skew": null,
+    "supertrend": null,
+    "two_stage": null
+  },
+  "protocol": {
+    "account": "Exness Pro 416209807",
+    "benchmark": null,
+    "broker": "exness",
+    "calendar": 252.0,
+    "candidate_counts": {
+      "aroon": 1152,
+      "cusum": 576,
+      "kendall": 1152,
+      "quantile_break": 2304,
+      "skew": 360,
+      "supertrend": 576,
+      "two_stage": 1152
+    },
+    "contract": {
+      "broker": "HK50",
+      "contract_size": 1.0,
+      "currency_profit": "HKD",
+      "fx_to_usd": 0.12745754070675205,
+      "multiplier": 0.12741158273216302,
+      "tick_size": 0.1,
+      "tick_value": 0.012741158273216303,
+      "volume_max": 500.0,
+      "volume_min": 0.07,
+      "volume_step": 0.01
+    },
+    "cost_model": "spread only; commission measured at 0.0000",
+    "data": {
+      "first_row": "2018-01-01",
+      "last_row": "2026-08-31",
+      "source": "1m",
+      "table": "hk50_1m",
+      "warmup": "2018-01-01"
+    },
+    "execution": {
+      "bars_priced": 13083,
+      "bridge_queue_seconds": 1.0,
+      "entry_days": null,
+      "exit": "market order one whole bar + lag + queue after the bar it fired on; no broker-side stop on this account",
+      "feed_lag_seconds": 0.6,
+      "fill_model": "exness",
+      "fills_only": false,
+      "financing": "multiday: 17:00 New York rollover schedule; current swap rates for every year",
+      "full_day": false,
+      "model": "live",
+      "modelled_cost": null,
+      "mtm_peak": true,
+      "spread_at_entry": "exness_hk50_1m",
+      "swap_free": false,
+      "window": "rth"
+    },
+    "family_groups": {
+      "aroon": "oscillator",
+      "cusum": "adaptive",
+      "kendall": "pathstat",
+      "quantile_break": "adaptive",
+      "skew": "regime",
+      "supertrend": "geometry",
+      "two_stage": "combo"
+    },
+    "holding": {
+      "aroon": "session",
+      "cusum": "session",
+      "kendall": "session",
+      "quantile_break": "session",
+      "skew": "swing",
+      "supertrend": "session",
+      "two_stage": "session"
+    },
+    "holdout": "2025-01-01 through 2026-08-16",
+    "in_sample_years": [
+      2023,
+      2024
+    ],
+    "initial_balance": 1000.0,
+    "risk_unit": "stop_day x average true daily range over 14 days -- timeframe invariant",
+    "select_rank": "tstat",
+    "session_minutes": [
+      180,
+      600
+    ],
+    "shift_hours": 6,
+    "sizing": "1.5% volatility-throttled stop risk, MT5 lots, 4x notional ceiling",
+    "slippage_bp": 0.2,
+    "spread_bp": 1.9711,
+    "spread_quoted_at": "session",
+    "total_cost_bp": 2.1711,
+    "warning": null
+  },
+  "refused": {
+    "cusum": {
+      "best_by_return": {
+        "fill_rate": 100.0,
+        "max_dd_pct": 6.89,
+        "params": {
+          "direction": "fade",
+          "exit_mode": "trail_1.5",
+          "last_entry_minute": 480,
+          "multiple": 2.0,
+          "stop_day": 0.2,
+          "trend": "ema_50d",
+          "vol_mode": "calm"
+        },
+        "pf": 1.47,
+        "positive_years": 2,
+        "return_pct": 13.48,
+        "trades": 35
+      },
+      "binding": [],
+      "cells": 576,
+      "refused_by": {
+        "annual_dd": 274,
+        "fill_rate": 0,
+        "max_dd": 398,
+        "positive_years": 556,
+        "profit_factor": 522,
+        "trades": 72
+      },
+      "requires": {
+        "max_dd_pct": 20.0,
+        "of_years": 2,
+        "positive_years": 2,
+        "profit_factor": 1.05,
+        "trades": 50
+      }
+    },
+    "kendall": {
+      "best_by_return": {
+        "fill_rate": 100.0,
+        "max_dd_pct": 14.17,
+        "params": {
+          "direction": "breakout",
+          "exit_mode": "time_4",
+          "last_entry_minute": 480,
+          "period": 100,
+          "stop_day": 0.4,
+          "threshold": 3.5,
+          "trend": "ema_20d",
+          "vol_mode": "none"
+        },
+        "pf": 1.155,
+        "positive_years": 2,
+        "return_pct": 18.81,
+        "trades": 235
+      },
+      "binding": [],
+      "cells": 1152,
+      "refused_by": {
+        "annual_dd": 600,
+        "fill_rate": 0,
+        "max_dd": 806,
+        "positive_years": 1122,
+        "profit_factor": 1082,
+        "trades": 72
+      },
+      "requires": {
+        "max_dd_pct": 20.0,
+        "of_years": 2,
+        "positive_years": 2,
+        "profit_factor": 1.05,
+        "trades": 50
+      }
+    },
+    "skew": {
+      "best_by_return": {
+        "fill_rate": 94.2,
+        "max_dd_pct": 10.22,
+        "params": {
+          "exit_mode": "rr_2",
+          "mode": "negative",
+          "side": "short",
+          "stop_day": 0.7,
+          "threshold": 0.3,
+          "trend": "ema_50d",
+          "vol_mode": "none"
+        },
+        "pf": 1.04,
+        "positive_years": 1,
+        "return_pct": 1.95,
+        "trades": 179
+      },
+      "binding": [
+        "positive_years"
+      ],
+      "cells": 360,
+      "refused_by": {
+        "annual_dd": 126,
+        "fill_rate": 0,
+        "max_dd": 225,
+        "positive_years": 360,
+        "profit_factor": 355,
+        "trades": 30
+      },
+      "requires": {
+        "max_dd_pct": 20.0,
+        "of_years": 2,
+        "positive_years": 2,
+        "profit_factor": 1.05,
+        "trades": 50
+      }
+    },
+    "supertrend": {
+      "best_by_return": {
+        "fill_rate": 100.0,
+        "max_dd_pct": 14.21,
+        "params": {
+          "direction": "fade",
+          "exit_mode": "time_4",
+          "last_entry_minute": 480,
+          "mult": 2.0,
+          "stop_day": 0.2,
+          "trend": "ema_50d",
+          "vol_mode": "none"
+        },
+        "pf": 1.314,
+        "positive_years": 2,
+        "return_pct": 19.42,
+        "trades": 71
+      },
+      "binding": [],
+      "cells": 576,
+      "refused_by": {
+        "annual_dd": 122,
+        "fill_rate": 24,
+        "max_dd": 138,
+        "positive_years": 474,
+        "profit_factor": 398,
+        "trades": 192
+      },
+      "requires": {
+        "max_dd_pct": 20.0,
+        "of_years": 2,
+        "positive_years": 2,
+        "profit_factor": 1.05,
+        "trades": 50
+      }
+    },
+    "two_stage": {
+      "best_by_return": {
+        "fill_rate": 100.0,
+        "max_dd_pct": 10.23,
+        "params": {
+          "coil": "squeeze",
+          "direction": "fade",
+          "exit_mode": "trail_1.5",
+          "last_entry_minute": 480,
+          "stop_day": 0.2,
+          "trend": "ema_50d",
+          "vol_mode": "calm",
+          "window": 6
+        },
+        "pf": 1.837,
+        "positive_years": 2,
+        "return_pct": 40.04,
+        "trades": 48
+      },
+      "binding": [],
+      "cells": 1152,
+      "refused_by": {
+        "annual_dd": 552,
+        "fill_rate": 0,
+        "max_dd": 808,
+        "positive_years": 1026,
+        "profit_factor": 940,
+        "trades": 48
+      },
+      "requires": {
+        "max_dd_pct": 20.0,
+        "of_years": 2,
+        "positive_years": 2,
+        "profit_factor": 1.05,
+        "trades": 50
+      }
+    }
+  },
+  "scope": "aroon+cusum+kendall+quantile_break+skew+supertrend+two_stage",
+  "seal_sha256": "532e6cdf5ab2b950c935a397e23d1777026c6f94a104d87ed125c24f16d32bd8",
+  "sealed": true,
+  "symbol": "hk50",
+  "timeframe": "60m-barlb",
+  "validation": {
+    "aroon": {
+      "cost_sweep_bp": {
+        "0.0": {
+          "annual": {
+            "2025": {
+              "max_dd_pct": 5.5,
+              "pnl": -55.03,
+              "return_pct": -5.5,
+              "trades": 28
+            },
+            "2026": {
+              "max_dd_pct": 2.52,
+              "pnl": 15.56,
+              "return_pct": 1.65,
+              "trades": 19
+            }
+          },
+          "breakeven_bp": -5.3351,
+          "drift_bp_per_trade": 0.0635,
+          "edge_vs_drift_bp": -5.3986,
+          "edge_vs_drift_t_stat": -0.62,
+          "fill_rate": 100.0,
+          "fills": 47,
+          "final": 960.53,
+          "gross_bp_per_trade": -5.3351,
+          "long_share": 0.574,
+          "max_dd_pct": 7.01,
+          "monthly_sharpe": -0.228,
+          "n_months": 19,
+          "pf": 0.706,
+          "pnl": -39.47,
+          "positive_months": 6,
+          "return_pct": -3.95,
+          "signals": 47,
+          "trades": 47,
+          "win_rate": 0.489
+        },
+        "1.0": {
+          "annual": {
+            "2025": {
+              "max_dd_pct": 5.85,
+              "pnl": -58.46,
+              "return_pct": -5.85,
+              "trades": 28
+            },
+            "2026": {
+              "max_dd_pct": 2.54,
+              "pnl": 12.99,
+              "return_pct": 1.38,
+              "trades": 19
+            }
+          },
+          "breakeven_bp": -5.3351,
+          "drift_bp_per_trade": 0.0635,
+          "edge_vs_drift_bp": -5.3986,
+          "edge_vs_drift_t_stat": -0.62,
+          "fill_rate": 100.0,
+          "fills": 47,
+          "final": 954.54,
+          "gross_bp_per_trade": -5.3351,
+          "long_share": 0.574,
+          "max_dd_pct": 7.51,
+          "monthly_sharpe": -0.264,
+          "n_months": 19,
+          "pf": 0.669,
+          "pnl": -45.46,
+          "positive_months": 5,
+          "return_pct": -4.55,
+          "signals": 47,
+          "trades": 47,
+          "win_rate": 0.468
+        },
+        "10.0": {
+          "annual": {
+            "2025": {
+              "max_dd_pct": 8.79,
+              "pnl": -87.88,
+              "return_pct": -8.79,
+              "trades": 28
+            },
+            "2026": {
+              "max_dd_pct": 3.33,
+              "pnl": -7.84,
+              "return_pct": -0.86,
+              "trades": 19
+            }
+          },
+          "breakeven_bp": -5.3351,
+          "drift_bp_per_trade": 0.0635,
+          "edge_vs_drift_bp": -5.3986,
+          "edge_vs_drift_t_stat": -0.62,
+          "fill_rate": 100.0,
+          "fills": 47,
+          "final": 904.28,
+          "gross_bp_per_trade": -5.3351,
+          "long_share": 0.574,
+          "max_dd_pct": 11.83,
+          "monthly_sharpe": -0.575,
+          "n_months": 19,
+          "pf": 0.418,
+          "pnl": -95.72,
+          "positive_months": 4,
+          "return_pct": -9.57,
+          "signals": 47,
+          "trades": 47,
+          "win_rate": 0.362
+        },
+        "20.0": {
+          "annual": {
+            "2025": {
+              "max_dd_pct": 11.95,
+              "pnl": -119.5,
+              "return_pct": -11.95,
+              "trades": 28
+            },
+            "2026": {
+              "max_dd_pct": 5.06,
+              "pnl": -29.46,
+              "return_pct": -3.35,
+              "trades": 19
+            }
+          },
+          "breakeven_bp": -5.3351,
+          "drift_bp_per_trade": 0.0635,
+          "edge_vs_drift_bp": -5.3986,
+          "edge_vs_drift_t_stat": -0.62,
+          "fill_rate": 100.0,
+          "fills": 47,
+          "final": 851.04,
+          "gross_bp_per_trade": -5.3351,
+          "long_share": 0.574,
+          "max_dd_pct": 16.41,
+          "monthly_sharpe": -0.896,
+          "n_months": 19,
+          "pf": 0.256,
+          "pnl": -148.96,
+          "positive_months": 2,
+          "return_pct": -14.9,
+          "signals": 47,
+          "trades": 47,
+          "win_rate": 0.213
+        },
+        "3.0": {
+          "annual": {
+            "2025": {
+              "max_dd_pct": 6.52,
+              "pnl": -65.18,
+              "return_pct": -6.52,
+              "trades": 28
+            },
+            "2026": {
+              "max_dd_pct": 2.63,
+              "pnl": 8.37,
+              "return_pct": 0.9,
+              "trades": 19
+            }
+          },
+          "breakeven_bp": -5.3351,
+          "drift_bp_per_trade": 0.0635,
+          "edge_vs_drift_bp": -5.3986,
+          "edge_vs_drift_t_stat": -0.62,
+          "fill_rate": 100.0,
+          "fills": 47,
+          "final": 943.19,
+          "gross_bp_per_trade": -5.3351,
+          "long_share": 0.574,
+          "max_dd_pct": 8.5,
+          "monthly_sharpe": -0.333,
+          "n_months": 19,
+          "pf": 0.602,
+          "pnl": -56.81,
+          "positive_months": 5,
+          "return_pct": -5.68,
+          "signals": 47,
+          "trades": 47,
+          "win_rate": 0.447
+        },
+        "30.0": {
+          "annual": {
+            "2025": {
+              "max_dd_pct": 14.94,
+              "pnl": -149.43,
+              "return_pct": -14.94,
+              "trades": 28
+            },
+            "2026": {
+              "max_dd_pct": 6.76,
+              "pnl": -48.84,
+              "return_pct": -5.74,
+              "trades": 19
+            }
+          },
+          "breakeven_bp": -5.3351,
+          "drift_bp_per_trade": 0.0635,
+          "edge_vs_drift_bp": -5.3986,
+          "edge_vs_drift_t_stat": -0.62,
+          "fill_rate": 100.0,
+          "fills": 47,
+          "final": 801.73,
+          "gross_bp_per_trade": -5.3351,
+          "long_share": 0.574,
+          "max_dd_pct": 20.69,
+          "monthly_sharpe": -1.168,
+          "n_months": 19,
+          "pf": 0.171,
+          "pnl": -198.27,
+          "positive_months": 1,
+          "return_pct": -19.83,
+          "signals": 47,
+          "trades": 47,
+          "win_rate": 0.17
+        },
+        "5.0": {
+          "annual": {
+            "2025": {
+              "max_dd_pct": 7.15,
+              "pnl": -71.46,
+              "return_pct": -7.15,
+              "trades": 28
+            },
+            "2026": {
+              "max_dd_pct": 2.65,
+              "pnl": 3.55,
+              "return_pct": 0.38,
+              "trades": 19
+            }
+          },
+          "breakeven_bp": -5.3351,
+          "drift_bp_per_trade": 0.0635,
+          "edge_vs_drift_bp": -5.3986,
+          "edge_vs_drift_t_stat": -0.62,
+          "fill_rate": 100.0,
+          "fills": 47,
+          "final": 932.09,
+          "gross_bp_per_trade": -5.3351,
+          "long_share": 0.574,
+          "max_dd_pct": 9.4,
+          "monthly_sharpe": -0.403,
+          "n_months": 19,
+          "pf": 0.542,
+          "pnl": -67.91,
+          "positive_months": 5,
+          "return_pct": -6.79,
+          "signals": 47,
+          "trades": 47,
+          "win_rate": 0.426
+        }
+      },
+      "oos": {
+        "annual": {
+          "2025": {
+            "max_dd_pct": 7.74,
+            "pnl": -77.37,
+            "return_pct": -7.74,
+            "trades": 28
+          },
+          "2026": {
+            "max_dd_pct": 2.63,
+            "pnl": 6.44,
+            "return_pct": 0.7,
+            "trades": 19
+          }
+        },
+        "breakeven_bp": -5.3351,
+        "drift_bp_per_trade": 0.0635,
+        "edge_vs_drift_bp": -5.3986,
+        "edge_vs_drift_t_stat": -0.62,
+        "fill_rate": 100.0,
+        "fills": 47,
+        "final": 929.07,
+        "gross_bp_per_trade": -5.3351,
+        "long_share": 0.574,
+        "max_dd_pct": 9.82,
+        "monthly_sharpe": -0.412,
+        "n_months": 19,
+        "pf": 0.528,
+        "pnl": -70.93,
+        "positive_months": 5,
+        "return_pct": -7.09,
+        "signals": 47,
+        "trades": 47,
+        "win_rate": 0.426
+      }
+    },
+    "quantile_break": {
+      "cost_sweep_bp": {
+        "0.0": {
+          "annual": {
+            "2025": {
+              "max_dd_pct": 10.28,
+              "pnl": -46.29,
+              "return_pct": -4.63,
+              "trades": 112
+            },
+            "2026": {
+              "max_dd_pct": 7.27,
+              "pnl": -56.98,
+              "return_pct": -5.97,
+              "trades": 83
+            }
+          },
+          "breakeven_bp": -1.5398,
+          "drift_bp_per_trade": 0.9591,
+          "edge_vs_drift_bp": -2.499,
+          "edge_vs_drift_t_stat": -0.44,
+          "fill_rate": 95.1,
+          "fills": 195,
+          "final": 896.73,
+          "gross_bp_per_trade": -1.5398,
+          "long_share": 0.631,
+          "max_dd_pct": 12.6,
+          "monthly_sharpe": -0.3,
+          "n_months": 20,
+          "pf": 0.828,
+          "pnl": -103.27,
+          "positive_months": 9,
+          "return_pct": -10.33,
+          "signals": 205,
+          "trades": 195,
+          "win_rate": 0.456
+        },
+        "1.0": {
+          "annual": {
+            "2025": {
+              "max_dd_pct": 10.5,
+              "pnl": -58.89,
+              "return_pct": -5.89,
+              "trades": 112
+            },
+            "2026": {
+              "max_dd_pct": 7.88,
+              "pnl": -63.12,
+              "return_pct": -6.71,
+              "trades": 83
+            }
+          },
+          "breakeven_bp": -1.5398,
+          "drift_bp_per_trade": 0.9591,
+          "edge_vs_drift_bp": -2.499,
+          "edge_vs_drift_t_stat": -0.44,
+          "fill_rate": 95.1,
+          "fills": 195,
+          "final": 877.99,
+          "gross_bp_per_trade": -1.5398,
+          "long_share": 0.631,
+          "max_dd_pct": 13.92,
+          "monthly_sharpe": -0.355,
+          "n_months": 20,
+          "pf": 0.798,
+          "pnl": -122.01,
+          "positive_months": 8,
+          "return_pct": -12.2,
+          "signals": 205,
+          "trades": 195,
+          "win_rate": 0.441
+        },
+        "10.0": {
+          "annual": {
+            "2025": {
+              "max_dd_pct": 17.22,
+              "pnl": -165.84,
+              "return_pct": -16.58,
+              "trades": 112
+            },
+            "2026": {
+              "max_dd_pct": 15.12,
+              "pnl": -121.3,
+              "return_pct": -14.54,
+              "trades": 83
+            }
+          },
+          "breakeven_bp": -1.5398,
+          "drift_bp_per_trade": 0.9591,
+          "edge_vs_drift_bp": -2.499,
+          "edge_vs_drift_t_stat": -0.44,
+          "fill_rate": 95.1,
+          "fills": 195,
+          "final": 712.86,
+          "gross_bp_per_trade": -1.5398,
+          "long_share": 0.631,
+          "max_dd_pct": 28.82,
+          "monthly_sharpe": -0.823,
+          "n_months": 20,
+          "pf": 0.56,
+          "pnl": -287.14,
+          "positive_months": 4,
+          "return_pct": -28.71,
+          "signals": 205,
+          "trades": 195,
+          "win_rate": 0.369
+        },
+        "20.0": {
+          "annual": {
+            "2025": {
+              "max_dd_pct": 27.24,
+              "pnl": -272.35,
+              "return_pct": -27.24,
+              "trades": 112
+            },
+            "2026": {
+              "max_dd_pct": 22.82,
+              "pnl": -163.87,
+              "return_pct": -22.52,
+              "trades": 83
+            }
+          },
+          "breakeven_bp": -1.5398,
+          "drift_bp_per_trade": 0.9591,
+          "edge_vs_drift_bp": -2.499,
+          "edge_vs_drift_t_stat": -0.44,
+          "fill_rate": 95.1,
+          "fills": 195,
+          "final": 563.78,
+          "gross_bp_per_trade": -1.5398,
+          "long_share": 0.631,
+          "max_dd_pct": 43.63,
+          "monthly_sharpe": -1.173,
+          "n_months": 20,
+          "pf": 0.378,
+          "pnl": -436.22,
+          "positive_months": 3,
+          "return_pct": -43.62,
+          "signals": 205,
+          "trades": 195,
+          "win_rate": 0.333
+        },
+        "3.0": {
+          "annual": {
+            "2025": {
+              "max_dd_pct": 10.97,
+              "pnl": -83.43,
+              "return_pct": -8.34,
+              "trades": 112
+            },
+            "2026": {
+              "max_dd_pct": 9.42,
+              "pnl": -78.23,
+              "return_pct": -8.54,
+              "trades": 83
+            }
+          },
+          "breakeven_bp": -1.5398,
+          "drift_bp_per_trade": 0.9591,
+          "edge_vs_drift_bp": -2.499,
+          "edge_vs_drift_t_stat": -0.44,
+          "fill_rate": 95.1,
+          "fills": 195,
+          "final": 838.34,
+          "gross_bp_per_trade": -1.5398,
+          "long_share": 0.631,
+          "max_dd_pct": 16.83,
+          "monthly_sharpe": -0.471,
+          "n_months": 20,
+          "pf": 0.737,
+          "pnl": -161.66,
+          "positive_months": 7,
+          "return_pct": -16.17,
+          "signals": 205,
+          "trades": 195,
+          "win_rate": 0.421
+        },
+        "30.0": {
+          "annual": {
+            "2025": {
+              "max_dd_pct": 36.41,
+              "pnl": -364.05,
+              "return_pct": -36.41,
+              "trades": 112
+            },
+            "2026": {
+              "max_dd_pct": 29.81,
+              "pnl": -188.55,
+              "return_pct": -29.65,
+              "trades": 83
+            }
+          },
+          "breakeven_bp": -1.5398,
+          "drift_bp_per_trade": 0.9591,
+          "edge_vs_drift_bp": -2.499,
+          "edge_vs_drift_t_stat": -0.44,
+          "fill_rate": 95.1,
+          "fills": 195,
+          "final": 447.4,
+          "gross_bp_per_trade": -1.5398,
+          "long_share": 0.631,
+          "max_dd_pct": 55.26,
+          "monthly_sharpe": -1.346,
+          "n_months": 20,
+          "pf": 0.259,
+          "pnl": -552.6,
+          "positive_months": 1,
+          "return_pct": -55.26,
+          "signals": 205,
+          "trades": 195,
+          "win_rate": 0.277
+        },
+        "5.0": {
+          "annual": {
+            "2025": {
+              "max_dd_pct": 12.77,
+              "pnl": -107.91,
+              "return_pct": -10.79,
+              "trades": 112
+            },
+            "2026": {
+              "max_dd_pct": 11.07,
+              "pnl": -92.08,
+              "return_pct": -10.32,
+              "trades": 83
+            }
+          },
+          "breakeven_bp": -1.5398,
+          "drift_bp_per_trade": 0.9591,
+          "edge_vs_drift_bp": -2.499,
+          "edge_vs_drift_t_stat": -0.44,
+          "fill_rate": 95.1,
+          "fills": 195,
+          "final": 800.01,
+          "gross_bp_per_trade": -1.5398,
+          "long_share": 0.631,
+          "max_dd_pct": 20.41,
+          "monthly_sharpe": -0.581,
+          "n_months": 20,
+          "pf": 0.68,
+          "pnl": -199.99,
+          "positive_months": 6,
+          "return_pct": -20.0,
+          "signals": 205,
+          "trades": 195,
+          "win_rate": 0.405
+        }
+      },
+      "oos": {
+        "annual": {
+          "2025": {
+            "max_dd_pct": 14.9,
+            "pnl": -133.07,
+            "return_pct": -13.31,
+            "trades": 112
+          },
+          "2026": {
+            "max_dd_pct": 10.41,
+            "pnl": -82.85,
+            "return_pct": -9.56,
+            "trades": 83
+          }
+        },
+        "breakeven_bp": -1.5398,
+        "drift_bp_per_trade": 0.9591,
+        "edge_vs_drift_bp": -2.499,
+        "edge_vs_drift_t_stat": -0.44,
+        "fill_rate": 95.1,
+        "fills": 195,
+        "final": 784.09,
+        "gross_bp_per_trade": -1.5398,
+        "long_share": 0.631,
+        "max_dd_pct": 21.86,
+        "monthly_sharpe": -0.603,
+        "n_months": 20,
+        "pf": 0.653,
+        "pnl": -215.91,
+        "positive_months": 6,
+        "return_pct": -21.59,
+        "signals": 205,
+        "trades": 195,
+        "win_rate": 0.395
+      }
+    }
+  }
+}

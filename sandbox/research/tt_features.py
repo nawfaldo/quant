@@ -353,6 +353,42 @@ def ut_bot(bars, ctx, key=1.0, n=10):
     return cached(ctx, ("ttf_ut", key, n), build)
 
 
+def supertrend(bars, ctx, n=10, mult=3.0):
+    """TradingView's SuperTrend: ATR(`n`) bands `mult` wide around hl2 that
+    only ratchet in the trend's favour. `dir[i]` is +1 up / -1 down, `flip[i]`
+    +1 on the bar it turns up, -1 down, `line[i]` the active band."""
+    def build():
+        b = base(bars, ctx)
+        h, l, c, m = b["h"], b["l"], b["c"], b["n"]
+        a = atr(bars, ctx, n)
+        d = numpy.zeros(m, dtype=numpy.int8)
+        flip = numpy.zeros(m, dtype=numpy.int8)
+        line = numpy.full(m, NAN)
+        up = dn = NAN
+        t = 1
+        for i in range(m):
+            if not math.isfinite(a[i]):
+                continue
+            mid = (h[i] + l[i]) / 2.0
+            bu, bd = mid - mult * a[i], mid + mult * a[i]
+            if math.isfinite(up) and c[i - 1] > up:
+                bu = max(bu, up)
+            if math.isfinite(dn) and c[i - 1] < dn:
+                bd = min(bd, dn)
+            prev = t
+            if math.isfinite(dn) and t == -1 and c[i] > dn:
+                t = 1
+            elif math.isfinite(up) and t == 1 and c[i] < up:
+                t = -1
+            up, dn = bu, bd
+            d[i] = t
+            line[i] = up if t == 1 else dn
+            if t != prev:
+                flip[i] = t
+        return {"dir": d, "flip": flip, "line": line}
+    return cached(ctx, ("ttf_st", n, mult), build)
+
+
 def squeeze(bars, ctx, n=20, bb=2.0, kc=1.5):
     """LazyBear's Squeeze Momentum: `on[i]` while the Bollinger Bands sit
     inside the Keltner Channel; `val[i]` the linear-regression momentum of
@@ -656,6 +692,12 @@ WINDOWS = {
     "midnight": (0, 5),             # the 00:00 open
     "london_open": (3 * 60, 3 * 60 + 5),
     "h0_4": (0, 4 * 60),            # the day's first 4-hour candle
+    "london_h1": (3 * 60, 4 * 60),  # London's first hour
+    "ny_h1": (9 * 60 + 30, 10 * 60 + 30),   # New York's first cash hour
+    "prelondon2": (60, 3 * 60),     # the 2 hours before London opens
+    "prelondon3": (0, 3 * 60),      # the 3 hours before London opens
+    "overnight_ny": (18 * 60, 9 * 60 + 30),   # globex reopen to the New York cash open
+    "h5_4": (5 * 60, 9 * 60),       # the 05:00 four-hour candle
 }
 
 

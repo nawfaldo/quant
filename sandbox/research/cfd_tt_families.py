@@ -55,7 +55,12 @@ import sys
 if any(a == "--broker" or a.startswith("--broker=") for a in sys.argv[1:]):
     raise SystemExit("cfd_tt_families is priced on Exness Pro only; "
                      "drop --broker")
-os.environ["CFD_BROKER"] = "exness"
+#: `CFD_BROKER=fundednext` in the environment prices the same families at
+#: FundedNext instead; results then seal as `fundednext_tt_families_*`.
+if os.environ.get("CFD_BROKER", "exness") not in ("exness", "fundednext"):
+    raise SystemExit(f"cfd_tt_families prices exness or fundednext, not "
+                     f"{os.environ['CFD_BROKER']}")
+os.environ["CFD_BROKER"] = os.environ.get("CFD_BROKER", "exness")
 #: Full power by default: every core (see `main`), and 2 GB kept back for the
 #: OS instead of `cfd_families`' 4. `fit_workers` still drops workers if the
 #: contexts would not fit in what is free.
@@ -329,10 +334,50 @@ from sandbox.research import tt_luxalgo                          # noqa: E402
 from sandbox.research import tt_quantpad                         # noqa: E402
 from sandbox.research import tt_thequantbuilder                  # noqa: E402
 from sandbox.research import tt_tradingdata2                     # noqa: E402
+from sandbox.research import tt_fluxchart                        # noqa: E402
+from sandbox.research import tt_quantcrawler                     # noqa: E402
+from sandbox.research import tt_deltatrendtrading                # noqa: E402
+from sandbox.research import tt_jasonjets                        # noqa: E402
+from sandbox.research import tt_tst_life                         # noqa: E402
+from sandbox.research import tt_artybryjatma                     # noqa: E402
+from sandbox.research import tt_tradingrush                      # noqa: E402
+from sandbox.research import tt_neurotrader                      # noqa: E402
+from sandbox.research import tt_quantitativo                     # noqa: E402
+from sandbox.research import tt_setup4alpha                      # noqa: E402
+from sandbox.research import tt_algovibes                        # noqa: E402
+from sandbox.research import tt_parttimelarry                    # noqa: E402
+from sandbox.research import tt_tomtrades                        # noqa: E402
+from sandbox.research import tt_bionicnq                         # noqa: E402
+from sandbox.research import tt_okala8020                        # noqa: E402
+from sandbox.research import tt_tradingmythbusters               # noqa: E402
+from sandbox.research import tt_codetrading                      # noqa: E402
+from sandbox.research import tt_quantifiedstrategies             # noqa: E402
+from sandbox.research import tt_blissdgl                         # noqa: E402
+from sandbox.research import tt_quanttactic                      # noqa: E402
+from sandbox.research import tt_mulhamtrading                    # noqa: E402
+from sandbox.research import tt_moneyballaustin                  # noqa: E402
+from sandbox.research import tt_nomanskii                        # noqa: E402
+from sandbox.research import tt_tradewithpat                     # noqa: E402
+from sandbox.research import tt_thecrypteller                    # noqa: E402
+from sandbox.research import tt_chartfanatics                    # noqa: E402
+from sandbox.research import tt_danielholmestrades               # noqa: E402
+from sandbox.research import tt_piplabtrading                    # noqa: E402
+from sandbox.research import tt_safucrypto                       # noqa: E402
+from sandbox.research import tt_yoforex3                         # noqa: E402
+from sandbox.research import tt_algotradepro0                    # noqa: E402
+from sandbox.research import tt_rsipro360                        # noqa: E402
+from sandbox.research import tt_tradingwithmustafa               # noqa: E402
+from sandbox.research import tt_itsjjsimon                       # noqa: E402
+from sandbox.research import tt_novo_vox                         # noqa: E402
+from sandbox.research import tt_pyquantlab                       # noqa: E402
+from sandbox.research import tt_marlon_quantlab                  # noqa: E402
+from sandbox.research import tt_kreativekodr                     # noqa: E402
+from sandbox.research import tt_jadetantrade                     # noqa: E402
+from sandbox.research import tt_macmoney82                       # noqa: E402
 
 #: Every creator module, in the order its group is listed.
 CREATOR_MODULES = (tt_luxalgo, tt_quantpad, tt_thequantbuilder,
-                   tt_tradingdata2)
+                   tt_tradingdata2, tt_fluxchart, tt_quantcrawler, tt_deltatrendtrading, tt_jasonjets, tt_tst_life, tt_artybryjatma, tt_tradingrush, tt_neurotrader, tt_quantitativo, tt_setup4alpha, tt_algovibes, tt_parttimelarry, tt_tomtrades, tt_bionicnq, tt_okala8020, tt_tradingmythbusters, tt_codetrading, tt_quantifiedstrategies, tt_blissdgl, tt_quanttactic, tt_mulhamtrading, tt_moneyballaustin, tt_nomanskii, tt_tradewithpat, tt_thecrypteller, tt_chartfanatics, tt_danielholmestrades, tt_piplabtrading, tt_safucrypto, tt_yoforex3, tt_algotradepro0, tt_rsipro360, tt_tradingwithmustafa, tt_itsjjsimon, tt_novo_vox, tt_pyquantlab, tt_marlon_quantlab, tt_kreativekodr, tt_jadetantrade, tt_macmoney82)
 
 #: Axes that change the exit or the engine's own filters, never the events.
 EVENT_EXIT_KEYS = frozenset(("exit_mode", "stop_day", "trend", "vol_mode",
@@ -350,7 +395,16 @@ def _events(family, bars, ctx, params):
         if len(cache) >= EVENT_CACHE_SIZE:
             cache.pop(next(iter(cache)))
         core = {k: v for k, v in params.items() if k != "last_entry_minute"}
-        hit = cache[key] = EVENT_FAMILIES[family](bars, ctx, core)
+        try:
+            hit = EVENT_FAMILIES[family](bars, ctx, core)
+        except (ValueError, IndexError, KeyError, ZeroDivisionError):
+            # Only outside RTH: a creator rule written around the cash session
+            # (its last hour, its open) can find an empty slice in the `off`
+            # window. It never fires there; in RTH the error still surfaces.
+            if cf.window_of(ctx["cfg"]) == "rth":
+                raise
+            hit = {}
+        cache[key] = hit
     return hit
 
 
@@ -382,6 +436,46 @@ GROUPS = {
     "quantpad": tuple(tt_quantpad.SPECS),
     "thequantbuilder": tuple(tt_thequantbuilder.SPECS),
     "tradingdata2": tuple(tt_tradingdata2.SPECS),
+    "fluxchart": tuple(tt_fluxchart.SPECS),
+    "quantcrawler": tuple(tt_quantcrawler.SPECS),
+    "deltatrendtrading": tuple(tt_deltatrendtrading.SPECS),
+    "jasonjets": tuple(tt_jasonjets.SPECS),
+    "tst_life": tuple(tt_tst_life.SPECS),
+    "artybryjatma": tuple(tt_artybryjatma.SPECS),
+    "tradingrush": tuple(tt_tradingrush.SPECS),
+    "neurotrader": tuple(tt_neurotrader.SPECS),
+    "quantitativo": tuple(tt_quantitativo.SPECS),
+    "setup4alpha": tuple(tt_setup4alpha.SPECS),
+    "algovibes": tuple(tt_algovibes.SPECS),
+    "parttimelarry": tuple(tt_parttimelarry.SPECS),
+    "tomtrades": tuple(tt_tomtrades.SPECS),
+    "bionicnq": tuple(tt_bionicnq.SPECS),
+    "okala8020": tuple(tt_okala8020.SPECS),
+    "tradingmythbusters": tuple(tt_tradingmythbusters.SPECS),
+    "codetrading": tuple(tt_codetrading.SPECS),
+    "quantifiedstrategies": tuple(tt_quantifiedstrategies.SPECS),
+    "blissdgl": tuple(tt_blissdgl.SPECS),
+    "quanttactic": tuple(tt_quanttactic.SPECS),
+    "mulhamtrading": tuple(tt_mulhamtrading.SPECS),
+    "moneyballaustin": tuple(tt_moneyballaustin.SPECS),
+    "nomanskii": tuple(tt_nomanskii.SPECS),
+    "tradewithpat": tuple(tt_tradewithpat.SPECS),
+    "thecrypteller": tuple(tt_thecrypteller.SPECS),
+    "chartfanatics": tuple(tt_chartfanatics.SPECS),
+    "danielholmestrades": tuple(tt_danielholmestrades.SPECS),
+    "piplabtrading": tuple(tt_piplabtrading.SPECS),
+    "safucrypto": tuple(tt_safucrypto.SPECS),
+    "yoforex3": tuple(tt_yoforex3.SPECS),
+    "algotradepro0": tuple(tt_algotradepro0.SPECS),
+    "rsipro360": tuple(tt_rsipro360.SPECS),
+    "tradingwithmustafa": tuple(tt_tradingwithmustafa.SPECS),
+    "itsjjsimon": tuple(tt_itsjjsimon.SPECS),
+    "novo_vox": tuple(tt_novo_vox.SPECS),
+    "pyquantlab": tuple(tt_pyquantlab.SPECS),
+    "marlon_quantlab": tuple(tt_marlon_quantlab.SPECS),
+    "kreativekodr": tuple(tt_kreativekodr.SPECS),
+    "jadetantrade": tuple(tt_jadetantrade.SPECS),
+    "macmoney82": tuple(tt_macmoney82.SPECS),
 }
 
 for _group, _members in GROUPS.items():
@@ -420,7 +514,10 @@ def lean_context(symbol, phase, bar=None, only=None, full_bars=None):
     session_index, session_last = cf.session_ordinals(
         bars, spec["session"][1], daily)
     ctx = {
-        "in_rth": None,
+        # The `off` window refuses entries while the cash session is open; the
+        # engine reads this the same way it does from `cfd_families.context`.
+        "in_rth": (cf.rth_flags(bars, spec)
+                   if cf.window_of(spec) == "off" and not daily else None),
         "atr": es.average_true_range(bars, periods=p["atr"]),
         "risk": cf.daily_risk(bars),
         "ema": {},
@@ -485,9 +582,10 @@ def install():
     # A protocol change gets its own files: the wide-stop axis and a moved
     # in-sample start (`EXNESS_IS_FIRST_YEAR`, see `cf.install_fills`).
     first = os.environ.get("EXNESS_IS_FIRST_YEAR", "").replace(":", "").replace(",", "_")
-    cf.RESULT_PREFIX = ("exness_tt_families"
+    cf.RESULT_PREFIX = (f"{cf.BROKER}_tt_families"
                         + ("_widestop" if STOP_WIDEN else "")
-                        + (f"_is{first}" if first else ""))
+                        + (f"_is{first}" if first else "")
+                        + cf.SPLIT_TAG)
     cf.context = lean_context
     cf.fit_workers = fit_workers
     cf._fire_table = _fire_table
@@ -581,6 +679,8 @@ def _job(command, symbol, bar, only, spread_bp, stale, log_path, queue):
                 cf.select(symbol, 1, spread_bp, bar, only)
             elif command == "validate":
                 cf.validate(symbol, spread_bp, bar, only)
+            elif command == "coinflip":
+                cf.coinflip(symbol, spread_bp, bar, only)
             else:
                 cf.why(symbol, 1, spread_bp, only, bar)
         except BaseException as error:                  # noqa: BLE001
@@ -737,7 +837,7 @@ def run_jobs(command, symbols, bars, only, spread_bp, stale, slots,
 
 def main():
     argv = sys.argv[1:]
-    if argv and argv[0] in ("select", "validate", "why"):
+    if argv and argv[0] in ("select", "validate", "coinflip", "why"):
         return _scheduled(argv)
     _delegate(argv)
 
@@ -746,7 +846,7 @@ def _scheduled(argv):
     import argparse                                     # noqa: PLC0415
     parser = argparse.ArgumentParser(
         description="cfd_tt_families select/validate/why, many symbols at once")
-    parser.add_argument("command", choices=("select", "validate", "why"))
+    parser.add_argument("command", choices=("select", "validate", "coinflip", "why"))
     parser.add_argument("--symbols", default=",".join(DEFAULT_SYMBOLS))
     parser.add_argument("--bar-minutes", default=DEFAULT_BARS)
     parser.add_argument("--families", default=None)
@@ -764,6 +864,9 @@ def _scheduled(argv):
                              "family that runs there")
     args = parser.parse_args(argv)
     _require_rth(args.window)
+    # Spawned job processes import `cfd_families` afresh and read the window
+    # from the environment, not from this process's argv.
+    os.environ["EXNESS_WINDOW"] = cf.expand_windows(args.window)[0]
     only = cf.expand_families(args.families, args.groups)
     bars = [int(v) for v in args.bar_minutes.replace(" ", "").split(",") if v]
     for bar in bars:
@@ -791,11 +894,15 @@ def _scheduled(argv):
 
 
 def _require_rth(window=None):
-    if (cf.expand_windows(window or cf._argv_option("--window")
-                          or os.environ.get("EXNESS_WINDOW")) != ["rth"]
+    """RTH, `off` (entries only while the cash session is shut, added
+    2026-10-11), or a clock window inside one broker day (added 2026-10-16 for
+    new_cfd_families). Full-day stays refused."""
+    windows = cf.expand_windows(window or cf._argv_option("--window")
+                                or os.environ.get("EXNESS_WINDOW"))
+    if (len(windows) != 1 or windows[0] == "day"
             or cf.FULL_DAY or not cf.SESSION_ONLY):
-        raise SystemExit("cfd_tt_families runs RTH only: unset EXNESS_WINDOW "
-                         "and EXNESS_FULL_DAY")
+        raise SystemExit("cfd_tt_families runs one window, not `day`: "
+                         "unset EXNESS_FULL_DAY")
 
 
 def _delegate(argv):

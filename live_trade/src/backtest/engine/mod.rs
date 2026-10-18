@@ -8,7 +8,7 @@ use super::{
 };
 use crate::{
     error::ApiError,
-    strategies::idk::exness_combined::{ExnessCombined, Sleeve},
+    strategies::cfd::{CfdSleeve, Sleeve},
 };
 use serde_json::Value;
 
@@ -46,8 +46,12 @@ pub fn execute_combined(prepared: &PreparedRun, names: &[String]) -> Result<RunR
         let mut series: Vec<(usize, i64)> = Vec::new();
         let mut assignment: Vec<usize> = Vec::with_capacity(names.len());
         for (strategy, name) in names.iter().enumerate() {
-            let symbol = prepared.strategy_symbols.get(strategy).copied().unwrap_or(0);
-            let width = crate::strategies::idk::exness_combined::Sleeve::from_display(name)
+            let symbol = prepared
+                .strategy_symbols
+                .get(strategy)
+                .copied()
+                .unwrap_or(0);
+            let width = crate::strategies::cfd::Sleeve::from_display(name)
                 .map_or(0, |sleeve| sleeve.candle_seconds());
             let index = match series.iter().position(|entry| *entry == (symbol, width)) {
                 Some(index) => index,
@@ -63,8 +67,35 @@ pub fn execute_combined(prepared: &PreparedRun, names: &[String]) -> Result<RunR
         // reproducible rather than depending on which market happened to print
         // first.
         let mut stream: Vec<(usize, Bar)> = Vec::new();
-        for (index, (symbol, _)) in series.iter().enumerate() {
-            stream.extend(prepared.symbol_bars[*symbol].iter().map(|bar| (index, *bar)));
+        for (index, (symbol, width)) in series.iter().enumerate() {
+            // `CFD_BROKER_HOURS`: a series whose sleeves were sealed under it
+            // loses every vendor candle the broker did not quote, at THIS
+            // series' own candle width, exactly as `cfd_families.all_bars`
+            // drops it before anything is built.
+            let quotes = names
+                .iter()
+                .zip(&assignment)
+                .filter(|(_, at)| **at == index)
+                .find_map(|(name, _)| Sleeve::from_display(name))
+                .filter(|sleeve| sleeve.broker_hours())
+                .and_then(|sleeve| {
+                    let shift = sleeve.shift_hours() * 3_600;
+                    prepared
+                        .fills
+                        .get(&super::prepare::fill_key(sleeve.market(), sleeve.shift_hours()))
+                        .map(|fills| (std::sync::Arc::clone(fills), shift))
+                });
+            stream.extend(
+                prepared.symbol_bars[*symbol]
+                    .iter()
+                    .filter(|bar| {
+                        quotes.as_ref().is_none_or(|(fills, shift)| {
+                            let bucket = (bar.ts + shift).div_euclid(*width) * *width;
+                            fills.quoted(bucket, *width)
+                        })
+                    })
+                    .map(|bar| (index, *bar)),
+            );
         }
         // THE ORDER MARKETS ARE VISITED AT ONE TIMESTAMP DECIDES WHO GETS THE
         // GROSS-CAP BUDGET, so it is Python's order and not the request's.
@@ -126,7 +157,7 @@ pub fn execute_combined(prepared: &PreparedRun, names: &[String]) -> Result<RunR
         let mut market_known: Vec<bool> = vec![false; series.len()];
         for (strategy, name) in names.iter().enumerate() {
             let symbol = assignment[strategy];
-            let sleeve = crate::strategies::idk::exness_combined::Sleeve::from_display(name);
+            let sleeve = crate::strategies::cfd::Sleeve::from_display(name);
             let key = sleeve.map_or("", |sleeve| sleeve.python_key());
             if market_rank[symbol].is_empty() || key < market_rank[symbol] {
                 market_rank[symbol] = key;
@@ -151,13 +182,53 @@ pub fn execute_combined(prepared: &PreparedRun, names: &[String]) -> Result<RunR
         // run the registry does not know -- keep their registration order and a
         // run stays reproducible.
         let moment = |index: usize, bar: &Bar| bar.ts + market_shift[index] - market_lag[index];
-        stream.sort_by_key(|(index, bar)| (moment(*index, bar), market_rank[*index], *index));
-        // The instant each bar acts at, carried alongside the stream so the
-        // account can settle a whole instant before opening anything in it.
-        let apply_keys: Vec<i64> = stream
-            .iter()
-            .map(|(index, bar)| moment(*index, bar))
-            .collect();
+        // CANON REPLAY OF THE FUNDEDNEXT BOOK: the bar that CLOSES a candle acts
+        // at the candle's own stamp. A candle closes on the last bar its slot
+        // has, which is the slot's final minute only when that minute printed;
+        // `fundednext_us2000_1m` has no 09:29 on 2025-03-17, so its 09:00
+        // candle closed a minute ahead of every other market's and opened an
+        // entry against a balance not yet paid gbpjpy's exit at the same
+        // stamp. Python's grid settles every exit at a stamp before opening
+        // anything there; keying each closing bar to its candle restores that.
+        let canon_fn = engine.canon_replay
+            && names
+                .iter()
+                .all(|name| Sleeve::from_display(name).is_some_and(|s| s.book() == crate::strategies::cfd::Book::FundedNext));
+        // The closing bars are MARKED in place (`depth_events`, which an OHLCV
+        // bar never carries) rather than keyed in a side table: the merged
+        // stream is tens of millions of minutes and a second copy does not fit.
+        if canon_fn {
+            let mut seen: std::collections::HashMap<usize, i64> = std::collections::HashMap::new();
+            for (index, bar) in stream.iter_mut().rev() {
+                let width = series[*index].1.max(60);
+                let slot = (bar.ts + market_shift[*index]).div_euclid(width);
+                if seen.get(index) != Some(&slot) {
+                    bar.depth_events = 1;
+                }
+                seen.insert(*index, slot);
+            }
+        }
+        let key = |index: usize, bar: &Bar| {
+            if canon_fn && bar.depth_events == 1 {
+                let width = series[index].1.max(60);
+                (bar.ts + market_shift[index]).div_euclid(width) * width
+            } else if canon_fn {
+                // One second later, so the NEXT candle's first bar -- whose
+                // moment equals this candle's stamp -- is never stepped inside
+                // the instant: `update_all` clears `action_timestamp` on entry.
+                moment(index, bar) + 1
+            } else {
+                moment(index, bar)
+            }
+        };
+        stream.sort_by_key(|(index, bar)| (key(*index, bar), market_rank[*index], *index, bar.ts));
+        let keyed: Vec<i64> = stream.iter().map(|(index, bar)| key(*index, bar)).collect();
+        if canon_fn {
+            for (_, bar) in stream.iter_mut() {
+                bar.depth_events = 0;
+            }
+        }
+        let apply_keys: Vec<i64> = keyed;
         return Ok(run_engines_streams_at(
             &stream,
             &apply_keys,
@@ -177,9 +248,15 @@ pub fn execute_combined(prepared: &PreparedRun, names: &[String]) -> Result<RunR
 fn build_strategy(name: &str, prepared: &PreparedRun) -> Result<Box<dyn Strategy>, ApiError> {
     let sleeve = Sleeve::from_display(name)
         .ok_or_else(|| ApiError::BadRequest("unknown strategy".into()))?;
-    let mut strategy = ExnessCombined::new(sleeve, LOT_STEP);
-    if let Some(fills) = prepared.fills.get(sleeve.market()) {
+    let mut strategy = CfdSleeve::new(sleeve, LOT_STEP);
+    if let Some(fills) = prepared.fills.get(&super::prepare::fill_key(
+        sleeve.market(),
+        sleeve.shift_hours(),
+    )) {
         strategy.install_fills(std::sync::Arc::clone(fills));
+        if sleeve.broker_hours() {
+            strategy.install_quotes(std::sync::Arc::clone(fills) as std::sync::Arc<dyn crate::strategies::cfd::BrokerQuotes>);
+        }
     }
     if let Some(mask) = entry_days_from_env()? {
         strategy.restrict_entry_days(mask);
@@ -220,14 +297,68 @@ fn entry_days_from_env() -> Result<Option<u8>, ApiError> {
     Ok((mask != 0).then_some(mask))
 }
 
+fn is_fundednext(name: &str) -> bool {
+    crate::strategies::cfd::Sleeve::from_display(name)
+        .is_some_and(|sleeve| sleeve.book() == crate::strategies::cfd::Book::FundedNext)
+}
+
+/// The instant in `(previous, now]` at which live's `session_overdue` would
+/// first fire for this slot, if any: its session close (real New York minute)
+/// plus one of its candles plus `SESSION_OVERDUE_GRACE_SECONDS`, provided that
+/// moment is outside its trading session. Multi-day sleeves are never overdue.
+fn overdue_instant(slot: &Slot, previous: i64, now: i64) -> Option<i64> {
+    const GRACE: i64 = 10;
+    if slot.strategy.holds_overnight() {
+        return None;
+    }
+    let sleeve = crate::strategies::cfd::Sleeve::from_display(&slot.name)?;
+    let end = slot.strategy.session_end_minute()? as i64;
+    let start = slot.strategy.session_start_minute()? as i64;
+    let in_session = |minute: i64| {
+        if start <= end {
+            (start..=end).contains(&minute)
+        } else {
+            minute >= start || minute <= end
+        }
+    };
+    let delay = sleeve.candle_seconds() + GRACE;
+    let today = now.div_euclid(86_400) * 86_400;
+    [today - 86_400, today]
+        .into_iter()
+        .map(|day| day + end * 60 + delay)
+        .find(|fire| {
+            *fire > previous && *fire <= now && !in_session(fire.rem_euclid(86_400) / 60)
+        })
+}
+
+/// Whether the slot's market has no stored data past this run.
+fn data_ended(name: &str, cfg: &EngineConfig) -> bool {
+    crate::strategies::cfd::Sleeve::from_display(name)
+        .is_some_and(|sleeve| cfg.ended_markets.iter().any(|market| market == sleeve.market()))
+}
+
 #[derive(Clone)]
 pub(crate) struct EngineConfig {
     pub(crate) initial: f64,
     pub(crate) symbol: String,
     pub(crate) start_day: i64,
+    /// `RunRequest::admission_from`: the day the strategies' own trading state
+    /// (and so each sleeve's admission shadow account) starts, when earlier than
+    /// `start_day`. Between the two, a sleeve trades for itself only -- its
+    /// actions are dropped WITHOUT `discard`, as Python's replay drops a log
+    /// trade entered before `lo` -- and a position it carries into the window
+    /// is not the book's. `None` is `start_day`, every ordinary run.
+    pub(crate) admission_day: Option<i64>,
+    /// Markets whose STORED data ends inside this run, so the run's last bar
+    /// is the last bar there is. Python's replay then has no successor either:
+    /// that day never ends and a position still open is never logged. Read by
+    /// FundedNext sleeves only (`Strategy::set_next_bar`, the end-of-run close).
+    pub(crate) ended_markets: Vec<String>,
+    /// `RunRequest::canon_replay`.
+    pub(crate) canon_replay: bool,
     /// Ceiling on the SIMULTANEOUS notional of everything open, in multiples of
-    /// equity. `None` leaves a run uncapped, which is what every environment
-    /// other than the 2026-09-07 book gets.
+    /// equity. `None` leaves a run uncapped, which is what every run other than
+    /// the whole book gets.
     ///
     /// An entry that would push the summed notional past it is REFUSED outright
     /// rather than trimmed, because trimming would change the sleeve's own risk
@@ -249,6 +380,8 @@ struct Position {
     quantity: f64,
     /// USD value of one full price-unit movement per lot/unit.
     point_value: f64,
+    /// `Strategy::entry_sizing` at the open.
+    sizing: Option<(f64, f64)>,
 }
 pub struct RunResult {
     pub body: Value,
@@ -283,6 +416,11 @@ struct Slot {
     /// can hold bars from several markets. Reading it off whichever bar happened
     /// to end the instant flattened the wrong slots and left the rest open.
     flatten_bar: Option<Bar>,
+    /// `apply_key - bar.ts` for this slot's own bars: how far the merged
+    /// stream's clock runs ahead of (or behind) this market's real New York
+    /// time -- its shifted clock less its candle-flush lag. The overdue close
+    /// is scheduled in REAL time and fired on the STREAM clock, so it needs it.
+    frame: i64,
     /// Whether the balance currently supports this sleeve. Starts true so a run
     /// with no gate configured behaves exactly as before; `Schedule::is_on`
     /// keeps it, and the hysteresis band reads it as the previous state.
@@ -314,6 +452,7 @@ impl Slot {
             shown_equity: 0.0,
             acted_at: 0,
             flatten_bar: None,
+            frame: 0,
             position: None,
             tagged_positions: Vec::new(),
             actions: Vec::new(),
@@ -348,7 +487,7 @@ fn slot_market<'a>(slot: &'a Slot, cfg: &'a EngineConfig) -> &'a str {
 /// not be converted a second time. That double conversion was a silent 159x
 /// error on the JPY crosses ([[mt5-tick-value-is-account-currency]]).
 ///
-/// These must equal `Instrument::<MARKET>.multiplier` in `exness_combined`;
+/// These must equal `Instrument::<MARKET>.multiplier` in `oct_12_2026`;
 /// `frozen_point_values_match_the_strategy_specs` is what keeps them equal.
 /// The account-currency notional one open position represents.
 ///
@@ -506,13 +645,13 @@ pub(crate) fn run_engines_streams_at(
     // than `ofi, drift_vwap, volatility_breakout`.
     //
     // A slot the registry does not know keeps its declaration order, which is
-    // what a non-`idk` run and every single-strategy run get.
+    // what a run outside the book and every single-strategy run get.
     let apply_order: Vec<usize> = {
         let mut order: Vec<usize> = (0..slots.len()).collect();
         order.sort_by_key(|index| {
             let name = names.get(*index).map(String::as_str).unwrap_or_default();
             (
-                crate::strategies::idk::exness_combined::Sleeve::from_display(name)
+                crate::strategies::cfd::Sleeve::from_display(name)
                     .map(|sleeve| sleeve.python_key())
                     .unwrap_or_default(),
                 *index,
@@ -528,6 +667,8 @@ pub(crate) fn run_engines_streams_at(
     let mut drawdowns = DrawdownTracker::new(equity, cfg.start_day);
     let mut sizing_day = None;
     let mut trading_started = false;
+    // The clock the overdue close reads: one minute past the last bar seen.
+    let mut clock_before: Option<i64> = None;
     // Read once per run rather than per bar; `None` in production, where the
     // compiled book policy below governs instead.
     let exposure = exposure::schedule();
@@ -536,7 +677,7 @@ pub(crate) fn run_engines_streams_at(
     // `NQ Hourly Delta Reversal` and `BTC Maroy Ladder` off NQ's realised
     // volatility and doubled the Ladder; none of those strategies exists any
     // more, and the 2026-09-07 book carries its risk scale, its per-sleeve
-    // weights and a per-market EWMA throttle inside `exness_combined` itself.
+    // weights and a per-market EWMA throttle inside `oct_12_2026` itself.
     //
     // Reapplying an overlay here would charge the same regime twice and size a
     // backtest differently from the live account it is meant to mirror
@@ -548,7 +689,7 @@ pub(crate) fn run_engines_streams_at(
         let bar = *bar;
         last_bar[symbol_index] = Some(bar);
         let day = bar.ts.div_euclid(86400);
-        if day >= cfg.start_day && !trading_started {
+        if day >= cfg.admission_day.unwrap_or(cfg.start_day).min(cfg.start_day) && !trading_started {
             for slot in &mut slots {
                 slot.strategy.reset_trading_state();
             }
@@ -602,6 +743,7 @@ pub(crate) fn run_engines_streams_at(
                 // instant's closes actually leave behind.
                 slot.shown_equity = visible;
                 slot.acted_at = bar.ts;
+                slot.frame = apply_keys.get(bar_index).map_or(0, |key| key - bar.ts);
                 // Recorded HERE, while the bar this slot is being stepped with
                 // is still in hand. An instant can carry several markets' bars,
                 // and the flatten prices its exit at the close of THIS one.
@@ -611,6 +753,12 @@ pub(crate) fn run_engines_streams_at(
                     })
                 {
                     slot.flatten_bar = Some(bar);
+                }
+                if cfg.canon_replay {
+                    slot.strategy.set_next_bar(
+                        next_same[bar_index].map(|next| stream[next].1.ts),
+                        !data_ended(&slot.name, &cfg),
+                    );
                 }
                 slot.strategy.update_all(bar, visible)
             } else {
@@ -623,10 +771,55 @@ pub(crate) fn run_engines_streams_at(
         if day < cfg.start_day {
             for slot in &mut slots {
                 let actions = std::mem::take(&mut slot.actions);
-                slot.strategy.discard_all(actions);
+                // Inside the admission run the sleeve keeps what it did: the
+                // trade exists in its standalone log, it just is not booked.
+                if !trading_started {
+                    slot.strategy.discard_all(actions);
+                }
             }
             continue;
         }
+
+        // THE LIVE RUNTIME'S CLOCK-DRIVEN CLOSE, for the FundedNext book: a
+        // position still held one candle (+10s) past its session close, outside
+        // the session, is closed whether or not its market printed
+        // (`live::portfolio::Slot::session_overdue`, `forced_flatten`). Live
+        // keeps the strategy holding it as a GHOST and swallows the strategy's
+        // own later exit; here the engine books the close and leaves the
+        // strategy alone, and that later `Close` finds no position. Priced at
+        // the market's last bar, which is what live records on the order.
+        let now = apply_keys.get(bar_index).copied().unwrap_or(bar.ts);
+        if let Some(previous) = clock_before.filter(|_| !cfg.canon_replay) {
+            for slot in &mut slots {
+                if slot.position.is_none() || !is_fundednext(&slot.name) {
+                    continue;
+                }
+                let Some(fire) = overdue_instant(slot, previous - slot.frame, now - slot.frame)
+                else {
+                    continue;
+                };
+                let Some(mark) = last_bar[slot.symbol_index] else {
+                    continue;
+                };
+                if let Some(old) = slot.position.take() {
+                    let exit = mark.close;
+                    let gain = net_pnl_after_financing(&old, exit, fire, &slot.name);
+                    equity += gain;
+                    slot.realized += gain;
+                    slot.closed_trades += 1;
+                    trades.push(to_trade(old, fire, exit, exit, gain, &slot.name));
+                    if let Some(closed) = trades.last() {
+                        slot.contribution_equity
+                            .push((closed.exit_timestamp, cfg.initial + slot.realized));
+                        *slot
+                            .monthly
+                            .entry(month_key(closed.exit_timestamp))
+                            .or_default() += gain;
+                    }
+                }
+            }
+        }
+        clock_before = Some(now);
 
         let mut mtm = equity;
         for slot in &slots {
@@ -819,13 +1012,13 @@ pub(crate) fn run_engines_streams_at(
                             if let Some(quantity) = sized_quantity {
                                 let market = slot_market(slot, &cfg);
                                 if !slot.strategy.sizes_below_broker_minimum()
-                                    && quantity + 1e-9 < broker_minimum(market)
+                                    && quantity + 1e-9 < sleeve_broker_minimum(&slot.name, market)
                                 {
                                     *below_broker_minimum.entry(slot.name.clone()).or_default() +=
                                         1;
                                     continue;
                                 }
-                                let point_value = market_point_value(market);
+                                let point_value = sleeve_point_value(&slot.name, market);
                                 let (spread, spread_bp) = sleeve_entry_cost(&slot.name);
                                 // THE SPREAD THE ACCOUNT CROSSED, where the Exness
                                 // fill model could read it off the broker's own
@@ -866,6 +1059,7 @@ pub(crate) fn run_engines_streams_at(
                                     ts: fill_timestamp,
                                     quantity,
                                     point_value,
+                                    sizing: slot.strategy.entry_sizing(),
                                 });
                             }
                         }
@@ -884,6 +1078,7 @@ pub(crate) fn run_engines_streams_at(
                                 ts: old.ts,
                                 quantity: close_qty,
                                 point_value: old.point_value,
+                                sizing: old.sizing,
                                 // A partial inherits the parent's entry rate; it
                                 // is the same position being closed in pieces.
                             };
@@ -925,12 +1120,12 @@ pub(crate) fn run_engines_streams_at(
                         let quantity = lot_size(quantity);
                         let market = slot_market(slot, &cfg);
                         if !slot.strategy.sizes_below_broker_minimum()
-                            && quantity + 1e-9 < broker_minimum(market)
+                            && quantity + 1e-9 < sleeve_broker_minimum(&slot.name, market)
                         {
                             *below_broker_minimum.entry(slot.name.clone()).or_default() += 1;
                             continue;
                         }
-                        let point_value = market_point_value(market);
+                        let point_value = sleeve_point_value(&slot.name, market);
                         let notional = (quantity * execution_price * point_value).abs();
                         if let Some(cap) = cfg.gross_cap
                             && equity > 0.0
@@ -958,6 +1153,7 @@ pub(crate) fn run_engines_streams_at(
                             ts: fill_timestamp,
                             quantity,
                             point_value,
+                            sizing: None,
                         });
                     }
                     Action::ClosePosition { id, price } => {
@@ -1072,6 +1268,16 @@ pub(crate) fn run_engines_streams_at(
     for slot in &mut slots {
         let max_drawdown_dollars = slot.strategy.max_drawdown_dollars();
         let slot_last = last_bar[slot.symbol_index];
+        // A FundedNext position open when its market's data runs out is one
+        // Python's log never closed, so it never existed; the Exness book keeps
+        // its mark-to-last-bar close.
+        if cfg.canon_replay
+            && data_ended(&slot.name, &cfg)
+            && crate::strategies::cfd::Sleeve::from_display(&slot.name)
+                .is_some_and(|sleeve| sleeve.book() == crate::strategies::cfd::Book::FundedNext)
+        {
+            slot.position = None;
+        }
         if let (Some(old), Some(last)) = (slot.position.take(), slot_last.as_ref()) {
             // Stamped by the strategy for the same reason the session-end net
             // is: a survivor closed here is that strategy's own last exit.
@@ -1247,5 +1453,7 @@ fn to_trade(
         quantity: pos.quantity,
         entry_raw: pos.raw,
         exit_raw,
+        distance: pos.sizing.map_or(f64::NAN, |sizing| sizing.0),
+        vol_mult: pos.sizing.map_or(f64::NAN, |sizing| sizing.1),
     }
 }

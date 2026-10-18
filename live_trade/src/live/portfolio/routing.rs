@@ -9,8 +9,50 @@
 use super::*;
 
 /// The sleeve a live strategy id names, or `None` for an id the book retired.
+///
+/// Both books: the Exness live list and the FundedNext book, each on its own
+/// account (`supports`).
 pub(super) fn sleeve_of(strategy: &str) -> Option<Sleeve> {
-    Sleeve::from_id(strategy)
+    Sleeve::from_id(strategy).filter(|_| supports(strategy))
+}
+
+/// Every sleeve the live runtime trades: the Exness book's live list, then
+/// the FundedNext book, which runs on its own account.
+fn live_sleeves() -> impl Iterator<Item = Sleeve> {
+    oct_12_2026::BOOK
+        .into_iter()
+        .chain(crate::strategies::fundednext::oct_18_2026::BOOK)
+}
+
+/// FundedNext's own name for a market's CFD (`fundednext_specs.json`
+/// `broker`), which is what an order on that account must name.
+fn fundednext_symbol(market: &str) -> Option<&'static str> {
+    Some(match market {
+        "audusd" => "AUDUSD",
+        "eurusd" => "EURUSD",
+        "gbpusd" => "GBPUSD",
+        "gbpjpy" => "GBPJPY",
+        "usdjpy" => "USDJPY",
+        "usoil" => "USOUSD",
+        "de40" => "GER30",
+        "fr40" => "FRA40",
+        "uk100" => "UK100",
+        "hk50" => "HK50",
+        "us500" => "SPX500",
+        "ustec" => "NDX100",
+        "audjpy" => "AUDJPY",
+        "cadjpy" => "CADJPY",
+        "chfjpy" => "CHFJPY",
+        "euraud" => "EURAUD",
+        "gbpaud" => "GBPAUD",
+        "nzdusd" => "NZDUSD",
+        "us2000" => "US2000",
+        "us30" => "US30",
+        "usdcad" => "USDCAD",
+        "usdchf" => "USDCHF",
+        "xauusd" => "XAUUSD",
+        _ => return None,
+    })
 }
 
 /// Every market the book trades EXCEPT NQ, in `BOOK` order and deduplicated.
@@ -25,7 +67,7 @@ pub(super) fn sleeve_of(strategy: &str) -> Option<Sleeve> {
 /// this one again.
 pub(super) fn ohlcv_markets() -> Vec<&'static str> {
     let mut markets = Vec::new();
-    for sleeve in exness_combined::BOOK {
+    for sleeve in live_sleeves() {
         let market = sleeve.market();
         if market != SYMBOL && !markets.contains(&market) {
             markets.push(market);
@@ -106,15 +148,30 @@ pub(super) const SESSION_END_GRACE_MINUTES: usize = 120;
 pub(super) const LATE_BAR_GRACE_SECONDS: i64 = 300;
 
 /// How long past its own session close a slot may still be holding before the
-/// runtime closes it on the clock alone, with no bar from that market required.
-///
-/// ONE BAR, BECAUSE THAT IS WHERE THE RESEARCH MODEL PUTS THE EXIT.
-/// `fill_models.exness` prices a session flatten at `bar_seconds + lag` past
-/// the close and does so unconditionally -- 1801.6s for every Dukascopy market
-/// -- so this is not a grudging backstop but the same instant the study already
-/// assumes. Shorter would cut the exit in front of the model; longer reopens the
-/// window this exists to close.
+/// runtime closes it on the clock alone, for a strategy that is not a sleeve
+/// and so has no candle of its own. Sleeves use `session_overdue_seconds`.
 pub(super) const SESSION_OVERDUE_MINUTES: i64 = 30;
+
+/// How long past its own session close THIS strategy may still be holding
+/// before the runtime closes it on the clock alone, with no bar from that
+/// market required.
+///
+/// ONE BAR OF THE SLEEVE'S OWN CANDLE, BECAUSE THAT IS WHERE THE RESEARCH MODEL
+/// PUTS THE EXIT. `fill_models.exness` prices a session flatten at
+/// `bar_seconds + lag` past the close and does so unconditionally, so this is
+/// not a grudging backstop but the same instant the study already assumes.
+/// Shorter cuts the exit in front of the model; longer reopens the window this
+/// exists to close.
+///
+/// IT WAS A FLAT 30 MINUTES, which is one bar only for a 30-minute sleeve. On
+/// 2026-10-08 `usdjpy_lux_htf_manipulation_60m` was flattened at 13:30 against
+/// a 13:00 close while the model -- and the Rust backtest -- exit it at 14:00,
+/// when its 13:00 candle rolls: the one exit of 38 that week that differed.
+pub(super) fn session_overdue_seconds(strategy: &str) -> i64 {
+    sleeve_of(strategy).map_or(SESSION_OVERDUE_MINUTES * 60, |sleeve| {
+        sleeve.candle_seconds()
+    })
+}
 
 /// Seconds past that bar before the clock-driven close fires.
 ///
@@ -158,18 +215,31 @@ pub(super) fn release_settled_bar(held: i64, symbol: &str, now: Option<i64>) -> 
 /// A market order sent on an old signal is a different trade from the one the
 /// backtest took, so a real catch-up -- a restart, a feed outage replayed in one
 /// poll -- must still only warm indicators and run exits. But the feed routinely
-/// hands over a minute ~70s after it closed (Dukascopy publishes ~18s after the
-/// close and the daemon polls once a minute), and one poll late is ~130s. Three
-/// minutes admits both and nothing older. The fill model the backtest charges
-/// puts an entry 2s after the candle opens, so every second of this is cost the
-/// research did not pay -- which is why it is minutes and not the half hour a
-/// late entry used to carry.
+/// hands over a minute a few seconds after it closed and, on a slow vendor
+/// minute, two or three minutes late. Three minutes is the floor.
 pub(super) const ENTRY_FRESH_SECONDS: i64 = 180;
 
-/// Whether a bar stamped `bar_ts` is recent enough, at store-clock `now`, for
-/// its signal to open a position. Its decision moment is the bar's CLOSE.
-pub(super) fn entry_is_fresh(bar_ts: i64, symbol: &str, now: i64) -> bool {
-    now - (bar_ts + market_step(symbol)) <= ENTRY_FRESH_SECONDS
+/// A sleeve may also enter up to this share of its OWN candle late.
+///
+/// THE FLOOR ALONE REFUSED TRADES THE BACKTEST TOOK FOR A DELAY THAT BARELY
+/// MATTERS. On 2026-10-01 a USTEC 5-minute entry was refused at 183s and the
+/// sleeve then took a short the backtest never had; on a 30- or 120-minute
+/// candle three minutes is a tenth or less of the bar. A sixth of the candle
+/// keeps a late entry inside the move the backtest bought -- 5 minutes on a
+/// 30-minute sleeve, 20 on a 120-minute one -- and refuses anything older.
+pub(super) const ENTRY_FRESH_CANDLE_SHARE: i64 = 6;
+
+/// Seconds since the decision of the bar stamped `bar_ts` (its CLOSE), at
+/// store-clock `now`. Negative if the bar is from the future, which only a
+/// skewed clock produces and which is then treated as fresh.
+pub(super) fn entry_age_seconds(bar_ts: i64, symbol: &str, now: i64) -> i64 {
+    now - (bar_ts + market_step(symbol))
+}
+
+/// The oldest decision this strategy may still act on with a new position.
+pub(super) fn entry_fresh_limit(strategy: &str) -> i64 {
+    let candle = sleeve_of(strategy).map_or(0, |sleeve| sleeve.candle_seconds());
+    ENTRY_FRESH_SECONDS.max(candle / ENTRY_FRESH_CANDLE_SHARE)
 }
 
 pub(super) fn market_step(symbol: &str) -> i64 {
@@ -215,15 +285,14 @@ pub(super) fn live_stream_rank(symbol: &str, feed: LiveFeed) -> usize {
         (SYMBOL, LiveFeed::LevelTwo) => 0,
         (SYMBOL, LiveFeed::Ohlcv) => 1,
         (market, _) => {
-            2 + exness_combined::BOOK
-                .iter()
+            2 + live_sleeves()
                 .position(|sleeve| sleeve.market() == market)
-                .unwrap_or(exness_combined::BOOK.len())
+                .unwrap_or(usize::MAX - 2)
         }
     }
 }
 
-/// The twenty-two sleeves the live runtime can be asked to run.
+/// The twenty-five sleeves the live runtime can be asked to run.
 ///
 /// Transcribed rather than derived because it is a `const`, and
 /// `live_strategies_match_the_book` is the test that keeps it equal to `BOOK`.
@@ -235,28 +304,26 @@ pub const LIVE_STRATEGIES: &[&str] = &[
     "ethusd_confluence",
     "ethusd_volatility_breakout",
     "gbpjpy_trap",
-    "eurjpy_two_stage",
     "usdjpy_pullback",
     "ethusd_obv_break",
     "ukoil_level_confluence",
-    "eurjpy_gated_orb",
-    "usdjpy_aroon",
-    "ethusd_break_retest",
-    "usdjpy_fracdiff",
-    "ethusd_pullback",
-    "ethusd_kalman",
-    "usdjpy_half_life",
-    "ethusd_roofing",
-    "ethusd_level_confluence",
-    "usdjpy_rvol",
     "ustec_lux_body_momentum_5m",
-    "usdjpy_qp_ma_cross_30m",
-    "us500_lux_swing_sweep_mss_5m",
-    "gbpjpy_qp_ma_cross_15m",
     "eurjpy_qp_ma_cross_60m",
-    "ethusd_td_ema_macd_15m",
     "gbpjpy_luxalgo_manipulation_120m",
-    "gbpjpy_lux_htf_manipulation_15m",
+    "gbpjpy_lux_supply_demand_30m",
+    "uk100_xma_cross",
+    "usoil_xma_cross",
+    "btc_jump",
+    "usdjpy_yf_alphatrend_30m",
+    "gbpjpy_mql_big_move_cont_60m",
+    "usdjpy_adaptive_pullback_60m-barlb",
+    "usdjpy_failed_break_5m-barlb",
+    "usdjpy_momentum_stack_30m-barlb-off",
+    "usdjpy_sar_30m-barlb-off",
+    "gbpusd_qp_rsi2_pullback_30m-off",
+    "eurjpy_qc_ema_cross_30m",
+    "eurjpy_dt_rsi_dip_vol_15m",
+    "ethusd_sb_bollinger_240m-nat",
 ];
 
 /// The market a live strategy trades. Slots are fed only their own symbol's
@@ -298,7 +365,7 @@ pub(super) enum QuantityUnit {
 /// Keep this beside `strategy_symbol` for the same reason `warmup_sessions` is
 /// here: a newly registered live strategy must not inherit a default silently.
 ///
-/// EVERY SLEEVE OF THIS BOOK EMITS LOTS. `exness_combined`'s sizing goes through
+/// EVERY SLEEVE OF THIS BOOK EMITS LOTS. `oct_12_2026`'s sizing goes through
 /// each market's `volume_min`, `volume_step` and `contract_size` itself, so the
 /// number it hands back is already an MT5 lot volume. Converting it a second
 /// time would divide a USDJPY order by 100,000.
@@ -386,7 +453,7 @@ pub(super) fn warmup_sessions(strategy: &str) -> i64 {
 }
 
 pub(super) fn warmup_calendar_days(symbol: &str, sessions: i64) -> i64 {
-    crate::strategies::idk::exness_combined::warmup::calendar_days(symbol, sessions)
+    crate::strategies::cfd::warmup::calendar_days(symbol, sessions)
 }
 
 /// How far back each active market must be replayed before the account goes
@@ -421,6 +488,9 @@ impl WarmupPlan {
 
 pub fn supports(strategy: &str) -> bool {
     LIVE_STRATEGIES.contains(&strategy)
+        || crate::strategies::fundednext::oct_18_2026::BOOK
+            .iter()
+            .any(|sleeve| sleeve.id() == strategy)
 }
 
 /// The MT5 symbol a live strategy MUST be configured with, or `None` for an id
@@ -437,7 +507,11 @@ pub fn required_symbol(strategy: &str) -> Option<&'static str> {
     if !supports(strategy) {
         return None;
     }
-    route_symbol(strategy_symbol(strategy)).ok()
+    let sleeve = sleeve_of(strategy)?;
+    match sleeve.book() {
+        crate::strategies::cfd::Book::Exness => route_symbol(sleeve.market()).ok(),
+        crate::strategies::cfd::Book::FundedNext => fundednext_symbol(sleeve.market()),
+    }
 }
 
 /// Whether `symbol` names the instrument `strategy` is supposed to trade.
@@ -463,8 +537,14 @@ pub(super) fn build_strategy(strategy: &str) -> Option<Box<dyn Strategy>> {
     // the backtest fills at that candle's open, and waiting for the close sent
     // every live entry half an hour late ([[live-entries-are-one-candle-late]]).
     sleeve_of(strategy).map(|sleeve| {
-        let mut strategy = ExnessCombined::new(sleeve, 0.01);
+        let mut strategy = CfdSleeve::new(sleeve, 0.01);
         strategy.enable_early_fills();
+        if sleeve.broker_hours()
+            && let Some(table) = crate::backtest::fills::broker_minute_table(sleeve.market(), sleeve.book())
+            && let Some(quotes) = super::quotes::for_table(&table)
+        {
+            strategy.install_quotes(quotes);
+        }
         Box::new(strategy) as Box<dyn Strategy>
     })
 }
@@ -504,8 +584,30 @@ pub(super) fn route_symbol(symbol: &str) -> Result<&str, crate::error::ApiError>
         "btc" | "btcusd" => Ok("BTCUSD"),
         "xniusd" => Ok("XNIUSD"),
         "us500" => Ok("US500"),
+        // The broker spells its DAX CFD `DE30`.
+        "de40" | "de30" => Ok("DE30"),
+        "usoil" => Ok("USOIL"),
+        // FundedNext's spellings, passed through as the broker names them.
+        "eurusd" => Ok("EURUSD"),
+        "ger30" => Ok("GER30"),
+        "fra40" => Ok("FRA40"),
+        "hk50" => Ok("HK50"),
+        "spx500" => Ok("SPX500"),
+        "ndx100" => Ok("NDX100"),
+        "usousd" => Ok("USOUSD"),
+        "audjpy" => Ok("AUDJPY"),
+        "cadjpy" => Ok("CADJPY"),
+        "chfjpy" => Ok("CHFJPY"),
+        "euraud" => Ok("EURAUD"),
+        "gbpaud" => Ok("GBPAUD"),
+        "nzdusd" => Ok("NZDUSD"),
+        "us2000" => Ok("US2000"),
+        "us30" => Ok("US30"),
+        "usdcad" => Ok("USDCAD"),
+        "usdchf" => Ok("USDCHF"),
+        "xauusd" => Ok("XAUUSD"),
         _ => Err(crate::error::ApiError::BadRequest(
-            "unsupported live IDK symbol".into(),
+            "unsupported live symbol".into(),
         )),
     }
 }

@@ -2,7 +2,7 @@
 //! the result, so it can be compared against
 //! `py_sandbox/research/exness_combined_strategies.py`.
 //!
-//! WHY A BINARY AND NOT A TEST. The parity fixtures in `exness_combined` prove
+//! WHY A BINARY AND NOT A TEST. The parity fixtures in `oct_12_2026` prove
 //! each sleeve reproduces its Python cell bar for bar, but they replay one cell
 //! against a frozen bar list. This runs all twenty-two through `run_combined`
 //! against the parquet store — the same path `/api/backtests` takes — so what is
@@ -49,8 +49,9 @@
 
 use live_trade::backtest::{RunRequest, run_combined};
 use live_trade::parquet_store::ParquetStore;
-use live_trade::strategies::idk::exness_combined::{
-    BOOK, CANON_GROSS_CAP, CANON_RISK_SCALE, Sleeve,
+use live_trade::strategies::cfd::Sleeve;
+use live_trade::strategies::exness::oct_12_2026::{
+    BOOK, CANON_GROSS_CAP, CANON_RISK_SCALE, open_retired_for_research,
 };
 use serde_json::{Value, json};
 
@@ -69,9 +70,27 @@ async fn main() -> anyhow::Result<()> {
         .get(3)
         .map(|value| value.split(',').map(str::to_owned).collect())
         .unwrap_or_default();
-    let strategies: Vec<String> = BOOK
+    // `EXNESS_RETIRED=1` lets the list name sleeves that have LEFT the book, so
+    // a past live window can be backtested with the membership it really ran
+    // (`tools/compare_live_backtest.py`). Research only; the server never sets it.
+    if std::env::var("EXNESS_RETIRED").is_ok_and(|value| value == "1") {
+        open_retired_for_research();
+    }
+    let sleeves: Vec<Sleeve> = if only.is_empty() {
+        BOOK.to_vec()
+    } else {
+        only.iter()
+            .map(|id| {
+                Sleeve::from_id(id).ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "{id} is not a book sleeve (EXNESS_RETIRED=1 for a retired one)"
+                    )
+                })
+            })
+            .collect::<anyhow::Result<_>>()?
+    };
+    let strategies: Vec<String> = sleeves
         .iter()
-        .filter(|sleeve| only.is_empty() || only.iter().any(|id| id == sleeve.id()))
         .map(|sleeve| sleeve.display().to_owned())
         .collect();
     anyhow::ensure!(
@@ -83,11 +102,7 @@ async fn main() -> anyhow::Result<()> {
     // from `market_symbol` and ignores this, but a run whose sleeves all trade
     // one market is pinned to it and `prepare` refuses a mismatch — which is
     // what a filtered run down to a single market produces.
-    let mut markets: Vec<&str> = BOOK
-        .iter()
-        .filter(|sleeve| only.is_empty() || only.iter().any(|id| id == sleeve.id()))
-        .map(|sleeve| sleeve.market())
-        .collect();
+    let mut markets: Vec<&str> = sleeves.iter().map(|sleeve| sleeve.market()).collect();
     markets.sort_unstable();
     markets.dedup();
     // A MIXED run splits per market and ignores this, but `prepare` still checks
@@ -97,7 +112,15 @@ async fn main() -> anyhow::Result<()> {
     // naming anything the loader serves.
     let symbol = markets[0];
 
+    // THE MODEL FOLLOWS THE SLEEVES' BOOK: a FundedNext run is priced and
+    // filled at FundedNext (`tools/compare_live_backtest.py --account
+    // fundednext`). A list mixing the two books is refused by `prepare`.
+    let model = match sleeves[0].book() {
+        live_trade::strategies::cfd::Book::FundedNext => live_trade::backtest::FUNDEDNEXT_MODEL_ID,
+        live_trade::strategies::cfd::Book::Exness => live_trade::backtest::MODEL_ID,
+    };
     let request: RunRequest = serde_json::from_value(json!({
+        "model": model,
         "strategy": strategies[0],
         "symbol": symbol,
         "instrument": "forex",
@@ -127,6 +150,10 @@ async fn main() -> anyhow::Result<()> {
             .map(|trade| {
                 json!({
                     "s": trade.strategy_name(),
+                    "side": match trade.side {
+                        live_trade::backtest::Side::Long => 1,
+                        live_trade::backtest::Side::Short => -1,
+                    },
                     "et": trade.entry_timestamp,
                     "qty": trade.quantity,
                     "ep": trade.entry_price,

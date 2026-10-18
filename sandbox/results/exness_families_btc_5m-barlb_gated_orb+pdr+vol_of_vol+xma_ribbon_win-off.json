@@ -1,0 +1,247 @@
+{
+  "asset_class": "crypto",
+  "bar_minutes": 5,
+  "families": {
+    "gated_orb": null,
+    "pdr": null,
+    "vol_of_vol": null,
+    "xma_ribbon": null
+  },
+  "protocol": {
+    "account": "Exness Pro 416209807",
+    "benchmark": null,
+    "broker": "exness",
+    "calendar": 365.0,
+    "candidate_counts": {
+      "gated_orb": 2016,
+      "pdr": 576,
+      "vol_of_vol": 1152,
+      "xma_ribbon": 1728
+    },
+    "contract": {
+      "broker": "BTCUSD",
+      "contract_size": 1.0,
+      "currency_profit": "USD",
+      "fx_to_usd": 1.0,
+      "multiplier": 1.0,
+      "tick_size": 0.01,
+      "tick_value": 0.01,
+      "volume_max": 200.0,
+      "volume_min": 0.01,
+      "volume_step": 0.01
+    },
+    "cost_model": "spread only; commission measured at 0.0000",
+    "data": {
+      "first_row": "2017-08-17",
+      "last_row": "2026-10-10",
+      "source": "1m",
+      "table": "btc_1m",
+      "warmup": "2017-01-01"
+    },
+    "execution": {
+      "bars_priced": 705270,
+      "bridge_queue_seconds": 1.0,
+      "entry_days": null,
+      "exit": "market order one whole bar + lag + queue after the bar it fired on; no broker-side stop on this account",
+      "feed_lag_seconds": 2.0,
+      "fill_model": "exness",
+      "fills_only": false,
+      "financing": "multiday: 17:00 New York rollover schedule; current swap rates for every year",
+      "full_day": false,
+      "model": "live",
+      "modelled_cost": null,
+      "mtm_peak": true,
+      "spread_at_entry": "exness_btcusd_1m",
+      "swap_free": false,
+      "window": "off"
+    },
+    "family_groups": {
+      "gated_orb": "gate",
+      "pdr": "core",
+      "vol_of_vol": "adaptive",
+      "xma_ribbon": "xma"
+    },
+    "holding": {
+      "gated_orb": "session",
+      "pdr": "session",
+      "vol_of_vol": "session",
+      "xma_ribbon": "session"
+    },
+    "holdout": "2025-01-01 through 2026-08-16",
+    "in_sample_years": [
+      2020,
+      2021,
+      2022,
+      2023,
+      2024
+    ],
+    "initial_balance": 1000.0,
+    "risk_unit": "stop_day x average true daily range over 14 days -- timeframe invariant",
+    "select_rank": "tstat",
+    "session_minutes": [
+      60,
+      1439
+    ],
+    "shift_hours": 7,
+    "sizing": "1.5% volatility-throttled stop risk, MT5 lots, 4x notional ceiling",
+    "slippage_bp": 0.2,
+    "spread_bp": 1.103,
+    "spread_quoted_at": "session",
+    "total_cost_bp": 1.303,
+    "warning": null
+  },
+  "refused": {
+    "gated_orb": {
+      "best_by_return": {
+        "fill_rate": 95.0,
+        "max_dd_pct": 46.87,
+        "params": {
+          "exit_mode": "trail_1.5",
+          "gate": "rvol",
+          "last_entry_minute": 1319,
+          "polarity": "oppose",
+          "stop_day": 0.2,
+          "trend": "ema_20d",
+          "vol_mode": "calm"
+        },
+        "pf": 1.133,
+        "positive_years": 5,
+        "return_pct": 616.4,
+        "trades": 1283
+      },
+      "binding": [],
+      "cells": 2016,
+      "refused_by": {
+        "annual_dd": 1358,
+        "fill_rate": 1940,
+        "max_dd": 1894,
+        "positive_years": 1770,
+        "profit_factor": 1618,
+        "trades": 0
+      },
+      "requires": {
+        "max_dd_pct": 20.0,
+        "of_years": 5,
+        "positive_years": 4,
+        "profit_factor": 1.05,
+        "trades": 125
+      }
+    },
+    "pdr": {
+      "best_by_return": {
+        "fill_rate": 99.5,
+        "max_dd_pct": 40.42,
+        "params": {
+          "buffer_atr": 0.0,
+          "direction": "breakout",
+          "exit_mode": "trail_1.5",
+          "last_entry_minute": 1319,
+          "stop_day": 0.2,
+          "trend": "none",
+          "vol_mode": "none"
+        },
+        "pf": 1.078,
+        "positive_years": 1,
+        "return_pct": 229.2,
+        "trades": 1124
+      },
+      "binding": [],
+      "cells": 576,
+      "refused_by": {
+        "annual_dd": 256,
+        "fill_rate": 552,
+        "max_dd": 438,
+        "positive_years": 548,
+        "profit_factor": 498,
+        "trades": 0
+      },
+      "requires": {
+        "max_dd_pct": 20.0,
+        "of_years": 5,
+        "positive_years": 4,
+        "profit_factor": 1.05,
+        "trades": 125
+      }
+    },
+    "vol_of_vol": {
+      "best_by_return": {
+        "fill_rate": 88.6,
+        "max_dd_pct": 54.67,
+        "params": {
+          "direction": "fade",
+          "dispersion": 0.2,
+          "exit_mode": "trail_1.5",
+          "last_entry_minute": 1319,
+          "state": "unsteady",
+          "stop_day": 0.2,
+          "trend": "ema_50d",
+          "vol_mode": "calm"
+        },
+        "pf": 1.181,
+        "positive_years": 4,
+        "return_pct": 685.68,
+        "trades": 1546
+      },
+      "binding": [],
+      "cells": 1152,
+      "refused_by": {
+        "annual_dd": 690,
+        "fill_rate": 1070,
+        "max_dd": 954,
+        "positive_years": 1030,
+        "profit_factor": 938,
+        "trades": 0
+      },
+      "requires": {
+        "max_dd_pct": 20.0,
+        "of_years": 5,
+        "positive_years": 4,
+        "profit_factor": 1.05,
+        "trades": 125
+      }
+    },
+    "xma_ribbon": {
+      "best_by_return": {
+        "fill_rate": 73.0,
+        "max_dd_pct": 36.72,
+        "params": {
+          "direction": "fade",
+          "exit_mode": "trail_1.5",
+          "kind": "sma",
+          "last_entry_minute": 1319,
+          "stop_day": 0.4,
+          "trend": "ema_50d",
+          "vol_mode": "none",
+          "width": 1.0
+        },
+        "pf": 1.144,
+        "positive_years": 3,
+        "return_pct": 240.07,
+        "trades": 1661
+      },
+      "binding": [],
+      "cells": 1728,
+      "refused_by": {
+        "annual_dd": 786,
+        "fill_rate": 1224,
+        "max_dd": 1138,
+        "positive_years": 1636,
+        "profit_factor": 1472,
+        "trades": 256
+      },
+      "requires": {
+        "max_dd_pct": 20.0,
+        "of_years": 5,
+        "positive_years": 4,
+        "profit_factor": 1.05,
+        "trades": 125
+      }
+    }
+  },
+  "scope": "gated_orb+pdr+vol_of_vol+xma_ribbon",
+  "seal_sha256": "2ee58b88fdc891be1980c77a3e1f9f4b04d42040706d159e64d001232dcca14e",
+  "sealed": true,
+  "symbol": "btc",
+  "timeframe": "5m-barlb",
+  "validation": {}
+}

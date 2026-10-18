@@ -143,6 +143,9 @@ fn shown_equity(names: &[&str]) -> Vec<Vec<f64>> {
         initial: 1_000.0,
         symbol: "nq".into(),
         start_day: 0,
+        admission_day: None,
+        ended_markets: Vec::new(),
+        canon_replay: false,
         gross_cap: None,
     };
     run_engines_streams(&stream, 2, strategies, &owned, &assignment, cfg);
@@ -157,12 +160,12 @@ fn shown_equity(names: &[&str]) -> Vec<Vec<f64>> {
 /// What replaces it is the assertion below: every sleeve of the 2026-09-07
 /// book must be shown the balance untouched, because that book carries its
 /// risk scale, its per-sleeve weights and its per-market volatility throttle
-/// inside `exness_combined` itself. An overlay here would charge the same
+/// inside `oct_12_2026` itself. An overlay here would charge the same
 /// regime twice and size a backtest differently from the live account it is
 /// meant to mirror ([[live-vs-backtest-parity]]).
 #[test]
 fn every_sleeve_is_shown_the_untouched_balance() {
-    let book: Vec<&str> = crate::strategies::idk::exness_combined::BOOK
+    let book: Vec<&str> = crate::strategies::exness::oct_12_2026::BOOK
         .iter()
         .map(|sleeve| sleeve.display())
         .collect();
@@ -231,14 +234,18 @@ fn the_pro_model_is_a_proportional_spread_and_nothing_else() {
     );
     // The widest quote in the book, by a factor of two.
     assert_eq!(sleeve_spread_bp("ETHUSD Confluence"), Some(3.721_1 + 0.2));
-    assert_eq!(sleeve_spread_bp("USDJPY Rvol"), Some(0.439_8 + 0.2));
+    assert_eq!(sleeve_spread_bp("USDJPY Pullback"), Some(0.439_8 + 0.2));
+    assert_eq!(
+        sleeve_spread_bp("GBPUSD QP RSI2 Pullback 30m Off-hours"),
+        Some(0.518_4 + 0.2)
+    );
     // An unregistered name has no market and so no charge to look up.
     assert_eq!(sleeve_spread_bp("ETHUSD VWAP"), None);
     assert_eq!(market_spread_bp("unlisted"), None);
 
     // Every sleeve bills proportionally except the two imports, which carry a
     // flat allowance instead. The two must never both apply.
-    for definition in crate::strategies::registered_sleeves("idk") {
+    for definition in crate::strategies::registered_sleeves() {
         let (absolute, bp) = sleeve_entry_cost(definition.name);
         assert!(
             (absolute > 0.0) ^ bp.is_some_and(|bp| bp > 0.0),
@@ -249,7 +256,7 @@ fn the_pro_model_is_a_proportional_spread_and_nothing_else() {
 }
 
 /// The rule the API reports must be built from the tables the engine charges,
-/// or the environment screen and the backtest describe different accounts.
+/// or `GET /api/model` and the backtest describe different accounts.
 #[test]
 fn the_reported_cost_model_covers_every_market() {
     let model = crate::backtest::cost_model();
@@ -291,7 +298,7 @@ fn broker_minimums_match_the_strategy_specs() {
 fn every_market_is_fully_priced() {
     // SLEEVES ONLY. The registry also advertises the book, which is a selection
     // rather than a strategy: it has no market and so no spread to look up.
-    for definition in crate::strategies::registered_sleeves("idk") {
+    for definition in crate::strategies::registered_sleeves() {
         let market = crate::strategies::market_symbol(definition.name);
         assert!(
             sleeve_spread_bp(definition.name).is_some_and(|bp| bp > 0.0),
@@ -319,6 +326,9 @@ fn intraday_strategy_closes_before_exact_session_boundary() {
         initial: 100.0,
         symbol: "nq".into(),
         start_day: 0,
+        admission_day: None,
+        ended_markets: Vec::new(),
+        canon_replay: false,
         gross_cap: None,
     };
 
@@ -345,6 +355,9 @@ fn risk_sizing_never_loses_more_than_its_budget() {
         initial: 5_000.0,
         symbol: "nq".into(),
         start_day: 0,
+        admission_day: None,
+        ended_markets: Vec::new(),
+        canon_replay: false,
         gross_cap: None,
     };
 
@@ -363,6 +376,9 @@ fn combined_strategies_share_one_balance_and_hold_separate_positions() {
         initial: 1_000.0,
         symbol: "nq".into(),
         start_day: 0,
+        admission_day: None,
+        ended_markets: Vec::new(),
+        canon_replay: false,
         gross_cap: None,
     };
 
@@ -388,6 +404,9 @@ fn strategy_drawdown_limit_forces_an_account_level_exit() {
         initial: 1_000.0,
         symbol: "nq".into(),
         start_day: 0,
+        admission_day: None,
+        ended_markets: Vec::new(),
+        canon_replay: false,
         gross_cap: None,
     };
 
@@ -415,7 +434,7 @@ fn strategy_drawdown_limit_forces_an_account_level_exit() {
 /// and made it the third-largest contributor in the book.
 #[test]
 fn frozen_point_values_match_the_strategy_specs() {
-    use crate::strategies::idk::exness_combined::{BOOK, Sleeve};
+    use crate::strategies::{cfd::Sleeve, exness::oct_12_2026::BOOK};
     for sleeve in BOOK {
         let market = sleeve.market();
         assert!(

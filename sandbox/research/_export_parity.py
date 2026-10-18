@@ -46,7 +46,7 @@ from sandbox.research import exness_combined_strategies as cb
 TS, O, H, L, C, V = range(6)
 
 OUT = os.path.join(os.path.dirname(__file__), "..", "..", "live_trade", "src",
-                   "strategies", "idk", "fixtures")
+                   "strategies", "exness", "oct-12-2026", "fixtures")
 
 #: The comparison window and the warm-up that precedes it.
 FROM = "2025-01-01"

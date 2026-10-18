@@ -42,7 +42,7 @@ impl Database {
                 DatabaseBackend::Sqlite,
                 concat!(
                     "SELECT sp.account_strategy_id,sp.position_key,sp.live_trade_id,",
-                    "sp.environment_trade_id,sp.strategy FROM mt5_strategy_positions sp ",
+                    "sp.account_trade_id,sp.strategy FROM mt5_strategy_positions sp ",
                     "JOIN mt5_accounts a ON a.id=sp.account_id WHERE a.login=? ",
                     "AND sp.ticket=? AND sp.status IN ('open','pending_close') LIMIT 1",
                 ),
@@ -56,7 +56,7 @@ impl Database {
         let account_strategy_id = row.try_get_by_index::<i64>(0)?;
         let position_key = row.try_get_by_index::<String>(1)?;
         let live_trade_id = row.try_get_by_index::<i64>(2)?;
-        let environment_trade_id = row.try_get_by_index::<i64>(3)?;
+        let account_trade_id = row.try_get_by_index::<i64>(3)?;
         let strategy = row.try_get_by_index::<String>(4)?;
         transaction
             .execute(Statement::from_sql_and_values(
@@ -109,7 +109,7 @@ impl Database {
             .execute(Statement::from_sql_and_values(
                 DatabaseBackend::Sqlite,
                 concat!(
-                    "UPDATE environment_trades SET ",
+                    "UPDATE account_trades SET ",
                     "bookmap_exit_time=CASE WHEN bookmap_exit_time='' THEN ? ELSE bookmap_exit_time END,",
                     "bookmap_exit_price=CASE WHEN bookmap_exit_price=0 THEN ? ELSE bookmap_exit_price END,",
                     "mt5_exit_time=CASE WHEN mt5_exit_time='' THEN ? ELSE mt5_exit_time END,",
@@ -122,7 +122,7 @@ impl Database {
                     fill_time.to_owned().into(),
                     close_price.into(),
                     pnl.into(),
-                    environment_trade_id.into(),
+                    account_trade_id.into(),
                 ],
             ))
             .await?;
@@ -246,7 +246,7 @@ impl Database {
         let statement = Statement::from_string(
             DatabaseBackend::Sqlite,
             concat!(
-                "SELECT s.id,s.account_id,a.environment_id,s.strategy,s.symbol,",
+                "SELECT s.id,s.account_id,s.strategy,s.symbol,",
                 // 0.0 and not 0: SQLite types a bare `0` as INTEGER, and this
                 // column is decoded as f64. An account with no heartbeat row
                 // yet -- every newly added account, before its bridge first
@@ -263,7 +263,7 @@ impl Database {
                 "CASE WHEN h.seen_at>=datetime('now','-5 seconds') THEN 1 ELSE 0 END ",
                 "FROM mt5_account_strategies s JOIN mt5_accounts a ON a.id=s.account_id ",
                 "LEFT JOIN mt5_bridge_heartbeats h ON h.account_id=a.id ",
-                "WHERE s.active=1 AND a.environment_id IS NOT NULL ORDER BY s.id",
+                "WHERE s.active=1 ORDER BY s.id",
             ),
         );
         self.orm()
@@ -275,12 +275,11 @@ impl Database {
                 Ok(LiveStrategyTarget {
                     account_strategy_id: row.try_get_by_index(0)?,
                     account_id: row.try_get_by_index(1)?,
-                    environment_id: row.try_get_by_index(2)?,
-                    strategy: row.try_get_by_index(3)?,
-                    symbol: row.try_get_by_index(4)?,
-                    live_started_at: row.try_get_by_index(5)?,
-                    equity: row.try_get_by_index(6)?,
-                    connected: row.try_get_by_index::<i64>(7)? != 0,
+                    strategy: row.try_get_by_index(2)?,
+                    symbol: row.try_get_by_index(3)?,
+                    live_started_at: row.try_get_by_index(4)?,
+                    equity: row.try_get_by_index(5)?,
+                    connected: row.try_get_by_index::<i64>(6)? != 0,
                 })
             })
             .collect()
@@ -464,7 +463,6 @@ impl Database {
         &self,
         account_strategy_id: i64,
         account_id: i64,
-        environment_id: i64,
         strategy: &str,
         position_key: &str,
         side: &str,
@@ -493,16 +491,15 @@ impl Database {
             ))
             .await?
             .last_insert_id() as i64;
-        let environment_trade = transaction
+        let account_trade = transaction
             .execute(Statement::from_sql_and_values(
                 DatabaseBackend::Sqlite,
                 concat!(
-                    "INSERT INTO environment_trades",
-                    "(environment_id,strategy_name,bookmap_entry_time,",
-                    "bookmap_entry_price,created_at) VALUES (?,?,?,?,datetime('now'))",
+                    "INSERT INTO account_trades",
+                    "(strategy_name,bookmap_entry_time,",
+                    "bookmap_entry_price,created_at) VALUES (?,?,?,datetime('now'))",
                 ),
                 [
-                    environment_id.into(),
                     strategy.to_owned().into(),
                     timestamp.to_owned().into(),
                     price.into(),
@@ -517,7 +514,7 @@ impl Database {
                     "INSERT INTO mt5_strategy_positions",
                     "(account_strategy_id,position_key,account_id,strategy,symbol,side,",
                     "requested_volume,remaining_volume,status,live_trade_id,",
-                    "environment_trade_id,updated_at) VALUES (?,?,?,?,?,?,?,?,",
+                    "account_trade_id,updated_at) VALUES (?,?,?,?,?,?,?,?,",
                     "'pending_open',?,?,datetime('now')) ",
                     "ON CONFLICT(account_strategy_id,position_key) DO UPDATE SET ",
                     "account_id=excluded.account_id,strategy=excluded.strategy,",
@@ -525,7 +522,7 @@ impl Database {
                     "requested_volume=excluded.requested_volume,",
                     "remaining_volume=excluded.remaining_volume,ticket=0,",
                     "status='pending_open',live_trade_id=excluded.live_trade_id,",
-                    "environment_trade_id=excluded.environment_trade_id,",
+                    "account_trade_id=excluded.account_trade_id,",
                     "updated_at=datetime('now')",
                 ),
                 [
@@ -538,7 +535,7 @@ impl Database {
                     volume.into(),
                     volume.into(),
                     live_trade.into(),
-                    environment_trade.into(),
+                    account_trade.into(),
                 ],
             ))
             .await?;
@@ -547,7 +544,7 @@ impl Database {
                 DatabaseBackend::Sqlite,
                 concat!(
                     "INSERT INTO mt5_execution_commands",
-                    "(account_id,strategy,action,symbol,volume,trade_id,environment_trade_id,",
+                    "(account_id,strategy,action,symbol,volume,trade_id,account_trade_id,",
                     "account_strategy_id,position_key,target_ticket,magic,created_at) ",
                     "VALUES (?,?,?,?,?,?,?,?,?,?,?,datetime('now'))",
                 ),
@@ -558,7 +555,7 @@ impl Database {
                     symbol.to_owned().into(),
                     volume.into(),
                     live_trade.into(),
-                    environment_trade.into(),
+                    account_trade.into(),
                     account_strategy_id.into(),
                     position_key.to_owned().into(),
                     (-1).into(),
@@ -611,7 +608,7 @@ impl Database {
             .query_one(Statement::from_sql_and_values(
                 DatabaseBackend::Sqlite,
                 concat!(
-                    "SELECT remaining_volume,ticket,live_trade_id,environment_trade_id ",
+                    "SELECT remaining_volume,ticket,live_trade_id,account_trade_id ",
                     "FROM mt5_strategy_positions WHERE account_strategy_id=? ",
                     // Never emit a close without the broker ticket. Falling
                     // back to magic-only matching is unsafe for strategies
@@ -631,7 +628,7 @@ impl Database {
         let remaining = row.try_get_by_index::<f64>(0)?;
         let target_ticket = row.try_get_by_index::<i64>(1)?;
         let live_trade_id = row.try_get_by_index::<i64>(2)?;
-        let environment_trade_id = row.try_get_by_index::<i64>(3)?;
+        let account_trade_id = row.try_get_by_index::<i64>(3)?;
         let fraction = fraction.clamp(0.0, 1.0);
         let final_close = fraction >= 1.0 - 1e-9;
         let close_volume = if final_close {
@@ -664,13 +661,13 @@ impl Database {
                 .execute(Statement::from_sql_and_values(
                     DatabaseBackend::Sqlite,
                     concat!(
-                        "UPDATE environment_trades SET bookmap_exit_time=?,",
+                        "UPDATE account_trades SET bookmap_exit_time=?,",
                         "bookmap_exit_price=? WHERE id=? AND bookmap_exit_time=''",
                     ),
                     [
                         timestamp.to_owned().into(),
                         price.into(),
-                        environment_trade_id.into(),
+                        account_trade_id.into(),
                     ],
                 ))
                 .await?;
@@ -691,7 +688,7 @@ impl Database {
                 concat!(
                     "INSERT INTO mt5_execution_commands",
                     "(account_id,strategy,action,symbol,volume,closed_trade_id,",
-                    "closed_environment_trade_id,account_strategy_id,position_key,",
+                    "closed_account_trade_id,account_strategy_id,position_key,",
                     "target_ticket,magic,close_fraction,created_at) ",
                     "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))",
                 ),
@@ -702,12 +699,7 @@ impl Database {
                     symbol.to_owned().into(),
                     close_volume.into(),
                     (if final_close { live_trade_id } else { -1 }).into(),
-                    (if final_close {
-                        environment_trade_id
-                    } else {
-                        -1
-                    })
-                    .into(),
+                    (if final_close { account_trade_id } else { -1 }).into(),
                     account_strategy_id.into(),
                     position_key.to_owned().into(),
                     target_ticket.into(),

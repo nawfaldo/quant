@@ -148,14 +148,16 @@ def prepare():
             logs[key] = ecs.external_trades(
                 key, window=("2025-01-01", ecs.CANON_DATA_END))
             continue
-        ef.resolve(member["symbol"], allow_stale=True)
+        ef.resolve(member["symbol"].split("~", 1)[0], allow_stale=True)
         _result, log, bars, ctx = ecs.sleeve_trades(member)
         logs[key] = log
-        bars_by[member["symbol"]] = bars
+        from sandbox.research import tt_book   # `<symbol>~off` for off-hours sleeves
+        series = tt_book.row_symbol(key) if member.get("tt") else member["symbol"]
+        bars_by[series] = bars
         # `size` reads `ctx["symbol"]` too, on the MIN_LOT_ALWAYS branch that
         # only fires once the balance is small enough for a broker-margin
         # check; it is one string and dropping it was a latent KeyError.
-        ctx_by[member["symbol"]] = {"cfg": ctx["cfg"],
+        ctx_by[series] = {"cfg": ctx["cfg"],
                                     "symbol": ctx.get("symbol", member["symbol"])}
     return {"members": members, "logs": logs,
             "bars_by": bars_by, "ctx_by": ctx_by}

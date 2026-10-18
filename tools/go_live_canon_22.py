@@ -5,8 +5,6 @@
 1. Backs up live_trade/app.db.
 2. Runs `activate_canonical_live --apply` -- rows straight from the Rust
    registry, `live_started_at` reset. It refuses while anything is open.
-3. Clears `environment_cost_rules`; the server rebuilds it on boot
-   ([[activating-a-book-is-four-places]]).
 
 The 22: base 18 less eurjpy_swing_ma and usdjpy_kendall, plus ethusd_roofing,
 ethusd_level_confluence, usdjpy_rvol, and the WEEKEND-ONLY ethusd_efficiency,
@@ -37,13 +35,10 @@ if result.returncode != 0:
 print("2. activated")
 
 db = sqlite3.connect(DB, timeout=30)
-with db:
-    cleared = db.execute("DELETE FROM environment_cost_rules").rowcount
 rows = db.execute(
     "SELECT strategy, symbol FROM mt5_account_strategies "
     "WHERE active=1 ORDER BY id").fetchall()
 db.close()
-print(f"3. cleared     {cleared} stale cost rows")
 print(f"\n{len(rows)} active live rows:")
 for strategy, symbol in rows:
     print(f"   {strategy:30} {symbol}")

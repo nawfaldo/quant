@@ -1,0 +1,258 @@
+{
+  "asset_class": "index",
+  "bar_minutes": 30,
+  "families": {
+    "dt_powell_rb_fvg": null,
+    "dt_rsi_dip_vol": null,
+    "dt_tjr_session_bias": null,
+    "dt_vp_trough_break": null
+  },
+  "protocol": {
+    "account": "Exness Pro 416209807",
+    "benchmark": null,
+    "broker": "exness",
+    "calendar": 252.0,
+    "candidate_counts": {
+      "dt_powell_rb_fvg": 12,
+      "dt_rsi_dip_vol": 96,
+      "dt_tjr_session_bias": 12,
+      "dt_vp_trough_break": 24
+    },
+    "contract": {
+      "broker": "UK100",
+      "contract_size": 1.0,
+      "currency_profit": "GBP",
+      "fx_to_usd": 1.35335,
+      "multiplier": 1.35335,
+      "tick_size": 0.01,
+      "tick_value": 0.0135335,
+      "volume_max": 300.0,
+      "volume_min": 0.05,
+      "volume_step": 0.01
+    },
+    "cost_model": "spread only; commission measured at 0.0000",
+    "data": {
+      "first_row": "2018-01-02",
+      "last_row": "2026-10-01",
+      "source": "1m",
+      "table": "uk100_1m",
+      "warmup": "2018-01-01"
+    },
+    "execution": {
+      "bars_priced": 64177,
+      "bridge_queue_seconds": 1.0,
+      "entry_days": null,
+      "exit": "market order one whole bar + lag + queue after the bar it fired on; no broker-side stop on this account",
+      "feed_lag_seconds": 0.6,
+      "fill_model": "exness",
+      "fills_only": false,
+      "financing": "multiday: 17:00 New York rollover schedule; current swap rates for every year",
+      "full_day": false,
+      "model": "live",
+      "modelled_cost": null,
+      "mtm_peak": true,
+      "spread_at_entry": "exness_uk100_1m",
+      "swap_free": false,
+      "window": "rth"
+    },
+    "family_groups": {
+      "dt_powell_rb_fvg": "deltatrendtrading",
+      "dt_rsi_dip_vol": "deltatrendtrading",
+      "dt_tjr_session_bias": "deltatrendtrading",
+      "dt_vp_trough_break": "deltatrendtrading"
+    },
+    "holding": {
+      "dt_powell_rb_fvg": "session",
+      "dt_rsi_dip_vol": "session",
+      "dt_tjr_session_bias": "session",
+      "dt_vp_trough_break": "session"
+    },
+    "holdout": "2025-01-01 through 2026-08-16",
+    "in_sample_years": [
+      2021,
+      2022,
+      2023,
+      2024
+    ],
+    "initial_balance": 1000.0,
+    "risk_unit": "stop_day x average true daily range over 14 days -- timeframe invariant",
+    "select_rank": "tstat",
+    "session_minutes": [
+      180,
+      690
+    ],
+    "shift_hours": 0,
+    "sizing": "1.5% volatility-throttled stop risk, MT5 lots, 4x notional ceiling",
+    "slippage_bp": 0.2,
+    "spread_bp": 0.6988,
+    "spread_quoted_at": "session",
+    "total_cost_bp": 0.8988,
+    "warning": null
+  },
+  "refused": {
+    "dt_powell_rb_fvg": {
+      "best_by_return": {
+        "fill_rate": 100.0,
+        "max_dd_pct": 13.08,
+        "params": {
+          "exit_mode": "rr_3",
+          "last_entry_minute": 570,
+          "stop_day": 0.2,
+          "trend": "none",
+          "vol_mode": "none",
+          "wick": 0.5
+        },
+        "pf": 1.03,
+        "positive_years": 2,
+        "return_pct": 1.7,
+        "trades": 140
+      },
+      "binding": [
+        "profit_factor",
+        "positive_years"
+      ],
+      "cells": 12,
+      "refused_by": {
+        "annual_dd": 0,
+        "fill_rate": 0,
+        "max_dd": 0,
+        "positive_years": 12,
+        "profit_factor": 12,
+        "trades": 0
+      },
+      "requires": {
+        "max_dd_pct": 20.0,
+        "of_years": 4,
+        "positive_years": 3,
+        "profit_factor": 1.05,
+        "trades": 100
+      }
+    },
+    "dt_rsi_dip_vol": {
+      "best_by_return": {
+        "fill_rate": 100.0,
+        "max_dd_pct": 0.0,
+        "params": {
+          "exit_mode": "signal",
+          "last_entry_minute": 570,
+          "lo": 10,
+          "n": 14,
+          "stop": "atr_1",
+          "stop_day": 0.2,
+          "trend": "none",
+          "vol": "any",
+          "vol_mode": "none"
+        },
+        "pf": 999.0,
+        "positive_years": 1,
+        "return_pct": 2.91,
+        "trades": 2
+      },
+      "binding": [
+        "positive_years"
+      ],
+      "cells": 96,
+      "refused_by": {
+        "annual_dd": 68,
+        "fill_rate": 0,
+        "max_dd": 62,
+        "positive_years": 96,
+        "profit_factor": 72,
+        "trades": 24
+      },
+      "requires": {
+        "max_dd_pct": 20.0,
+        "of_years": 4,
+        "positive_years": 3,
+        "profit_factor": 1.05,
+        "trades": 100
+      }
+    },
+    "dt_tjr_session_bias": {
+      "best_by_return": {
+        "fill_rate": 100.0,
+        "max_dd_pct": 24.9,
+        "params": {
+          "exit_mode": "rr_2",
+          "last_entry_minute": 570,
+          "start": 0,
+          "stop_day": 0.2,
+          "trend": "none",
+          "vol_mode": "none"
+        },
+        "pf": 0.674,
+        "positive_years": 2,
+        "return_pct": -20.75,
+        "trades": 151
+      },
+      "binding": [
+        "profit_factor",
+        "max_dd",
+        "positive_years"
+      ],
+      "cells": 12,
+      "refused_by": {
+        "annual_dd": 0,
+        "fill_rate": 0,
+        "max_dd": 12,
+        "positive_years": 12,
+        "profit_factor": 12,
+        "trades": 0
+      },
+      "requires": {
+        "max_dd_pct": 20.0,
+        "of_years": 4,
+        "positive_years": 3,
+        "profit_factor": 1.05,
+        "trades": 100
+      }
+    },
+    "dt_vp_trough_break": {
+      "best_by_return": {
+        "fill_rate": 98.5,
+        "max_dd_pct": 65.94,
+        "params": {
+          "confirm": 2,
+          "conv": 1.5,
+          "exit_mode": "rr_1",
+          "last_entry_minute": 570,
+          "stop_day": 0.2,
+          "trend": "none",
+          "vol_mode": "none"
+        },
+        "pf": 0.488,
+        "positive_years": 0,
+        "return_pct": -65.27,
+        "trades": 387
+      },
+      "binding": [
+        "profit_factor",
+        "max_dd",
+        "positive_years",
+        "annual_dd"
+      ],
+      "cells": 24,
+      "refused_by": {
+        "annual_dd": 24,
+        "fill_rate": 0,
+        "max_dd": 24,
+        "positive_years": 24,
+        "profit_factor": 24,
+        "trades": 0
+      },
+      "requires": {
+        "max_dd_pct": 20.0,
+        "of_years": 4,
+        "positive_years": 3,
+        "profit_factor": 1.05,
+        "trades": 100
+      }
+    }
+  },
+  "scope": "deltatrendtrading",
+  "seal_sha256": "aaa619e7c3da8fc549b9e0dacb0d473bac57e85b88a6b0b6f15b9318e804c9b0",
+  "sealed": true,
+  "symbol": "uk100",
+  "timeframe": "30m",
+  "validation": {}
+}

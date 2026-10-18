@@ -4,7 +4,7 @@ use crate::{
     error::ApiError,
     fx::{self, Repriced},
     state::AppState,
-    strategies::idk::exness_combined,
+    strategies::{exness::oct_12_2026, fundednext::oct_18_2026},
 };
 use actix_web::{HttpResponse, web};
 use serde_json::{Value, json};
@@ -89,12 +89,28 @@ async fn backtest_fx(
 /// STRATEGY. It is twenty of them on one balance, so the single-run path hands
 /// it to the combined one rather than growing a second engine.
 fn book_request(request: &RunRequest) -> Option<CombineRequest> {
-    (request.strategy == exness_combined::BOOK_NAME).then(|| CombineRequest {
-        environment_id: request.environment_id.clone(),
-        strategies: exness_combined::BOOK
-            .into_iter()
-            .map(|sleeve| sleeve.display().to_owned())
-            .collect(),
+    let (members, model): (Vec<&str>, Option<String>) = if request.strategy == oct_12_2026::BOOK_NAME {
+        (
+            oct_12_2026::BOOK.into_iter().map(|sleeve| sleeve.display()).collect(),
+            request.model.clone(),
+        )
+    } else if request.strategy == oct_18_2026::BOOK_NAME {
+        // The FundedNext book exists only under its own model, so picking it
+        // names the model too; a request that named another one is refused
+        // downstream rather than silently repriced.
+        (
+            oct_18_2026::BOOK.into_iter().map(|sleeve| sleeve.display()).collect(),
+            request
+                .model
+                .clone()
+                .or_else(|| Some(backtest::FUNDEDNEXT_MODEL_ID.to_owned())),
+        )
+    } else {
+        return None;
+    };
+    Some(CombineRequest {
+        model,
+        strategies: members.into_iter().map(str::to_owned).collect(),
         symbol: request.symbol.clone(),
         instrument: request.instrument.clone(),
         initial_balance: request.initial_balance.clone(),
@@ -104,17 +120,26 @@ fn book_request(request: &RunRequest) -> Option<CombineRequest> {
     })
 }
 
+/// The stored id of a whole-book run picked by its book name.
+fn book_id(request: &RunRequest) -> &'static str {
+    if request.strategy == oct_18_2026::BOOK_NAME {
+        oct_18_2026::BOOK_ID
+    } else {
+        oct_12_2026::BOOK_ID
+    }
+}
+
 async fn run(
     state: web::Data<AppState>,
     request: web::Json<RunRequest>,
 ) -> Result<HttpResponse, ApiError> {
-    let mut request = request.into_inner();
+    let request = request.into_inner();
     if let Some(book) = book_request(&request) {
         let (_, run, mut result) = compute_combine(&state, &book).await?;
         attach_fx_preview(&state, &run, &mut result).await;
         return Ok(HttpResponse::Ok().json(result.body));
     }
-    configure_strategy_environment(&state, &mut request).await?;
+    request.model()?;
     let mut result = backtest::run(&state.store, &request).await?;
     attach_fx_preview(&state, &request, &mut result).await;
     Ok(HttpResponse::Ok().json(result.body))
@@ -123,14 +148,14 @@ async fn save_run(
     state: web::Data<AppState>,
     request: web::Json<RunRequest>,
 ) -> Result<HttpResponse, ApiError> {
-    let mut request = request.into_inner();
+    let request = request.into_inner();
     if let Some(book) = book_request(&request) {
-        let (environment, _, result) = compute_combine(&state, &book).await?;
+        let (model, _, result) = compute_combine(&state, &book).await?;
         let id = state
             .db
             .save_backtest(
-                exness_combined::BOOK_ID,
-                environment,
+                book_id(&request),
+                model,
                 &result.body,
                 &result.trades,
                 None,
@@ -138,13 +163,12 @@ async fn save_run(
             .await?;
         return Ok(HttpResponse::Ok().json(json!({"id":id})));
     }
-    configure_strategy_environment(&state, &mut request).await?;
-    let environment_id = request.environment_id()?;
+    let model = request.model()?;
     let result = backtest::run(&state.store, &request).await?;
     let strategy = strategy_code(&request.strategy)?;
     let id = state
         .db
-        .save_backtest(strategy, environment_id, &result.body, &result.trades, None)
+        .save_backtest(strategy, model, &result.body, &result.trades, None)
         .await?;
     if supports_fx(&request.symbol, &request.instrument) {
         match fx::reprice(&state.store, &result.trades).await {
@@ -174,34 +198,9 @@ async fn save_run(
 /// knows and the registry does not would store a run under a strategy the engine
 /// cannot build.
 fn strategy_code(name: &str) -> Result<&'static str, ApiError> {
-    crate::strategies::idk::exness_combined::Sleeve::from_display(name)
+    crate::strategies::cfd::Sleeve::from_display(name)
         .map(|sleeve| sleeve.code())
         .ok_or_else(|| ApiError::BadRequest("unknown strategy".into()))
-}
-
-/// Resolves the run's environment name into its registered strategy set.
-///
-/// It used to also return that environment's spread, slippage and commission.
-/// Those were removed: the only cost model is Exness Pro, and the engine holds
-/// its measured figures itself.
-async fn configure_strategy_environment(
-    state: &AppState,
-    request: &mut RunRequest,
-) -> Result<(), ApiError> {
-    let environment_id = request
-        .environment_id()?
-        .ok_or_else(|| ApiError::BadRequest("missing environment id".into()))?;
-    let name = state
-        .db
-        .environment_name(environment_id)
-        .await?
-        .ok_or_else(|| ApiError::NotFound("environment not found".into()))?;
-    if crate::strategies::for_environment(&name).is_empty() {
-        return Err(ApiError::BadRequest(
-            "environment has no registered strategies".into(),
-        ));
-    }
-    Ok(())
 }
 
 async fn attach_fx_preview(
@@ -260,7 +259,6 @@ fn fx_report(repriced: &Repriced, strategy: &str, symbol: &str, initial_balance:
     let mut body = backtest::combine_realized(&sources, initial_balance, None, None).body;
     if let Some(object) = body.as_object_mut() {
         object.remove("fx");
-        object.remove("environment_id");
         object.remove("strategy");
     }
     body["tradesInWindow"] = Value::from(repriced.in_window);
@@ -284,7 +282,8 @@ fn supports_fx(symbol: &str, instrument: &str) -> bool {
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct CombineRequest {
-    environment_id: Option<String>,
+    #[serde(default)]
+    model: Option<String>,
     strategies: Vec<String>,
     symbol: String,
     instrument: String,
@@ -298,21 +297,24 @@ struct CombineRequest {
 }
 impl CombineRequest {
     /// The shared account the strategies trade, expressed as a normal run
-    /// request; `strategy` carries the first name only so environment lookup
-    /// and validation reuse the single-strategy path.
+    /// request; `strategy` carries the first name only so validation reuses
+    /// the single-strategy path.
     fn as_run_request(&self) -> Result<RunRequest, ApiError> {
         let first = self
             .strategies
             .first()
             .ok_or_else(|| ApiError::BadRequest("need at least 2 strategies".into()))?;
         Ok(RunRequest {
-            environment_id: self.environment_id.clone(),
+            model: self.model.clone(),
             strategy: first.clone(),
             symbol: self.symbol.clone(),
             instrument: self.instrument.clone(),
             initial_balance: self.initial_balance.clone(),
             from_date: self.from_date.clone(),
             to_date: self.to_date.clone(),
+            admission_from: None,
+            data_end: None,
+            canon_replay: false,
         })
     }
 }
@@ -322,16 +324,15 @@ impl CombineRequest {
 async fn compute_combine(
     state: &AppState,
     request: &CombineRequest,
-) -> Result<(Option<i64>, RunRequest, backtest::RunResult), ApiError> {
+) -> Result<(&'static str, RunRequest, backtest::RunResult), ApiError> {
     if request.strategies.len() < 2 {
         return Err(ApiError::BadRequest("need at least 2 strategies".into()));
     }
-    let mut run = request.as_run_request()?;
-    configure_strategy_environment(state, &mut run).await?;
-    let environment = run.environment_id()?;
+    let run = request.as_run_request()?;
+    let model = run.model()?;
     let mut result = backtest::run_combined(&state.store, &run, &request.strategies).await?;
     result.body["strategy"] = Value::String(combine_label(&request.strategies));
-    Ok((environment, run, result))
+    Ok((model, run, result))
 }
 
 /// What to call a combined run: the BOOK if that is what it is, else the join.
@@ -341,16 +342,22 @@ async fn compute_combine(
 /// the composite name -- calling that the book would file a different strategy
 /// under the book's record.
 fn combine_label(strategies: &[String]) -> String {
-    if exness_combined::is_whole_book(strategies.iter().map(String::as_str)) {
-        return exness_combined::BOOK_NAME.to_owned();
+    if oct_12_2026::is_whole_book(strategies.iter().map(String::as_str)) {
+        return oct_12_2026::BOOK_NAME.to_owned();
+    }
+    if oct_18_2026::is_whole_book(strategies.iter().map(String::as_str)) {
+        return oct_18_2026::BOOK_NAME.to_owned();
     }
     strategies.join(" + ")
 }
 
 /// The stored id for a combined run, under the same rule.
 fn combine_code(strategies: &[String]) -> Result<String, ApiError> {
-    if exness_combined::is_whole_book(strategies.iter().map(String::as_str)) {
-        return Ok(exness_combined::BOOK_ID.to_owned());
+    if oct_12_2026::is_whole_book(strategies.iter().map(String::as_str)) {
+        return Ok(oct_12_2026::BOOK_ID.to_owned());
+    }
+    if oct_18_2026::is_whole_book(strategies.iter().map(String::as_str)) {
+        return Ok(oct_18_2026::BOOK_ID.to_owned());
     }
     Ok(strategies
         .iter()
@@ -372,11 +379,11 @@ async fn save_combine(
     state: web::Data<AppState>,
     request: web::Json<CombineRequest>,
 ) -> Result<HttpResponse, ApiError> {
-    let (environment, _, result) = compute_combine(&state, &request).await?;
+    let (model, _, result) = compute_combine(&state, &request).await?;
     let strategy = combine_code(&request.strategies)?;
     let id = state
         .db
-        .save_backtest(&strategy, environment, &result.body, &result.trades, None)
+        .save_backtest(&strategy, model, &result.body, &result.trades, None)
         .await?;
     Ok(HttpResponse::Ok().json(json!({"id":id})))
 }
@@ -402,13 +409,13 @@ mod tests {
     /// and a single-strategy run of it would fail with "unknown strategy".
     #[test]
     fn the_book_name_expands_to_every_sleeve() {
-        let book = book_request(&request(exness_combined::BOOK_NAME)).expect("the book expands");
-        let expected: Vec<String> = exness_combined::BOOK
+        let book = book_request(&request(oct_12_2026::BOOK_NAME)).expect("the book expands");
+        let expected: Vec<String> = oct_12_2026::BOOK
             .into_iter()
             .map(|sleeve| sleeve.display().to_owned())
             .collect();
         assert_eq!(book.strategies, expected);
-        assert!(exness_combined::is_whole_book(
+        assert!(oct_12_2026::is_whole_book(
             book.strategies.iter().map(String::as_str)
         ));
         // The run's own account settings are carried across untouched.
@@ -430,17 +437,17 @@ mod tests {
     /// the stored row a claim about a strategy that was never run.
     #[test]
     fn only_the_whole_book_is_labelled_as_the_book() {
-        let all: Vec<String> = exness_combined::BOOK
+        let all: Vec<String> = oct_12_2026::BOOK
             .into_iter()
             .map(|sleeve| sleeve.display().to_owned())
             .collect();
-        assert_eq!(combine_label(&all), exness_combined::BOOK_NAME);
-        assert_eq!(combine_code(&all).unwrap(), exness_combined::BOOK_ID);
+        assert_eq!(combine_label(&all), oct_12_2026::BOOK_NAME);
+        assert_eq!(combine_code(&all).unwrap(), oct_12_2026::BOOK_ID);
 
         let partial = all[..3].to_vec();
         assert_eq!(combine_label(&partial), partial.join(" + "));
         let code = combine_code(&partial).unwrap();
         assert!(code.contains(" + "), "{code}");
-        assert_ne!(code, exness_combined::BOOK_ID);
+        assert_ne!(code, oct_12_2026::BOOK_ID);
     }
 }

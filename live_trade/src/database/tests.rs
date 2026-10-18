@@ -17,26 +17,12 @@ async fn live_targets_decode_before_the_first_heartbeat() {
     let db = Database::new(dir.path().join("app.db"));
     db.initialize().await.unwrap();
 
-    let environment = db
-        .create_environment(&CreateEnvironment { name: "idk".into() })
-        .await
-        .unwrap();
     let account = db
         .add_account(&Mt5AccountInput {
             name: "pro".into(),
             login: "416209807".into(),
             server: "Exness-MT5Trial14".into(),
         })
-        .await
-        .unwrap();
-    db.orm()
-        .await
-        .unwrap()
-        .execute(Statement::from_sql_and_values(
-            DatabaseBackend::Sqlite,
-            "UPDATE mt5_accounts SET environment_id=? WHERE id=?",
-            [environment.into(), account.into()],
-        ))
         .await
         .unwrap();
     let strategy = db
@@ -81,9 +67,8 @@ async fn promotes_the_ml_ofi_strategy_and_retires_the_unfiltered_one() {
         .unwrap()
         .execute_unprepared(
             "DELETE FROM settings WHERE key='ofi_ml_promoted_v1';
-             INSERT INTO environments(id,name) VALUES (1,'idk');
-             INSERT INTO mt5_accounts(id,login,password,server,environment_id)
-             VALUES (1,'123','secret','demo',1);
+             INSERT INTO mt5_accounts(id,login,password,server)
+             VALUES (1,'123','secret','demo');
              INSERT INTO mt5_account_strategies(account_id,strategy,symbol,active)
              VALUES (1,'ofi_momentum','USTEC',1),
                     (1,'ofi_momentum_ml','USTEC',1);
@@ -91,8 +76,8 @@ async fn promotes_the_ml_ofi_strategy_and_retires_the_unfiltered_one() {
              VALUES ('OFI_MOMENTUM'),('OFI_MOMENTUM_ML');
              INSERT INTO live_trades(strategy_name,contract)
              VALUES ('ofi_momentum',0.01),('ofi_momentum_ml',0.01);
-             INSERT INTO environment_trades(environment_id,strategy_name)
-             VALUES (1,'ofi_momentum'),(1,'ofi_momentum_ml');",
+             INSERT INTO account_trades(strategy_name)
+             VALUES ('ofi_momentum'),('ofi_momentum_ml');",
         )
         .await
         .unwrap();
@@ -153,84 +138,250 @@ async fn promotes_the_ml_ofi_strategy_and_retires_the_unfiltered_one() {
     );
 }
 
+/// A database from before environments were removed, as the live one was:
+/// accounts, backtests and account trades hanging off an `environments` row,
+/// and four tables cascading off `mt5_accounts`.
+const ENVIRONMENT_ERA_SCHEMA: &str = r#"
+CREATE TABLE environments (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL COLLATE NOCASE,
+  created_at TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE environment_cost_rules (
+  environment_id INTEGER NOT NULL REFERENCES environments(id) ON DELETE CASCADE,
+  rule_id TEXT NOT NULL, name TEXT NOT NULL, detail TEXT NOT NULL,
+  market TEXT NOT NULL, spread_bp REAL NOT NULL, minimum_lots REAL NOT NULL,
+  PRIMARY KEY(environment_id, rule_id, market)
+);
+CREATE TABLE environment_rules (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  environment_id INTEGER NOT NULL REFERENCES environments(id) ON DELETE CASCADE,
+  rule_type TEXT NOT NULL, value REAL NOT NULL
+);
+CREATE TABLE environment_trades (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  environment_id INTEGER NOT NULL REFERENCES environments(id) ON DELETE CASCADE,
+  strategy_name TEXT NOT NULL,
+  mt5pnl REAL NOT NULL DEFAULT 0,
+  bookmap_entry_time TEXT NOT NULL DEFAULT '',
+  bookmap_exit_time TEXT NOT NULL DEFAULT '',
+  bookmap_entry_price REAL NOT NULL DEFAULT 0,
+  bookmap_exit_price REAL NOT NULL DEFAULT 0,
+  mt5_entry_time TEXT NOT NULL DEFAULT '',
+  mt5_exit_time TEXT NOT NULL DEFAULT '',
+  mt5_entry_price REAL NOT NULL DEFAULT 0,
+  mt5_exit_price REAL NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX idx_environment_trades_environment ON environment_trades(environment_id,id);
+CREATE TABLE backtests (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  strategy TEXT NOT NULL DEFAULT '', run_at TEXT NOT NULL DEFAULT '',
+  final_bal REAL NOT NULL DEFAULT 0,
+  environment_id INTEGER REFERENCES environments(id)
+);
+CREATE INDEX idx_backtests_environment ON backtests(environment_id);
+CREATE TABLE mt5_accounts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL DEFAULT '',
+  login TEXT NOT NULL DEFAULT '', password TEXT NOT NULL DEFAULT '',
+  server TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT '',
+  environment_id INTEGER REFERENCES environments(id) ON DELETE CASCADE,
+  equity_chart_range TEXT NOT NULL DEFAULT 'all',
+  history_range TEXT NOT NULL DEFAULT '1week',
+  account_type TEXT NOT NULL DEFAULT 'mt5'
+);
+CREATE INDEX idx_mt5_accounts_environment ON mt5_accounts(environment_id);
+CREATE TABLE mt5_execution_commands (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  account_id INTEGER NOT NULL REFERENCES mt5_accounts(id) ON DELETE CASCADE,
+  strategy TEXT NOT NULL, action TEXT NOT NULL, symbol TEXT NOT NULL,
+  environment_trade_id INTEGER NOT NULL DEFAULT -1,
+  closed_environment_trade_id INTEGER NOT NULL DEFAULT -1,
+  status TEXT NOT NULL DEFAULT 'pending', error TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE mt5_bridge_heartbeats (
+  account_id INTEGER PRIMARY KEY REFERENCES mt5_accounts(id) ON DELETE CASCADE,
+  balance REAL NOT NULL DEFAULT 0
+);
+CREATE TABLE mt5_strategy_positions (
+  account_strategy_id INTEGER NOT NULL,
+  position_key TEXT NOT NULL,
+  account_id INTEGER NOT NULL REFERENCES mt5_accounts(id) ON DELETE CASCADE,
+  strategy TEXT NOT NULL, symbol TEXT NOT NULL, side TEXT NOT NULL,
+  ticket INTEGER NOT NULL DEFAULT 0,
+  environment_trade_id INTEGER NOT NULL DEFAULT -1,
+  PRIMARY KEY(account_strategy_id,position_key)
+);
+INSERT INTO environments(id,name) VALUES (2,'idk');
+INSERT INTO environment_cost_rules VALUES (2,'exness_pro','Exness Pro','','usdjpy',1.0,0.01);
+INSERT INTO environment_rules(environment_id,rule_type,value) VALUES (2,'spread',0.2);
+INSERT INTO mt5_accounts(id,name,login,server,environment_id)
+VALUES (2,'trial','416209807','Exness-MT5Trial14',NULL),
+       (3,'Pro','266010797','Exness-MT5Real38',2);
+INSERT INTO environment_trades(id,environment_id,strategy_name,mt5pnl,bookmap_entry_price)
+VALUES (7,2,'usdjpy_pullback',1.25,150.5);
+INSERT INTO mt5_execution_commands(account_id,strategy,action,symbol,environment_trade_id,
+  closed_environment_trade_id)
+VALUES (3,'usdjpy_pullback','long','USDJPY',7,-1),
+       (3,'usdjpy_pullback','close','USDJPY',-1,7);
+INSERT INTO mt5_bridge_heartbeats(account_id,balance) VALUES (3,512.5);
+-- An orphan that predates the migration, as the live database carries.
+PRAGMA foreign_keys=OFF;
+INSERT INTO mt5_bridge_heartbeats(account_id,balance) VALUES (99,0);
+PRAGMA foreign_keys=ON;
+INSERT INTO mt5_strategy_positions(account_strategy_id,position_key,account_id,strategy,
+  symbol,side,ticket,environment_trade_id)
+VALUES (40,'primary',3,'usdjpy_pullback','USDJPY','long',991,7);
+INSERT INTO backtests(id,strategy,final_bal,environment_id)
+VALUES (5,'exness_combined_07-09-2026',1234.5,2);
+"#;
+
+/// Removing environments must not cost a single row anywhere else.
+///
+/// `mt5_accounts` is the parent of four `ON DELETE CASCADE` tables, so a
+/// rebuild of it with foreign keys on would have emptied the commands, the
+/// heartbeats and the strategy positions of the account that is trading.
 #[actix_web::test]
-async fn removes_retired_environment_fields_and_local_environment() {
+async fn dropping_environments_keeps_every_account_trade_and_backtest() {
     let dir = tempfile::tempdir().unwrap();
-    let db = Database::new(dir.path().join("app.db"));
+    let path = dir.path().join("app.db");
+    let db = Database::new(&path);
     db.orm()
         .await
         .unwrap()
-        .execute_unprepared(
-            "CREATE TABLE environments (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL,
-                is_mt5 INTEGER NOT NULL DEFAULT 0,
-                server TEXT NOT NULL DEFAULT '',
-                login TEXT NOT NULL DEFAULT '',
-                password TEXT NOT NULL DEFAULT '',
-                created_at TEXT NOT NULL DEFAULT ''
-            )",
-        )
-        .await
-        .unwrap();
-    db.orm()
-        .await
-        .unwrap()
-        .execute_unprepared(
-            "INSERT INTO environments(name,created_at)
-             VALUES ('local',''),('idk','')",
-        )
-        .await
-        .unwrap();
-    db.orm()
-        .await
-        .unwrap()
-        .execute_unprepared(
-            "CREATE TABLE mt5_accounts (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL DEFAULT '',
-                login TEXT NOT NULL DEFAULT '',
-                password TEXT NOT NULL DEFAULT '',
-                server TEXT NOT NULL DEFAULT '',
-                created_at TEXT NOT NULL DEFAULT ''
-            )",
-        )
+        .execute_unprepared(ENVIRONMENT_ERA_SCHEMA)
         .await
         .unwrap();
 
     db.initialize().await.unwrap();
+    // A second boot is a no-op.
+    db.initialize().await.unwrap();
 
-    for column in ["is_mt5", "server", "login", "password"] {
-        let row = db
-            .orm()
+    let connection = db.orm().await.unwrap();
+    let scalar = |sql: &'static str| async move {
+        connection
+            .query_one(Statement::from_string(DatabaseBackend::Sqlite, sql))
             .await
             .unwrap()
-            .query_one(Statement::from_sql_and_values(
+            .map(|row| row.try_get_by_index::<String>(0).unwrap())
+    };
+    let count = |sql: &'static str| async move {
+        connection
+            .query_one(Statement::from_string(DatabaseBackend::Sqlite, sql))
+            .await
+            .unwrap()
+            .unwrap()
+            .try_get_by_index::<i64>(0)
+            .unwrap()
+    };
+
+    assert_eq!(
+        count("SELECT COUNT(*) FROM sqlite_master WHERE name LIKE '%environment%'").await,
+        0,
+        "no environment table, index or column-bearing table may survive"
+    );
+    for table in [
+        "mt5_accounts",
+        "backtests",
+        "mt5_execution_commands",
+        "mt5_strategy_positions",
+        "account_trades",
+    ] {
+        let columns = connection
+            .query_all(Statement::from_sql_and_values(
                 DatabaseBackend::Sqlite,
-                "SELECT 1 FROM pragma_table_info('environments') WHERE name=?",
-                [column.into()],
+                "SELECT name FROM pragma_table_info(?)",
+                [table.into()],
             ))
             .await
             .unwrap();
-        assert!(row.is_none(), "{column} should have been removed");
+        assert!(!columns.is_empty(), "{table} must exist");
+        for column in columns {
+            let name = column.try_get_by_index::<String>(0).unwrap();
+            assert!(!name.contains("environment"), "{table}.{name} survived");
+        }
     }
-    let environments = db.environments().await.unwrap();
-    assert_eq!(environments.len(), 1);
-    assert_eq!(environments[0].name, "idk");
-    let environment_id_column = db
-        .orm()
-        .await
-        .unwrap()
-        .query_one(Statement::from_string(
-            DatabaseBackend::Sqlite,
-            concat!(
-                "SELECT 1 FROM pragma_table_info('mt5_accounts') ",
-                "WHERE name='environment_id'"
-            ),
-        ))
-        .await
-        .unwrap();
-    assert!(environment_id_column.is_some());
+
+    // Both accounts, including the one that never had an environment.
+    assert_eq!(count("SELECT COUNT(*) FROM mt5_accounts").await, 2);
+    assert_eq!(
+        scalar("SELECT login FROM mt5_accounts WHERE id=3").await,
+        Some("266010797".into())
+    );
+    // Nothing cascaded.
+    assert_eq!(
+        count("SELECT COUNT(*) FROM mt5_execution_commands").await,
+        2
+    );
+    assert_eq!(count("SELECT COUNT(*) FROM mt5_bridge_heartbeats").await, 2);
+    assert_eq!(
+        count("SELECT COUNT(*) FROM mt5_strategy_positions").await,
+        1
+    );
+    // The ledger kept its ids, so the commands still point at their trade.
+    let ledger = db.account_trade_ledger().await.unwrap();
+    assert_eq!(ledger.len(), 1);
+    assert_eq!(ledger[0].id, 7);
+    assert_eq!(ledger[0].strategy_name, "usdjpy_pullback");
+    assert_eq!(ledger[0].mt5pnl, 1.25);
+    assert_eq!(
+        count("SELECT account_trade_id FROM mt5_execution_commands WHERE action='long'").await,
+        7
+    );
+    assert_eq!(
+        count("SELECT closed_account_trade_id FROM mt5_execution_commands WHERE action='close'")
+            .await,
+        7
+    );
+    assert_eq!(
+        count("SELECT account_trade_id FROM mt5_strategy_positions").await,
+        7
+    );
+    assert_eq!(
+        db.account_trades(3).await.unwrap().unwrap().len(),
+        1,
+        "the account's trades are found through its commands"
+    );
+    // The backtest kept its id and figures and is priced under the model.
+    assert_eq!(
+        scalar("SELECT model FROM backtests WHERE id=5").await,
+        Some("exness_pro".into())
+    );
+    assert_eq!(
+        scalar("SELECT strategy FROM backtests WHERE id=5").await,
+        Some("exness_combined_07-09-2026".into())
+    );
+
+    // The children still reference the rebuilt table, so a delete cascades,
+    // and the only broken key is the orphan that was already there.
+    assert_eq!(
+        count("SELECT COUNT(*) FROM pragma_foreign_key_check").await,
+        1
+    );
+    for child in [
+        "mt5_execution_commands",
+        "mt5_bridge_heartbeats",
+        "mt5_strategy_positions",
+    ] {
+        let parent = connection
+            .query_one(Statement::from_sql_and_values(
+                DatabaseBackend::Sqlite,
+                "SELECT \"table\" FROM pragma_foreign_key_list(?)",
+                [child.into()],
+            ))
+            .await
+            .unwrap()
+            .unwrap()
+            .try_get_by_index::<String>(0)
+            .unwrap();
+        assert_eq!(parent, "mt5_accounts", "{child}");
+    }
+    assert!(db.delete_mt5_account(3).await.unwrap());
+    assert_eq!(count("SELECT COUNT(*) FROM mt5_bridge_heartbeats").await, 1);
+    assert_eq!(
+        count("SELECT COUNT(*) FROM mt5_strategy_positions").await,
+        0
+    );
 }
 
 #[actix_web::test]
@@ -326,7 +477,7 @@ async fn saves_backtest_trades_and_montecarlo() {
         exit_raw: 101.0,
     };
     let id = db
-        .save_backtest("TEST", None, &Value::Object(report), &[trade], None)
+        .save_backtest("TEST", "exness_pro", &Value::Object(report), &[trade], None)
         .await
         .unwrap();
     assert_eq!(db.trades_binary(id, false).await.unwrap().len(), 33);
@@ -334,57 +485,39 @@ async fn saves_backtest_trades_and_montecarlo() {
 }
 
 #[actix_web::test]
-async fn seaorm_round_trips_environment_and_march_records() {
+async fn seaorm_round_trips_account_and_march_records() {
     let dir = tempfile::tempdir().unwrap();
     let db = Database::new(dir.path().join("app.db"));
     db.initialize().await.unwrap();
 
-    let environment = db
-        .create_environment(&CreateEnvironment {
-            name: "sandbox".into(),
+    let overview_account = db
+        .create_mt5_account(&NewMt5Account {
+            server: "broker-demo".into(),
+            login: "456".into(),
+            password: "secret".into(),
+            account_type: "mt5".into(),
         })
         .await
         .unwrap();
-    let environment_account = db
-        .create_environment_mt5_account(
-            environment,
-            &EnvironmentMt5AccountInput {
-                server: "broker-demo".into(),
-                login: "456".into(),
-                password: "secret".into(),
-                account_type: "mt5".into(),
-            },
-        )
-        .await
-        .unwrap();
-    let environment_accounts = db
-        .environment_mt5_accounts(environment)
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(environment_accounts.len(), 1);
-    assert_eq!(environment_accounts[0].id, environment_account);
-    assert_eq!(environment_accounts[0].server, "broker-demo");
-    assert_eq!(environment_accounts[0].login, "456");
-    assert_eq!(environment_accounts[0].balance, None);
-    assert_eq!(environment_accounts[0].equity, None);
+    let overviews = db.account_overviews().await.unwrap();
+    assert_eq!(overviews.len(), 1);
+    assert_eq!(overviews[0].id, overview_account);
+    assert_eq!(overviews[0].server, "broker-demo");
+    assert_eq!(overviews[0].login, "456");
+    assert_eq!(overviews[0].balance, None);
+    assert_eq!(overviews[0].equity, None);
     assert_eq!(
         db.record_mt5_heartbeat("456", "broker-demo", 25_000.0, 25_125.5, "USD")
             .await
             .unwrap(),
-        Some(environment_account)
+        Some(overview_account)
     );
-    let environment_accounts = db
-        .environment_mt5_accounts(environment)
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(environment_accounts[0].balance, Some(25_000.0));
-    assert_eq!(environment_accounts[0].equity, Some(25_125.5));
-    let environment_strategy = db
-        .create_environment_account_strategy(
-            environment,
-            environment_account,
+    let overviews = db.account_overviews().await.unwrap();
+    assert_eq!(overviews[0].balance, Some(25_000.0));
+    assert_eq!(overviews[0].equity, Some(25_125.5));
+    let overview_strategy = db
+        .create_active_account_strategy(
+            overview_account,
             &AccountStrategyInput {
                 strategy: "nq_ofi".into(),
                 symbol: "USTEC".into(),
@@ -392,18 +525,17 @@ async fn seaorm_round_trips_environment_and_march_records() {
         )
         .await
         .unwrap();
-    let environment_strategies = db
-        .environment_account_strategies(environment, environment_account)
+    let overview_strategies = db
+        .active_account_strategies(overview_account)
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(environment_strategies.len(), 1);
-    assert_eq!(environment_strategies[0].id, environment_strategy);
-    assert!(environment_strategies[0].active);
+    assert_eq!(overview_strategies.len(), 1);
+    assert_eq!(overview_strategies[0].id, overview_strategy);
+    assert!(overview_strategies[0].active);
     assert!(matches!(
-        db.create_environment_account_strategy(
-            environment,
-            environment_account,
+        db.create_active_account_strategy(
+            overview_account,
             &AccountStrategyInput {
                 strategy: "nq_ofi".into(),
                 symbol: "USTEC".into(),
@@ -412,28 +544,28 @@ async fn seaorm_round_trips_environment_and_march_records() {
         .await,
         Err(ApiError::Conflict(_))
     ));
-    let environment_trade = db
-        .create_environment_trade(environment, "nq_ofi", "2026-07-15 10:00", 20_000.0)
+    let account_trade = db
+        .create_account_trade("nq_ofi", "2026-07-15 10:00", 20_000.0)
         .await
         .unwrap();
-    let environment_entry_command = db
+    let entry_command = db
         .enqueue_mt5_command(
-            environment_account,
+            overview_account,
             "nq_ofi",
             "long",
             "USTEC",
             0.1,
             -1,
             -1,
-            environment_trade,
+            account_trade,
             -1,
         )
         .await
         .unwrap();
-    db.claim_mt5_command(environment_account).await.unwrap();
+    db.claim_mt5_command(overview_account).await.unwrap();
     assert!(
         db.complete_mt5_command(
-            environment_entry_command,
+            entry_command,
             "456",
             true,
             700,
@@ -448,20 +580,14 @@ async fn seaorm_round_trips_environment_and_march_records() {
         .unwrap()
     );
     assert_eq!(
-        db.close_environment_trade(
-            environment,
-            environment_account,
-            "nq_ofi",
-            "2026-07-15 11:00",
-            20_100.0,
-        )
-        .await
-        .unwrap(),
-        Some(environment_trade)
+        db.close_account_trade(overview_account, "nq_ofi", "2026-07-15 11:00", 20_100.0,)
+            .await
+            .unwrap(),
+        Some(account_trade)
     );
-    let environment_exit_command = db
+    let exit_command = db
         .enqueue_mt5_command(
-            environment_account,
+            overview_account,
             "nq_ofi",
             "close",
             "USTEC",
@@ -469,14 +595,14 @@ async fn seaorm_round_trips_environment_and_march_records() {
             -1,
             -1,
             -1,
-            environment_trade,
+            account_trade,
         )
         .await
         .unwrap();
-    db.claim_mt5_command(environment_account).await.unwrap();
+    db.claim_mt5_command(overview_account).await.unwrap();
     assert!(
         db.complete_mt5_command(
-            environment_exit_command,
+            exit_command,
             "456",
             true,
             701,
@@ -490,35 +616,24 @@ async fn seaorm_round_trips_environment_and_march_records() {
         .await
         .unwrap()
     );
-    let saved_environment_trade = db.environment_trades(environment).await.unwrap().remove(0);
-    assert_eq!(saved_environment_trade.environment_id, environment);
-    assert_eq!(saved_environment_trade.strategy_name, "nq_ofi");
-    assert_eq!(
-        saved_environment_trade.bookmap_entry_time,
-        "2026-07-15 10:00"
-    );
-    assert_eq!(
-        saved_environment_trade.bookmap_exit_time,
-        "2026-07-15 11:00"
-    );
-    assert_eq!(saved_environment_trade.bookmap_entry_price, 20_000.0);
-    assert_eq!(saved_environment_trade.bookmap_exit_price, 20_100.0);
-    assert_eq!(saved_environment_trade.mt5_entry_time, "2026-07-15 10:01");
-    assert_eq!(saved_environment_trade.mt5_exit_time, "2026-07-15 11:01");
-    assert_eq!(saved_environment_trade.mt5_entry_price, 20_001.0);
-    assert_eq!(saved_environment_trade.mt5_exit_price, 20_101.0);
-    assert_eq!(saved_environment_trade.mt5pnl, 125.5);
+    let saved_account_trade = db.account_trade_ledger().await.unwrap().remove(0);
+    assert_eq!(saved_account_trade.strategy_name, "nq_ofi");
+    assert_eq!(saved_account_trade.bookmap_entry_time, "2026-07-15 10:00");
+    assert_eq!(saved_account_trade.bookmap_exit_time, "2026-07-15 11:00");
+    assert_eq!(saved_account_trade.bookmap_entry_price, 20_000.0);
+    assert_eq!(saved_account_trade.bookmap_exit_price, 20_100.0);
+    assert_eq!(saved_account_trade.mt5_entry_time, "2026-07-15 10:01");
+    assert_eq!(saved_account_trade.mt5_exit_time, "2026-07-15 11:01");
+    assert_eq!(saved_account_trade.mt5_entry_price, 20_001.0);
+    assert_eq!(saved_account_trade.mt5_exit_price, 20_101.0);
+    assert_eq!(saved_account_trade.mt5pnl, 125.5);
     assert!(
-        db.delete_environment_account_strategy(
-            environment,
-            environment_account,
-            environment_strategy,
-        )
-        .await
-        .unwrap()
+        db.delete_account_strategy_of(overview_account, overview_strategy,)
+            .await
+            .unwrap()
     );
     assert!(
-        db.environment_account_strategies(environment, environment_account)
+        db.active_account_strategies(overview_account)
             .await
             .unwrap()
             .unwrap()
@@ -617,7 +732,6 @@ async fn seaorm_round_trips_environment_and_march_records() {
     .unwrap();
     let positions = db.mt5_positions().await.unwrap();
     assert_eq!(positions.len(), 1);
-    assert_eq!(positions[0].environment_id, None);
     assert_eq!(positions[0].strategy, "nq_ofi");
     assert_eq!(positions[0].ticket, 456);
     db.replace_mt5_positions(
@@ -636,14 +750,14 @@ async fn seaorm_round_trips_environment_and_march_records() {
     )
     .await
     .unwrap();
-    let environment_position = db
+    let second_position = db
         .mt5_positions()
         .await
         .unwrap()
         .into_iter()
         .find(|position| position.ticket == 789)
         .unwrap();
-    assert_eq!(environment_position.environment_id, Some(environment));
+    assert_eq!(second_position.account, "456");
     db.delete_account(account).await.unwrap();
     assert!(
         db.accounts()
@@ -652,11 +766,7 @@ async fn seaorm_round_trips_environment_and_march_records() {
             .iter()
             .all(|saved| saved.id != account)
     );
-    assert!(
-        db.delete_environment_mt5_account(environment, environment_account)
-            .await
-            .unwrap()
-    );
+    assert!(db.delete_mt5_account(overview_account).await.unwrap());
     assert!(db.accounts().await.unwrap().is_empty());
 }
 
@@ -760,25 +870,17 @@ async fn live_strategy_commands_keep_ticket_ownership_and_partial_volume() {
     let dir = tempfile::tempdir().unwrap();
     let db = Database::new(dir.path().join("app.db"));
     db.initialize().await.unwrap();
-    let environment = db
-        .create_environment(&CreateEnvironment { name: "idk".into() })
-        .await
-        .unwrap();
     let account = db
-        .create_environment_mt5_account(
-            environment,
-            &EnvironmentMt5AccountInput {
-                server: "broker-demo".into(),
-                login: "456".into(),
-                password: "secret".into(),
-                account_type: "mt5".into(),
-            },
-        )
+        .create_mt5_account(&NewMt5Account {
+            server: "broker-demo".into(),
+            login: "456".into(),
+            password: "secret".into(),
+            account_type: "mt5".into(),
+        })
         .await
         .unwrap();
     let strategy = db
-        .create_environment_account_strategy(
-            environment,
+        .create_active_account_strategy(
             account,
             &AccountStrategyInput {
                 strategy: "nq_drift_vwap".into(),
@@ -791,7 +893,6 @@ async fn live_strategy_commands_keep_ticket_ownership_and_partial_volume() {
     db.enqueue_live_open(
         strategy,
         account,
-        environment,
         "nq_drift_vwap",
         "primary",
         "long",
@@ -907,7 +1008,7 @@ async fn live_strategy_commands_keep_ticket_ownership_and_partial_volume() {
     .await
     .unwrap();
     assert!(db.strategy_positions(strategy).await.unwrap().is_empty());
-    let trade = db.environment_trades(environment).await.unwrap().remove(0);
+    let trade = db.account_trade_ledger().await.unwrap().remove(0);
     assert_eq!(trade.mt5pnl, 9.5);
     assert_eq!(trade.mt5_exit_price, 20_019.5);
 
@@ -940,25 +1041,17 @@ async fn bridge_protective_close_reconciles_owned_position_and_pending_exit() {
     let dir = tempfile::tempdir().unwrap();
     let db = Database::new(dir.path().join("app.db"));
     db.initialize().await.unwrap();
-    let environment = db
-        .create_environment(&CreateEnvironment { name: "idk".into() })
-        .await
-        .unwrap();
     let account = db
-        .create_environment_mt5_account(
-            environment,
-            &EnvironmentMt5AccountInput {
-                server: "broker-demo".into(),
-                login: "456".into(),
-                password: "secret".into(),
-                account_type: "mt5".into(),
-            },
-        )
+        .create_mt5_account(&NewMt5Account {
+            server: "broker-demo".into(),
+            login: "456".into(),
+            password: "secret".into(),
+            account_type: "mt5".into(),
+        })
         .await
         .unwrap();
     let strategy = db
-        .create_environment_account_strategy(
-            environment,
+        .create_active_account_strategy(
             account,
             &AccountStrategyInput {
                 strategy: "ofi_momentum".into(),
@@ -971,7 +1064,6 @@ async fn bridge_protective_close_reconciles_owned_position_and_pending_exit() {
         .enqueue_live_open(
             strategy,
             account,
-            environment,
             "ofi_momentum",
             "tag:1",
             "long",
@@ -1036,193 +1128,11 @@ async fn bridge_protective_close_reconciles_owned_position_and_pending_exit() {
     let live = db.live_trades().await.unwrap().remove(0);
     assert_eq!(live.mt5_close_price, 29_985.0);
     assert_eq!(live.exit_reason, "strategy");
-    let trade = db.environment_trades(environment).await.unwrap().remove(0);
+    let trade = db.account_trade_ledger().await.unwrap().remove(0);
     assert_eq!(trade.mt5pnl, -0.80);
     assert_eq!(trade.mt5_exit_price, 29_985.0);
     let event = db.live_events(1).await.unwrap().remove(0);
     assert_eq!(event.kind, "protective_close");
-}
-
-/// The Exness Pro rule is the `idk` environment's, and an environment that runs
-/// nothing gets none of it.
-///
-/// It used to be served for ANY environment that merely existed, which made it
-/// a global constant wearing an environment-scoped URL.
-#[actix_web::test]
-async fn cost_rules_are_scoped_to_an_environment_that_runs_something() {
-    let dir = tempfile::tempdir().unwrap();
-    let db = Database::new(dir.path().join("app.db"));
-    db.initialize().await.unwrap();
-
-    let idk = db
-        .create_environment(&CreateEnvironment { name: "idk".into() })
-        .await
-        .unwrap();
-    let empty = db
-        .create_environment(&CreateEnvironment {
-            name: "scratch".into(),
-        })
-        .await
-        .unwrap();
-    db.sync_environment_cost_rules().await.unwrap();
-
-    let rules = db.environment_cost_rules(idk).await.unwrap().unwrap();
-    assert_eq!(rules.len(), 1, "one rule, the cost model");
-    assert_eq!(rules[0].id, "exness_pro");
-    assert_eq!(rules[0].name, "Exness Pro");
-
-    assert!(
-        db.environment_cost_rules(empty)
-            .await
-            .unwrap()
-            .unwrap()
-            .is_empty(),
-        "an environment with no strategies runs under no rule"
-    );
-    assert!(
-        db.environment_cost_rules(9_999).await.unwrap().is_none(),
-        "a missing environment is a 404, not an empty rule list"
-    );
-}
-
-/// The stored rows must BE the engine's tables, market for market.
-///
-/// The defect the old editable `environment_rules` table had was that the screen
-/// and the engine were unrelated numbers; storing a copy reintroduces that risk
-/// unless the copy is checked against its source.
-#[actix_web::test]
-async fn stored_cost_rules_match_the_compiled_cost_model() {
-    let dir = tempfile::tempdir().unwrap();
-    let db = Database::new(dir.path().join("app.db"));
-    db.initialize().await.unwrap();
-    let idk = db
-        .create_environment(&CreateEnvironment { name: "idk".into() })
-        .await
-        .unwrap();
-    db.sync_environment_cost_rules().await.unwrap();
-
-    let model = crate::backtest::cost_model();
-    let rules = db.environment_cost_rules(idk).await.unwrap().unwrap();
-    let stored = &rules[0];
-    assert_eq!(stored.detail, model.detail);
-    assert_eq!(
-        stored.markets.len(),
-        model.markets.len(),
-        "every market the book trades has a line"
-    );
-    for line in &model.markets {
-        let found = stored
-            .markets
-            .iter()
-            .find(|row| row.market == line.market)
-            .unwrap_or_else(|| panic!("{} is missing from the stored rule", line.market));
-        assert_eq!(found.spread_bp, line.spread_bp);
-        assert_eq!(found.minimum_lots, line.minimum_lots);
-    }
-}
-
-/// A second sync must REPLACE rather than accumulate, or a market the book has
-/// stopped trading would still be rendered as one the engine charges for.
-#[actix_web::test]
-async fn syncing_twice_replaces_the_stored_rule() {
-    let dir = tempfile::tempdir().unwrap();
-    let db = Database::new(dir.path().join("app.db"));
-    db.initialize().await.unwrap();
-    let idk = db
-        .create_environment(&CreateEnvironment { name: "idk".into() })
-        .await
-        .unwrap();
-    db.sync_environment_cost_rules().await.unwrap();
-    let first = db.environment_cost_rules(idk).await.unwrap().unwrap();
-
-    db.orm()
-        .await
-        .unwrap()
-        .execute(Statement::from_string(
-            DatabaseBackend::Sqlite,
-            concat!(
-                "INSERT INTO environment_cost_rules",
-                "(environment_id,rule_id,name,detail,market,spread_bp,minimum_lots) ",
-                "SELECT environment_id,rule_id,name,detail,'retired',9.9,1.0 ",
-                "FROM environment_cost_rules LIMIT 1"
-            ),
-        ))
-        .await
-        .unwrap();
-    db.sync_environment_cost_rules().await.unwrap();
-
-    let second = db.environment_cost_rules(idk).await.unwrap().unwrap();
-    assert_eq!(second[0].markets.len(), first[0].markets.len());
-    assert!(
-        !second[0].markets.iter().any(|row| row.market == "retired"),
-        "a stale market must not survive a resync"
-    );
-}
-
-/// A database written before the table existed must serve the rule on its first
-/// request rather than only after a restart.
-#[actix_web::test]
-async fn a_database_with_no_stored_rule_heals_itself_on_read() {
-    let dir = tempfile::tempdir().unwrap();
-    let db = Database::new(dir.path().join("app.db"));
-    db.initialize().await.unwrap();
-    let idk = db
-        .create_environment(&CreateEnvironment { name: "idk".into() })
-        .await
-        .unwrap();
-    // No `sync_environment_cost_rules` here: this is the pre-migration state.
-    let rules = db.environment_cost_rules(idk).await.unwrap().unwrap();
-    assert_eq!(rules.len(), 1);
-    assert_eq!(rules[0].id, "exness_pro");
-}
-
-/// The old editable rules table goes on the way through, along with whatever
-/// number was last typed into it.
-#[actix_web::test]
-async fn the_legacy_editable_rules_table_is_dropped() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("app.db");
-    let db = Database::new(path.clone());
-    db.initialize().await.unwrap();
-    let environment = db
-        .create_environment(&CreateEnvironment { name: "idk".into() })
-        .await
-        .unwrap();
-    // Recreate the retired table exactly as an old database carried it.
-    let connection = db.orm().await.unwrap();
-    connection
-        .execute_unprepared(concat!(
-            "CREATE TABLE environment_rules (",
-            "id INTEGER PRIMARY KEY AUTOINCREMENT,",
-            "environment_id INTEGER NOT NULL REFERENCES environments(id) ON DELETE CASCADE,",
-            "rule_type TEXT NOT NULL CHECK(rule_type IN ('spread','slippage','commission')),",
-            "value REAL NOT NULL CHECK(value >= 0), created_at TEXT NOT NULL DEFAULT '',",
-            "UNIQUE(environment_id, rule_type))"
-        ))
-        .await
-        .unwrap();
-    connection
-        .execute(Statement::from_sql_and_values(
-            DatabaseBackend::Sqlite,
-            "INSERT INTO environment_rules(environment_id,rule_type,value) VALUES (?,'spread',0.2)",
-            [environment.into()],
-        ))
-        .await
-        .unwrap();
-
-    db.initialize().await.unwrap();
-
-    assert!(
-        connection
-            .query_one(Statement::from_string(
-                DatabaseBackend::Sqlite,
-                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='environment_rules'",
-            ))
-            .await
-            .unwrap()
-            .is_none(),
-        "the editable rules table must not survive initialisation"
-    );
 }
 
 /// The two orders a fill can land in, both seen live. The bridge pushes its
@@ -1234,25 +1144,17 @@ async fn ownership_check_forgives_a_fill_that_is_still_landing() {
     let dir = tempfile::tempdir().unwrap();
     let db = Database::new(dir.path().join("app.db"));
     db.initialize().await.unwrap();
-    let environment = db
-        .create_environment(&CreateEnvironment { name: "idk".into() })
-        .await
-        .unwrap();
     let account = db
-        .create_environment_mt5_account(
-            environment,
-            &EnvironmentMt5AccountInput {
-                server: "broker-demo".into(),
-                login: "456".into(),
-                password: "secret".into(),
-                account_type: "mt5".into(),
-            },
-        )
+        .create_mt5_account(&NewMt5Account {
+            server: "broker-demo".into(),
+            login: "456".into(),
+            password: "secret".into(),
+            account_type: "mt5".into(),
+        })
         .await
         .unwrap();
     let strategy = db
-        .create_environment_account_strategy(
-            environment,
+        .create_active_account_strategy(
             account,
             &AccountStrategyInput {
                 strategy: "ofi_momentum".into(),
@@ -1280,7 +1182,6 @@ async fn ownership_check_forgives_a_fill_that_is_still_landing() {
         .enqueue_live_open(
             strategy,
             account,
-            environment,
             "ofi_momentum",
             "primary",
             "long",

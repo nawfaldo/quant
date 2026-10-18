@@ -1,0 +1,305 @@
+{
+  "asset_class": "forex",
+  "bar_minutes": 5,
+  "families": {
+    "yf_alphatrend": null,
+    "yf_double_st_adx": null,
+    "yf_ott_signal": null,
+    "yf_qqe_mod": null,
+    "yf_range_filter": null
+  },
+  "protocol": {
+    "account": "Exness Pro 416209807",
+    "benchmark": null,
+    "broker": "exness",
+    "calendar": 252.0,
+    "candidate_counts": {
+      "yf_alphatrend": 24,
+      "yf_double_st_adx": 24,
+      "yf_ott_signal": 24,
+      "yf_qqe_mod": 24,
+      "yf_range_filter": 24
+    },
+    "contract": {
+      "broker": "USDJPY",
+      "contract_size": 100000.0,
+      "currency_profit": "JPY",
+      "fx_to_usd": 0.0062767546667670945,
+      "multiplier": 627.6478895339716,
+      "tick_size": 0.001,
+      "tick_value": 0.6276478895339715,
+      "volume_max": 300.0,
+      "volume_min": 0.01,
+      "volume_step": 0.01
+    },
+    "cost_model": "spread only; commission measured at 0.0000",
+    "data": {
+      "first_row": "2014-12-31",
+      "last_row": "2026-10-02",
+      "source": "1m",
+      "table": "usdjpy_1m",
+      "warmup": "2014-01-01"
+    },
+    "execution": {
+      "bars_priced": 502387,
+      "bridge_queue_seconds": 1.0,
+      "entry_days": null,
+      "exit": "market order one whole bar + lag + queue after the bar it fired on; no broker-side stop on this account",
+      "feed_lag_seconds": 0.6,
+      "fill_model": "exness",
+      "fills_only": false,
+      "financing": "multiday: 17:00 New York rollover schedule; current swap rates for every year",
+      "full_day": false,
+      "model": "live",
+      "modelled_cost": null,
+      "mtm_peak": true,
+      "spread_at_entry": "exness_usdjpy_1m",
+      "swap_free": false,
+      "window": "rth"
+    },
+    "family_groups": {
+      "yf_alphatrend": "yoforex3",
+      "yf_double_st_adx": "yoforex3",
+      "yf_ott_signal": "yoforex3",
+      "yf_qqe_mod": "yoforex3",
+      "yf_range_filter": "yoforex3"
+    },
+    "holding": {
+      "yf_alphatrend": "session",
+      "yf_double_st_adx": "session",
+      "yf_ott_signal": "session",
+      "yf_qqe_mod": "session",
+      "yf_range_filter": "session"
+    },
+    "holdout": "2025-01-01 through 2026-08-16",
+    "in_sample_years": [
+      2020,
+      2021,
+      2022,
+      2023,
+      2024
+    ],
+    "initial_balance": 1000.0,
+    "risk_unit": "stop_day x average true daily range over 14 days -- timeframe invariant",
+    "select_rank": "tstat",
+    "session_minutes": [
+      0,
+      780
+    ],
+    "shift_hours": 0,
+    "sizing": "1.5% volatility-throttled stop risk, MT5 lots, 4x notional ceiling",
+    "slippage_bp": 0.2,
+    "spread_bp": 0.4398,
+    "spread_quoted_at": "session",
+    "total_cost_bp": 0.6398,
+    "warning": null
+  },
+  "refused": {
+    "yf_alphatrend": {
+      "best_by_return": {
+        "fill_rate": 97.0,
+        "max_dd_pct": 54.36,
+        "params": {
+          "coeff": 1.0,
+          "exit_mode": "signal",
+          "last_entry_minute": 660,
+          "rsi": 0,
+          "stop_day": 0.2,
+          "trend": "none",
+          "vol_mode": "none"
+        },
+        "pf": 0.717,
+        "positive_years": 1,
+        "return_pct": -52.3,
+        "trades": 1273
+      },
+      "binding": [
+        "profit_factor",
+        "max_dd",
+        "positive_years",
+        "annual_dd"
+      ],
+      "cells": 24,
+      "refused_by": {
+        "annual_dd": 24,
+        "fill_rate": 0,
+        "max_dd": 24,
+        "positive_years": 24,
+        "profit_factor": 24,
+        "trades": 0
+      },
+      "requires": {
+        "max_dd_pct": 20.0,
+        "of_years": 5,
+        "positive_years": 4,
+        "profit_factor": 1.05,
+        "trades": 125
+      }
+    },
+    "yf_double_st_adx": {
+      "best_by_return": {
+        "fill_rate": 98.8,
+        "max_dd_pct": 45.56,
+        "params": {
+          "adx": 25,
+          "exit_mode": "signal",
+          "fast": 2.0,
+          "last_entry_minute": 660,
+          "stop_day": 0.2,
+          "trend": "none",
+          "vol_mode": "none"
+        },
+        "pf": 0.81,
+        "positive_years": 2,
+        "return_pct": -32.31,
+        "trades": 1070
+      },
+      "binding": [
+        "profit_factor",
+        "max_dd",
+        "positive_years",
+        "annual_dd"
+      ],
+      "cells": 24,
+      "refused_by": {
+        "annual_dd": 24,
+        "fill_rate": 0,
+        "max_dd": 24,
+        "positive_years": 24,
+        "profit_factor": 24,
+        "trades": 0
+      },
+      "requires": {
+        "max_dd_pct": 20.0,
+        "of_years": 5,
+        "positive_years": 4,
+        "profit_factor": 1.05,
+        "trades": 125
+      }
+    },
+    "yf_ott_signal": {
+      "best_by_return": {
+        "fill_rate": 98.7,
+        "max_dd_pct": 9.29,
+        "params": {
+          "exit_mode": "signal",
+          "last_entry_minute": 660,
+          "len": 4,
+          "pct": 2.0,
+          "stop_day": 0.2,
+          "trend": "none",
+          "vol_mode": "none"
+        },
+        "pf": 1.477,
+        "positive_years": 4,
+        "return_pct": 45.64,
+        "trades": 299
+      },
+      "binding": [],
+      "cells": 24,
+      "refused_by": {
+        "annual_dd": 0,
+        "fill_rate": 0,
+        "max_dd": 15,
+        "positive_years": 22,
+        "profit_factor": 16,
+        "trades": 0
+      },
+      "requires": {
+        "max_dd_pct": 20.0,
+        "of_years": 5,
+        "positive_years": 4,
+        "profit_factor": 1.05,
+        "trades": 125
+      }
+    },
+    "yf_qqe_mod": {
+      "best_by_return": {
+        "fill_rate": 98.6,
+        "max_dd_pct": 50.4,
+        "params": {
+          "exit_mode": "rr_2",
+          "last_entry_minute": 660,
+          "stop_atr": 2.5,
+          "stop_day": 0.2,
+          "thr": 3.0,
+          "trend": "none",
+          "vol_mode": "none"
+        },
+        "pf": 0.843,
+        "positive_years": 1,
+        "return_pct": -35.2,
+        "trades": 1302
+      },
+      "binding": [
+        "profit_factor",
+        "max_dd",
+        "positive_years",
+        "annual_dd"
+      ],
+      "cells": 24,
+      "refused_by": {
+        "annual_dd": 24,
+        "fill_rate": 0,
+        "max_dd": 24,
+        "positive_years": 24,
+        "profit_factor": 24,
+        "trades": 0
+      },
+      "requires": {
+        "max_dd_pct": 20.0,
+        "of_years": 5,
+        "positive_years": 4,
+        "profit_factor": 1.05,
+        "trades": 125
+      }
+    },
+    "yf_range_filter": {
+      "best_by_return": {
+        "fill_rate": 100.0,
+        "max_dd_pct": 49.65,
+        "params": {
+          "exit_mode": "signal",
+          "last_entry_minute": 720,
+          "mult": 2.0,
+          "per": 100,
+          "stop_day": 0.2,
+          "trend": "none",
+          "vol_mode": "none"
+        },
+        "pf": 0.685,
+        "positive_years": 1,
+        "return_pct": -46.67,
+        "trades": 1299
+      },
+      "binding": [
+        "profit_factor",
+        "max_dd",
+        "positive_years",
+        "annual_dd"
+      ],
+      "cells": 24,
+      "refused_by": {
+        "annual_dd": 24,
+        "fill_rate": 0,
+        "max_dd": 24,
+        "positive_years": 24,
+        "profit_factor": 24,
+        "trades": 0
+      },
+      "requires": {
+        "max_dd_pct": 20.0,
+        "of_years": 5,
+        "positive_years": 4,
+        "profit_factor": 1.05,
+        "trades": 125
+      }
+    }
+  },
+  "scope": "yoforex3",
+  "seal_sha256": "7acfc17363c40581f38b54bdde5fb341a72ceb74700f88cb34512ef147c3455b",
+  "sealed": true,
+  "symbol": "usdjpy",
+  "timeframe": "5m",
+  "validation": {}
+}

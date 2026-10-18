@@ -1,6 +1,6 @@
 """Local MetaTrader 5 execution bridge for the Quant Rust backend.
 
-`py bridge.py` reads every environment account from `live_trade/app.db` and runs
+`py bridge.py` reads every active account from `live_trade/app.db` and runs
 them all. The Rust backend remains the owner of strategies, routing, command
 persistence, and completed trade data.
 
@@ -79,7 +79,6 @@ class Account:
     password: str
     server: str
     name: str = ""
-    environment_id: int | None = None
     account_type: str = "mt5"
 
     def label(self) -> str:
@@ -197,14 +196,19 @@ def parse_args() -> argparse.Namespace:
 
 
 def load_accounts(db_path: Path, account_id: int | None = None) -> list[Account]:
-    """Every environment MT5 account, or just one when `account_id` is given."""
+    """Every account with an active strategy, or just that one when `account_id` is given.
+
+    An account with nothing active has nothing to bridge -- the retired trial
+    account is kept for its history and must not be logged into.
+    """
     if not db_path.is_file():
         raise BridgeError(f"database not found: {db_path}")
     connection = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     try:
         sql = (
-            "SELECT id,login,password,server,name,environment_id,account_type "
-            "FROM mt5_accounts WHERE environment_id IS NOT NULL"
+            "SELECT id,login,password,server,name,account_type FROM mt5_accounts "
+            "WHERE EXISTS (SELECT 1 FROM mt5_account_strategies s "
+            "WHERE s.account_id=mt5_accounts.id AND s.active=1)"
         )
         params: tuple[Any, ...] = ()
         if account_id is not None:
@@ -215,15 +219,18 @@ def load_accounts(db_path: Path, account_id: int | None = None) -> list[Account]
         connection.close()
     if not rows:
         qualifier = f" with id {account_id}" if account_id is not None else ""
-        raise BridgeError(f"no environment MT5 account{qualifier} found")
+        raise BridgeError(f"no active MT5 account{qualifier} found")
     accounts = []
     for row in rows:
         try:
             login = int(row[1])
         except (TypeError, ValueError) as error:
             raise BridgeError(f"account {row[0]} has an invalid login") from error
-        if not row[2] or not row[3]:
-            raise BridgeError(f"account {row[0]} is missing password or server")
+        # An empty password is allowed: the terminal then logs in with the
+        # credentials saved in it, so a real account's password never has to
+        # sit in app.db.
+        if not row[3]:
+            raise BridgeError(f"account {row[0]} is missing its server")
         accounts.append(
             Account(
                 account_id=int(row[0]),
@@ -231,8 +238,7 @@ def load_accounts(db_path: Path, account_id: int | None = None) -> list[Account]
                 password=str(row[2]),
                 server=str(row[3]),
                 name=str(row[4] or ""),
-                environment_id=row[5],
-                account_type=str(row[6] or "mt5"),
+                account_type=str(row[5] or "mt5"),
             )
         )
     return accounts
@@ -261,23 +267,32 @@ def print_accounts(accounts: list[Account], db_path: Path) -> None:
     for account in accounts:
         print(
             f"  [{account.account_id}] {account.label()} | login {account.login} "
-            f"| {account.server} | environment {account.environment_id} "
-            f"| {account.account_type}"
+            f"| {account.server} | {account.account_type}"
         )
 
 
+def env_terminals() -> dict[int, Path]:
+    """`MT5_TERMINALS="3=C:/.../terminal64.exe;4=C:/.../terminal64.exe"`: the
+    per-account map `start_live_trade.bat` sets once, so `--check` (stage 1) and
+    the running bridge (stage 4) resolve the same terminals. `--terminal` wins."""
+    raw = os.environ.get("MT5_TERMINALS", "")
+    return dict(terminal_mapping(part) for part in raw.split(";") if part.strip())
+
+
 def terminal_for(args: argparse.Namespace, account: Account) -> Path | None:
-    return dict(args.terminal).get(account.account_id, args.terminal_path)
+    mapped = {**env_terminals(), **dict(args.terminal)}
+    return mapped.get(account.account_id, args.terminal_path)
 
 
 def connect(account: Account, terminal_path: Path | None, portable: bool) -> None:
-    kwargs = {
-        "login": account.login,
-        "password": account.password,
-        "server": account.server,
-        "timeout": 60_000,
-        "portable": portable,
-    }
+    kwargs = {"timeout": 60_000, "portable": portable}
+    # NO STORED PASSWORD: attach to the session the terminal is already logged
+    # into, rather than asking it to log in again. A login request without a
+    # password fails on a terminal whose account needs OTP or a certificate
+    # (FundedNext: "Unsupported authorization mode"). The login check below
+    # still refuses a terminal logged into any other account.
+    if account.password:
+        kwargs.update(login=account.login, server=account.server, password=account.password)
     if terminal_path is not None:
         if not terminal_path.is_file():
             raise BridgeError(f"terminal not found: {terminal_path}")
@@ -383,6 +398,8 @@ def send_deal(
     comment: str,
     position: int = 0,
 ) -> tuple[float, int]:
+    if uses_hand():
+        return hand_deal(symbol, order_type, volume, comment, position)
     request: dict[str, Any] = {
         "action": mt5.TRADE_ACTION_DEAL,
         "symbol": symbol,
@@ -411,6 +428,39 @@ def send_deal(
     filled_price = float(result.price) if result.price else price
     ticket = int(result.deal or result.order or 0)
     return filled_price, ticket
+
+
+def uses_hand() -> bool:
+    """FundedNext orders are placed by driving the terminal window, not order_send."""
+    info = mt5.account_info()
+    return info is not None and "fundednext" in str(info.server).casefold()
+
+
+def hand_deal(
+    symbol: str, order_type: int, volume: float, comment: str, position: int
+) -> tuple[float, int]:
+    """Same contract as send_deal, executed through the MT5 window."""
+    from hand import Hand, HandError
+
+    info = mt5.account_info()
+    if info is None:
+        raise BridgeError(f"account_info failed: {mt5.last_error()}")
+    # The bridge already holds the MT5 session; the hand must read through it.
+    hand = Hand(int(info.login), positions_fn=lambda: mt5.positions_get() or [])
+    try:
+        if position:
+            hand.close(position)
+            deals = mt5.history_deals_get(position=position) or []
+            closes = [d for d in deals if d.entry != mt5.DEAL_ENTRY_IN]
+            if not closes:
+                raise BridgeError(f"hand closed {position} but no close deal is recorded")
+            last = max(closes, key=lambda d: d.time_msc)
+            return float(last.price), int(last.ticket)
+        side = "buy" if order_type == mt5.ORDER_TYPE_BUY else "sell"
+        opened = hand.place(symbol, side, volume, comment)
+        return float(opened.price_open), int(opened.ticket)
+    except HandError as exc:
+        raise BridgeError(f"hand failed: {exc}") from exc
 
 
 def close_position(
@@ -537,7 +587,11 @@ def execute_command(fields: list[str]) -> dict[str, Any]:
         matches = [
             position
             for position in positions
-            if int(position.magic) == magic
+            # A hand-opened position has magic 0; its march: comment is the tag.
+            if (
+                int(position.magic) == magic
+                or (int(position.magic) == 0 and str(position.comment).startswith("march:"))
+            )
             and (target_ticket <= 0 or int(position.ticket) == target_ticket)
         ]
         if target_ticket > 0 and not matches:
@@ -946,7 +1000,7 @@ def supervise(args: argparse.Namespace, accounts: list[Account]) -> int:
     MetaTrader binds a terminal session per process, and a terminal holds one
     login, so every account past the first needs its own terminal installation.
     """
-    mapped = dict(args.terminal)
+    mapped = {**env_terminals(), **dict(args.terminal)}
     unmapped = [account for account in accounts if account.account_id not in mapped]
     if len(unmapped) > 1:
         log(

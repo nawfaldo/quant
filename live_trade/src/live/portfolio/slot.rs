@@ -35,6 +35,25 @@ pub(super) fn is_exit(action: Action) -> bool {
     matches!(action, Action::Close { .. } | Action::ClosePosition { .. })
 }
 
+/// The position key an entry opens, or `None` for anything else.
+pub(super) fn entry_key(action: Action) -> Option<String> {
+    match action {
+        Action::Enter { .. } => Some("primary".to_owned()),
+        Action::EnterPosition { id, .. } => Some(format!("tag:{id}")),
+        _ => None,
+    }
+}
+
+/// The position key a FULL exit closes, or `None` for anything else. A partial
+/// close leaves the position open, so it cannot end a ghost.
+pub(super) fn exit_key(action: Action) -> Option<String> {
+    match action {
+        Action::Close { fraction, .. } if fraction >= 1.0 - 1e-9 => Some("primary".to_owned()),
+        Action::ClosePosition { id, .. } => Some(format!("tag:{id}")),
+        _ => None,
+    }
+}
+
 /// Why a slot stopped taking entries, and therefore whether it can start again
 /// on its own.
 ///
@@ -86,7 +105,6 @@ pub(super) struct PendingExit {
 #[derive(Clone, Copy)]
 pub(super) struct PendingOpen {
     pub(super) command_id: i64,
-    pub(super) action: Action,
 }
 
 #[derive(Clone, Copy)]
@@ -99,9 +117,9 @@ pub(super) struct LiveSlot {
     pub(super) target: LiveStrategyTarget,
     pub(super) strategy: Box<dyn Strategy>,
     pub(super) positions: HashMap<String, LogicalPosition>,
-    /// Entries emitted by the strategy but not yet acknowledged by MT5.
-    /// Keeping the original action lets `discard` undo strategy state if the
-    /// asynchronous broker command is rejected.
+    /// Entries emitted by the strategy but not yet acknowledged by MT5. A
+    /// rejected one becomes a ghost rather than being undone in the strategy,
+    /// so the sleeve stays where the backtest is.
     pub(super) pending_opens: HashMap<String, PendingOpen>,
     /// Replacement entries waiting for the previous broker leg to confirm its
     /// close. Drift can close and reopen in one update; sending the new order
@@ -116,6 +134,21 @@ pub(super) struct LiveSlot {
     pub(super) pending_exits: HashMap<String, PendingExit>,
     /// `None` while the sleeve is taking entries. See `BlockReason`.
     pub(super) blocked: Option<BlockReason>,
+    /// Positions the STRATEGY holds that the BROKER does not: an entry live
+    /// could not send (a stale catch-up signal, the bridge offline, a refusal,
+    /// a broker rejection), a replayed entry the account never took, or a leg
+    /// the feed watchdog flattened while the strategy was still in it.
+    ///
+    /// THE STRATEGY IS LEFT EXACTLY WHERE THE BACKTEST WOULD BE. Discarding the
+    /// entry instead -- what this runtime used to do -- made the sleeve flat and
+    /// re-armed it for the day, so it went on to take trades the backtest never
+    /// took: on 2026-10-01 a USTEC long refused at 183s became a short at 10:05,
+    /// and a USDJPY entry missed during a restart became a 05:30 long, neither of
+    /// them in the backtest of that day. A ghost keeps every later signal
+    /// identical to the backtest; its exit is simply not sent. This is also what
+    /// the Python book does with a trade it skips: the sleeve's own log goes on
+    /// as if it had been taken.
+    pub(super) ghosts: HashSet<String>,
 }
 
 impl LiveSlot {
@@ -150,6 +183,7 @@ impl LiveSlot {
             deferred_entries: HashMap::new(),
             pending_exits: HashMap::new(),
             blocked: None,
+            ghosts: HashSet::new(),
         };
         slot.replay(history);
         let persisted = db
@@ -280,16 +314,15 @@ impl LiveSlot {
             )
             .await;
         } else if !phantoms.is_empty() {
-            // SKIP THE TRADE, TAKE THE NEXT SIGNAL. The strategy has to be told
-            // as well as the slot: clearing only `positions` leaves the strategy
-            // believing it is in, and it then emits a close for a position the
-            // slot no longer has -- the "strategy attempted to close unknown
-            // position" path.
-            self.strategy.abandon_open_position();
+            // SKIP THE TRADE, KEEP THE STRATEGY WHERE THE BACKTEST HAS IT. The
+            // position becomes a ghost: no broker leg, and its exit is not sent.
+            // Abandoning it instead made the strategy flat, and a flat strategy
+            // takes signals the backtest -- still holding -- never sees.
             for key in &phantoms {
                 self.positions.remove(key);
                 self.pending_exits.remove(key);
                 self.deferred_entries.remove(key);
+                self.ghosts.insert(key.clone());
             }
             tracing::warn!(
                 account_strategy_id = self.target.account_strategy_id,
@@ -304,7 +337,8 @@ impl LiveSlot {
                 &phantoms.join(","),
                 "",
                 &format!(
-                    "replay held {} position(s) the broker never took; skipped,                      entries stay open",
+                    "replay held {} position(s) the broker never took; held as ghosts, \
+                     their exits will not be sent",
                     phantoms.len()
                 ),
             )
@@ -321,18 +355,31 @@ impl LiveSlot {
         }
     }
 
-    pub(super) async fn on_bar(&mut self, db: &Database, bar: Bar, entries_current: bool) {
+    pub(super) async fn on_bar(&mut self, db: &Database, bar: Bar, entry_age: Option<i64>) {
         self.settle_pending_opens(db, bar).await;
         self.retry_pending_exits(db, bar).await;
         let actions = self.strategy.update_all(bar, self.target.equity.max(0.0));
         for action in actions {
             let is_exit = is_exit(action);
+            // A NEW ENTRY PROVES THE STRATEGY WAS FLAT, so any ghost on its key
+            // is stale and must not swallow this position's exit later.
+            if let Some(key) = entry_key(action) {
+                self.ghosts.remove(&key);
+            }
+            // THE BACKTEST'S EXIT OF A POSITION THE BROKER NEVER HELD.
+            if let Some(key) = exit_key(action)
+                && self.ghosts.remove(&key)
+            {
+                self.log_event(db, "ghost_exit", &key, bar, "no broker leg; nothing sent")
+                    .await;
+                continue;
+            }
             // `blocked` means "do not take on new risk", so it must not swallow
             // exits. Discarding an exit cannot make the book safer: the strategy
             // forgets the position either way and the broker leg is left open
             // until the end-of-day flatten.
             if self.blocked.is_some() && !is_exit {
-                self.strategy.discard(action);
+                self.hold_as_ghost(action);
                 // RECORDED, BECAUSE THIS USED TO BE THE QUIETEST LOSS IN THE
                 // RUNTIME. A blocked sleeve dropped every entry it wanted with
                 // no event and no log line, so the only evidence a trade had
@@ -349,16 +396,22 @@ impl LiveSlot {
                     strategy = self.target.strategy,
                     "entry dropped: strategy is blocked"
                 );
-                self.log_event(db, "entry_refused", "", bar, "strategy is blocked")
-                    .await;
+                self.log_event(
+                    db,
+                    "entry_refused",
+                    "",
+                    bar,
+                    "strategy is blocked; held as ghost",
+                )
+                .await;
                 continue;
             }
             if self.is_settled_close(action, bar) {
                 self.strategy.discard(action);
                 continue;
             }
-            if let Some(reason) = self.entry_refusal(action, entries_current) {
-                self.strategy.discard(action);
+            if let Some(reason) = self.entry_refusal(action, entry_age) {
+                self.hold_as_ghost(action);
                 tracing::warn!(
                     reason,
                     account_strategy_id = self.target.account_strategy_id,
@@ -369,8 +422,8 @@ impl LiveSlot {
                 continue;
             }
             if let Err(error) = self.execute(db, action, bar).await {
-                self.strategy.discard(action);
                 if is_exit {
+                    self.strategy.discard(action);
                     // Owed, not abandoned. Only entries can block.
                     self.owe_exit(action);
                     tracing::error!(
@@ -384,8 +437,9 @@ impl LiveSlot {
                 } else if is_transient(&error) {
                     // A database hiccup says nothing about whether the book is
                     // trustworthy, so it must not retire the strategy for the
-                    // session. The strategy has taken the discard and will
-                    // re-signal if it still wants the trade.
+                    // session. The entry is held as a ghost, as every entry live
+                    // cannot send is, so the strategy stays where the backtest is.
+                    self.hold_as_ghost(action);
                     tracing::warn!(
                         %error,
                         account_strategy_id = self.target.account_strategy_id,
@@ -395,6 +449,7 @@ impl LiveSlot {
                     self.log_event(db, "transient_skip", "", bar, &error.to_string())
                         .await;
                 } else {
+                    self.hold_as_ghost(action);
                     self.blocked = Some(BlockReason::Sticky);
                     tracing::error!(
                         %error,
@@ -506,9 +561,11 @@ impl LiveSlot {
     /// runs off the host clock and the learned offset, so it keeps answering
     /// through a total blackout.
     ///
-    /// ONE BAR, WHICH IS WHERE THE RESEARCH MODEL ALREADY PUTS THE EXIT.
-    /// `fill_models.exness` prices a session flatten at `bar_seconds + lag`
-    /// past the close -- 13:30:01.6 for a 13:00 session -- unconditionally,
+    /// ONE BAR OF ITS OWN CANDLE, WHICH IS WHERE THE RESEARCH MODEL ALREADY
+    /// PUTS THE EXIT (`session_overdue_seconds`). `fill_models.exness` prices a
+    /// session flatten at `bar_seconds + lag` past the close -- 13:30:01.6 for a
+    /// 30-minute sleeve on a 13:00 session, 14:00:01.6 for a 60-minute one --
+    /// unconditionally,
     /// whatever the feed did. So firing here is not a late backstop racing the
     /// strategy; it is the same instant the study assumes, and a strategy exit
     /// that arrives later than this because the feed went sparse is ITSELF the
@@ -524,6 +581,11 @@ impl LiveSlot {
     /// day.
     pub(super) fn session_overdue(&self, second_of_day: i64) -> bool {
         if self.positions.is_empty() || self.in_trading_session(second_of_day / 60) {
+            return false;
+        }
+        // A MULTI-DAY sleeve is meant to be holding past its close: its exits
+        // are its own stop, trail and clock, read on the bars it is fed.
+        if self.strategy.holds_overnight() {
             return false;
         }
         // ALREADY OWED IS ALREADY HANDLED, and without this the close repeats
@@ -549,7 +611,8 @@ impl LiveSlot {
             .session_end_minute()
             .is_some_and(|session_end| {
                 let past = (second_of_day - session_end as i64 * 60).rem_euclid(86_400);
-                past >= SESSION_OVERDUE_MINUTES * 60 + SESSION_OVERDUE_GRACE_SECONDS
+                past >= session_overdue_seconds(&self.target.strategy)
+                    + SESSION_OVERDUE_GRACE_SECONDS
             })
     }
 
@@ -644,14 +707,15 @@ impl LiveSlot {
     pub(super) fn entry_refusal(
         &self,
         action: Action,
-        entries_current: bool,
+        entry_age: Option<i64>,
     ) -> Option<&'static str> {
         let quantity = match action {
             Action::Enter { quantity, .. } | Action::EnterPosition { quantity, .. } => quantity,
             _ => return None,
         };
         let volume = self.to_lots(quantity);
-        if !entries_current {
+        let fresh = entry_age.is_some_and(|age| age <= entry_fresh_limit(&self.target.strategy));
+        if !fresh {
             Some("signal belongs to a stale catch-up bar")
         } else if !self.target.connected {
             Some("MT5 bridge is offline")
@@ -755,7 +819,6 @@ impl LiveSlot {
             .enqueue_live_open(
                 self.target.account_strategy_id,
                 self.target.account_id,
-                self.target.environment_id,
                 &self.target.strategy,
                 key,
                 side_name(side),
@@ -768,7 +831,7 @@ impl LiveSlot {
         self.positions
             .insert(key.to_owned(), LogicalPosition { side, volume });
         self.pending_opens
-            .insert(key.to_owned(), PendingOpen { command_id, action });
+            .insert(key.to_owned(), PendingOpen { command_id });
         Ok(())
     }
 
@@ -830,10 +893,10 @@ impl LiveSlot {
         Ok(())
     }
 
-    /// Commits or rolls back entries after the asynchronous MT5 result arrives.
-    /// The strategy has already advanced when it emits an action, so a failed
-    /// command must be explicitly discarded; otherwise it suppresses future
-    /// signals for a position the broker never opened.
+    /// Commits entries after the asynchronous MT5 result arrives, or turns a
+    /// rejected one into a ghost. The strategy is NOT rolled back: the backtest
+    /// holds that position, so the strategy must too, or it takes signals the
+    /// backtest never sees. Only the broker-side bookkeeping is dropped.
     pub(super) async fn settle_pending_opens(&mut self, db: &Database, bar: Bar) {
         for (key, pending) in self
             .pending_opens
@@ -848,7 +911,11 @@ impl LiveSlot {
                         .await;
                 }
                 Ok(Some(status)) if matches!(status.as_str(), "failed" | "superseded") => {
-                    self.strategy.discard(pending.action);
+                    // A ghost only while the strategy still believes it holds:
+                    // an exit already asked for means it has moved on.
+                    if !self.pending_exits.contains_key(&key) {
+                        self.ghosts.insert(key.clone());
+                    }
                     self.positions.remove(&key);
                     self.pending_opens.remove(&key);
                     self.pending_exits.remove(&key);
@@ -859,14 +926,16 @@ impl LiveSlot {
                         strategy = self.target.strategy,
                         position_key = key,
                         %status,
-                        "MT5 rejected live entry; strategy state rolled back"
+                        "MT5 rejected live entry; held as a ghost"
                     );
                     self.log_event(db, "entry_rejected", &key, bar, &status)
                         .await;
                 }
                 Ok(Some(_)) => {}
                 Ok(None) => {
-                    self.strategy.discard(pending.action);
+                    if !self.pending_exits.contains_key(&key) {
+                        self.ghosts.insert(key.clone());
+                    }
                     self.positions.remove(&key);
                     self.pending_opens.remove(&key);
                     self.pending_exits.remove(&key);
@@ -954,7 +1023,13 @@ impl LiveSlot {
                 }
                 continue;
             };
-            if durable.status == "pending_close" {
+            // NOTHING TO RE-SEND UNTIL THE BROKER LEG IS CONFIRMED OPEN. A close
+            // needs the entry's ticket, so while the entry is `pending_open` the
+            // enqueue answers "nothing to do" -- and this used to log that as a
+            // successful retry on every bar. A catch-up steps thousands of bars
+            // in a second: on 2026-10-01 that wrote 5,728 `exit_retry_ok` rows
+            // in 36s while the entries waited on the bridge.
+            if durable.status != "open" || durable.ticket <= 0 {
                 continue;
             }
             // A partial close is acknowledged by its durable remaining volume.
@@ -993,6 +1068,14 @@ impl LiveSlot {
                         .await;
                 }
             }
+        }
+    }
+
+    /// Keeps an entry live did not send as a ghost: the strategy stays in the
+    /// position the backtest holds, and its exit will not be sent.
+    pub(super) fn hold_as_ghost(&mut self, action: Action) {
+        if let Some(key) = entry_key(action) {
+            self.ghosts.insert(key);
         }
     }
 

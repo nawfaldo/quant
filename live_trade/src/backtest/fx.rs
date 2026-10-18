@@ -305,6 +305,8 @@ fn repriced_trade(native: &Trade, entry_mid: f64, exit_mid: f64) -> Trade {
         quantity: native.quantity,
         entry_raw: entry_mid,
         exit_raw: exit_mid,
+        distance: native.distance,
+        vol_mult: native.vol_mult,
     }
 }
 

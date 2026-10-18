@@ -104,8 +104,11 @@ def check_terminal() -> tuple[bool, str]:
         return False, f"cannot run bridge.py: {error}"
     if done.returncode == 0:
         return True, (done.stdout or "").strip().splitlines()[-1:][0] if done.stdout.strip() else "connection check passed"
-    tail = ((done.stderr or "") + (done.stdout or "")).strip().splitlines()
-    return False, tail[-1] if tail else f"exit {done.returncode}"
+    tail = ((done.stdout or "") + (done.stderr or "")).strip().splitlines()
+    # THE ERROR, not merely the last line: with two accounts the last line can
+    # be the OTHER account's success, which hid a failed FundedNext login.
+    errors = [line for line in tail if "error" in line.lower() or "failed" in line.lower()]
+    return False, (errors or tail or [f"exit {done.returncode}"])[-1]
 
 
 def check_feeds() -> tuple[bool, str]:
@@ -127,7 +130,7 @@ def check_feeds() -> tuple[bool, str]:
 
 def check_server(port: int) -> tuple[bool, str]:
     """The HTTP API answers, which needs the port, the router and SQLite."""
-    url = f"http://127.0.0.1:{port}/api/environments"
+    url = f"http://127.0.0.1:{port}/api/accounts"
     try:
         with urllib.request.urlopen(url, timeout=10) as response:
             if response.status != 200:
@@ -142,7 +145,7 @@ def check_server(port: int) -> tuple[bool, str]:
         return False, f"{type(error).__name__}: {error}"
     try:
         count = len(json.loads(body))
-        return True, f"{count} environment(s)"
+        return True, f"{count} account(s)"
     except ValueError:
         return True, "responding"
 
@@ -156,21 +159,26 @@ def check_bridge(db: Path) -> tuple[bool, str]:
     except sqlite3.Error as error:
         return False, f"cannot open app.db: {error}"
     try:
-        row = connection.execute(
-            "SELECT account_id, seen_at, "
-            f"seen_at >= datetime('now','-{BRIDGE_HEARTBEAT_FRESH_SECONDS} seconds') "
-            "FROM mt5_bridge_heartbeats ORDER BY seen_at DESC LIMIT 1"
-        ).fetchone()
+        # EVERY ACCOUNT WITH AN ACTIVE STRATEGY, since the FundedNext account
+        # joined the Exness one on 2026-10-14: one fresh heartbeat proves only
+        # that one worker is up.
+        rows = connection.execute(
+            "SELECT a.id, MAX(h.seen_at), "
+            f"MAX(h.seen_at) >= datetime('now','-{BRIDGE_HEARTBEAT_FRESH_SECONDS} seconds') "
+            "FROM mt5_accounts a LEFT JOIN mt5_bridge_heartbeats h ON h.account_id=a.id "
+            "WHERE EXISTS (SELECT 1 FROM mt5_account_strategies s "
+            "WHERE s.account_id=a.id AND s.active=1) GROUP BY a.id"
+        ).fetchall()
     except sqlite3.Error as error:
         return False, f"cannot read heartbeats: {error}"
     finally:
         connection.close()
-    if row is None:
-        return False, "no heartbeat row at all"
-    account, seen_at, fresh = row
-    if not fresh:
-        return False, f"newest heartbeat is {seen_at} UTC (stale)"
-    return True, f"account {account} last seen {seen_at} UTC"
+    if not rows:
+        return False, "no active account"
+    stale = [f"account {a} ({seen or 'never'})" for a, seen, fresh in rows if not fresh]
+    if stale:
+        return False, "no fresh heartbeat from " + ", ".join(stale)
+    return True, ", ".join(f"account {a} seen {seen} UTC" for a, seen, _ in rows)
 
 
 def check_flat(db: Path) -> tuple[bool, str]:
@@ -226,7 +234,7 @@ def check_flat(db: Path) -> tuple[bool, str]:
 
 
 CHECKS = {
-    "terminal": ("Exness terminal", lambda args: check_terminal()),
+    "terminal": ("MT5 terminals", lambda args: check_terminal()),
     "feeds": ("market data feeds", lambda args: check_feeds()),
     "server": ("live trading server", lambda args: check_server(args.port)),
     "bridge": ("MT5 execution bridge", lambda args: check_bridge(args.db)),

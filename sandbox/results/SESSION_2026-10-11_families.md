@@ -1,0 +1,9 @@
+# cfd_families used in session 2026-10-11/12
+
+All 59 (off-hours search; = wave1 45 + wave2 14):
+
+adaptive_pullback,amihud,aroon,break_retest,cci,climax,confluence,cusum,day_of_week,efficiency,entropy,estimator,failed_break,floor_pivot,fracdiff,gated_donchian,gated_fade,gated_orb,gated_swing,half_life,ib,jump,kalman,kendall,key_reversal,level_confluence,linreg_trend,macd_hist,momentum,momentum_stack,obv_break,obv_divergence,orb,overnight,pdr,pullback,quantile_break,range_expansion,regime_breakout,roofing,rvol,sar,skew,squeeze,stochastic,structure,supertrend,swing_break,swing_ma,trap,two_stage,value_area,vol_of_vol,vol_regime,volatility_breakout,volume_thrust,vwap,xma_cross,xma_ribbon
+
+Wave 1 (45, barlb RTH): logs/barlb_keep_families.txt
+Wave 2 (14, barlb RTH): logs/wave2_batch0.txt + logs/wave2_batch1.txt
+Off-hours batches: logs/off_batch0-6.txt (15m/30m/1h/4h), logs/off_batch10-23.txt (5m)

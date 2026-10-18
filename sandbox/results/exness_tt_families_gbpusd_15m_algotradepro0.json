@@ -1,0 +1,254 @@
+{
+  "asset_class": "forex",
+  "bar_minutes": 15,
+  "families": {
+    "atp_alligator_ema200": null,
+    "atp_gaussian_kijun_vap": null,
+    "atp_st_macd_adx": null,
+    "atp_zl_macd_ema200": null
+  },
+  "protocol": {
+    "account": "Exness Pro 416209807",
+    "benchmark": null,
+    "broker": "exness",
+    "calendar": 252.0,
+    "candidate_counts": {
+      "atp_alligator_ema200": 12,
+      "atp_gaussian_kijun_vap": 24,
+      "atp_st_macd_adx": 24,
+      "atp_zl_macd_ema200": 24
+    },
+    "contract": {
+      "broker": "GBPUSD",
+      "contract_size": 100000.0,
+      "currency_profit": "USD",
+      "fx_to_usd": 1.0,
+      "multiplier": 99999.99999999999,
+      "tick_size": 1e-05,
+      "tick_value": 1.0,
+      "volume_max": 200.0,
+      "volume_min": 0.01,
+      "volume_step": 0.01
+    },
+    "cost_model": "spread only; commission measured at 0.0000",
+    "data": {
+      "first_row": "2014-12-31",
+      "last_row": "2026-08-28",
+      "source": "1m",
+      "table": "gbpusd_1m",
+      "warmup": "2014-01-01"
+    },
+    "execution": {
+      "bars_priced": 164665,
+      "bridge_queue_seconds": 1.0,
+      "entry_days": null,
+      "exit": "market order one whole bar + lag + queue after the bar it fired on; no broker-side stop on this account",
+      "feed_lag_seconds": 0.6,
+      "fill_model": "exness",
+      "fills_only": false,
+      "financing": "multiday: 17:00 New York rollover schedule; current swap rates for every year",
+      "full_day": false,
+      "model": "live",
+      "modelled_cost": null,
+      "mtm_peak": true,
+      "spread_at_entry": "exness_gbpusd_1m",
+      "swap_free": false,
+      "window": "rth"
+    },
+    "family_groups": {
+      "atp_alligator_ema200": "algotradepro0",
+      "atp_gaussian_kijun_vap": "algotradepro0",
+      "atp_st_macd_adx": "algotradepro0",
+      "atp_zl_macd_ema200": "algotradepro0"
+    },
+    "holding": {
+      "atp_alligator_ema200": "session",
+      "atp_gaussian_kijun_vap": "session",
+      "atp_st_macd_adx": "session",
+      "atp_zl_macd_ema200": "session"
+    },
+    "holdout": "2025-01-01 through 2026-08-16",
+    "in_sample_years": [
+      2020,
+      2021,
+      2022,
+      2023,
+      2024
+    ],
+    "initial_balance": 1000.0,
+    "risk_unit": "stop_day x average true daily range over 14 days -- timeframe invariant",
+    "select_rank": "tstat",
+    "session_minutes": [
+      30,
+      840
+    ],
+    "shift_hours": 0,
+    "sizing": "1.5% volatility-throttled stop risk, MT5 lots, 4x notional ceiling",
+    "slippage_bp": 0.2,
+    "spread_bp": 0.5184,
+    "spread_quoted_at": "session",
+    "total_cost_bp": 0.7183999999999999,
+    "warning": null
+  },
+  "refused": {
+    "atp_alligator_ema200": {
+      "best_by_return": {
+        "fill_rate": 99.1,
+        "max_dd_pct": 21.33,
+        "params": {
+          "exit_mode": "trail_0.25",
+          "last_entry_minute": 720,
+          "stop_atr": 2.0,
+          "stop_day": 0.2,
+          "trend": "none",
+          "vol_mode": "none"
+        },
+        "pf": 1.038,
+        "positive_years": 2,
+        "return_pct": 13.94,
+        "trades": 1010
+      },
+      "binding": [
+        "profit_factor",
+        "max_dd",
+        "positive_years"
+      ],
+      "cells": 12,
+      "refused_by": {
+        "annual_dd": 7,
+        "fill_rate": 0,
+        "max_dd": 12,
+        "positive_years": 12,
+        "profit_factor": 12,
+        "trades": 0
+      },
+      "requires": {
+        "max_dd_pct": 20.0,
+        "of_years": 5,
+        "positive_years": 4,
+        "profit_factor": 1.05,
+        "trades": 125
+      }
+    },
+    "atp_gaussian_kijun_vap": {
+      "best_by_return": {
+        "fill_rate": 97.0,
+        "max_dd_pct": 12.85,
+        "params": {
+          "exit_mode": "trail_0.25",
+          "last_entry_minute": 720,
+          "stop_atr": 3.0,
+          "stop_day": 0.2,
+          "trend": "none",
+          "vap": 5.0,
+          "vlen": 20,
+          "vol_mode": "none"
+        },
+        "pf": 1.166,
+        "positive_years": 3,
+        "return_pct": 39.61,
+        "trades": 701
+      },
+      "binding": [],
+      "cells": 24,
+      "refused_by": {
+        "annual_dd": 1,
+        "fill_rate": 0,
+        "max_dd": 17,
+        "positive_years": 23,
+        "profit_factor": 18,
+        "trades": 0
+      },
+      "requires": {
+        "max_dd_pct": 20.0,
+        "of_years": 5,
+        "positive_years": 4,
+        "profit_factor": 1.05,
+        "trades": 125
+      }
+    },
+    "atp_st_macd_adx": {
+      "best_by_return": {
+        "fill_rate": 95.1,
+        "max_dd_pct": 5.15,
+        "params": {
+          "adx": 25,
+          "exit_mode": "trail_0.25",
+          "last_entry_minute": 780,
+          "stop_atr": 3.0,
+          "stop_day": 0.2,
+          "trend": "none",
+          "vol_mode": "none"
+        },
+        "pf": 0.988,
+        "positive_years": 3,
+        "return_pct": -0.47,
+        "trades": 154
+      },
+      "binding": [
+        "profit_factor",
+        "positive_years"
+      ],
+      "cells": 24,
+      "refused_by": {
+        "annual_dd": 0,
+        "fill_rate": 0,
+        "max_dd": 10,
+        "positive_years": 24,
+        "profit_factor": 24,
+        "trades": 0
+      },
+      "requires": {
+        "max_dd_pct": 20.0,
+        "of_years": 5,
+        "positive_years": 4,
+        "profit_factor": 1.05,
+        "trades": 125
+      }
+    },
+    "atp_zl_macd_ema200": {
+      "best_by_return": {
+        "fill_rate": 97.9,
+        "max_dd_pct": 21.9,
+        "params": {
+          "exit_mode": "trail_0.25",
+          "last_entry_minute": 720,
+          "stop_atr": 3.0,
+          "stop_day": 0.2,
+          "trend": "none",
+          "vol_mode": "none",
+          "zl": 0
+        },
+        "pf": 1.056,
+        "positive_years": 2,
+        "return_pct": 13.07,
+        "trades": 758
+      },
+      "binding": [
+        "positive_years"
+      ],
+      "cells": 24,
+      "refused_by": {
+        "annual_dd": 12,
+        "fill_rate": 0,
+        "max_dd": 22,
+        "positive_years": 24,
+        "profit_factor": 22,
+        "trades": 0
+      },
+      "requires": {
+        "max_dd_pct": 20.0,
+        "of_years": 5,
+        "positive_years": 4,
+        "profit_factor": 1.05,
+        "trades": 125
+      }
+    }
+  },
+  "scope": "algotradepro0",
+  "seal_sha256": "80d775318be393e47b9f9fc339e1a09cf5b6b57f6ef56d3e76d8ca472a63dfe5",
+  "sealed": true,
+  "symbol": "gbpusd",
+  "timeframe": "15m",
+  "validation": {}
+}

@@ -24,7 +24,7 @@
 //! run's own day convention -- New York wall clock, the same string
 //! `format_ts` prints -- so a schedule fitted from a report lines up with it.
 //!
-//! HOW THE FACTOR IS APPLIED, and why it is applied there. Every `idk` sleeve
+//! HOW THE FACTOR IS APPLIED, and why it is applied there. Every book sleeve
 //! sizes as `floor(min(equity * risk / stop, equity / margin / price) * lev /
 //! step) * step`. Both legs inside the `min` are linear in equity, so handing a
 //! slot `equity * m` instead of `equity` scales its quantity by exactly `m` --

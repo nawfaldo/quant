@@ -15,7 +15,7 @@ from pathlib import Path
 from sandbox.research import exness_combined_strategies as cs
 
 SRC = Path(__file__).resolve().parents[2] / "live_trade" / "src"
-DIR = SRC / "strategies" / "idk" / "exness_combined_07-09-2026"
+DIR = SRC / "strategies" / "exness" / "oct-12-2026"
 
 
 def variant(key):

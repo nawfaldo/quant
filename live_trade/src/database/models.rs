@@ -2,47 +2,8 @@ use crate::backtest::Trade;
 use serde::Serialize;
 
 #[derive(Serialize)]
-pub struct Environment {
-    pub id: i64,
-    pub name: String,
-}
-
-pub struct CreateEnvironment {
-    pub name: String,
-}
-
-/// One environment's stored backtest rule, as the rules screen renders it.
-///
-/// A MATERIALISED VIEW OF `backtest::cost_model`, NOT AN INDEPENDENT RECORD.
-/// The engine charges from compiled tables, so a rule the database could
-/// disagree with is the defect the old editable `environment_rules` table had:
-/// what the screen showed and what the backtest charged were unrelated numbers.
-/// `sync_environment_cost_rules` rewrites these rows from the cost model on
-/// every boot, and the read path re-syncs when it finds a registered
-/// environment with none -- so the stored copy can only ever be the engine's
-/// own figures.
-#[derive(Serialize)]
-pub struct EnvironmentCostRule {
-    pub id: String,
-    pub name: String,
-    pub detail: String,
-    pub markets: Vec<EnvironmentCostRuleMarket>,
-}
-
-/// One market's line of a stored rule. Field names match
-/// `backtest::MarketCost`, because the same TypeScript type reads both.
-#[derive(Serialize)]
-pub struct EnvironmentCostRuleMarket {
-    pub market: String,
-    /// Entry charge in basis points of the fill price, slippage allowance
-    /// included.
-    pub spread_bp: f64,
-    /// Smallest order the broker accepts, in MT5 lots.
-    pub minimum_lots: f64,
-}
-
-#[derive(Serialize)]
-pub struct EnvironmentMt5Account {
+/// An MT5 account with its latest bridge balance, as the accounts list shows it.
+pub struct AccountOverview {
     pub id: i64,
     pub server: String,
     pub login: String,
@@ -57,16 +18,17 @@ pub struct EnvironmentMt5Account {
     pub account_type: String,
 }
 
-pub struct EnvironmentMt5AccountInput {
+pub struct NewMt5Account {
     pub server: String,
     pub login: String,
     pub password: String,
     pub account_type: String,
 }
 
-pub struct EnvironmentTrade {
+/// One row of the account trade ledger: the engine's entry and exit beside
+/// MT5's fills.
+pub struct AccountTrade {
     pub id: i64,
-    pub environment_id: i64,
     pub strategy_name: String,
     pub mt5pnl: f64,
     pub bookmap_entry_time: String,
@@ -80,7 +42,7 @@ pub struct EnvironmentTrade {
 }
 
 #[derive(Serialize)]
-pub struct EnvironmentAccountTrade {
+pub struct AccountTradeSummary {
     pub id: i64,
     pub strategy_name: String,
     pub pnl: f64,
@@ -116,7 +78,6 @@ pub struct LiveTrade {
     pub account_id: Option<i64>,
     pub account_login: String,
     pub account_name: String,
-    pub environment_id: Option<i64>,
     pub strategy_name: String,
     pub side: String,
     pub contract: f64,
@@ -162,14 +123,12 @@ pub struct AccountStrategy {
 pub struct ExecutionTarget {
     pub account_id: i64,
     pub symbol: String,
-    pub environment_id: Option<i64>,
 }
 
 #[derive(Clone)]
 pub struct LiveStrategyTarget {
     pub account_strategy_id: i64,
     pub account_id: i64,
-    pub environment_id: i64,
     pub strategy: String,
     pub symbol: String,
     pub live_started_at: i64,
@@ -214,7 +173,6 @@ pub struct Mt5AccountStatus {
 pub struct Mt5Position {
     pub account: String,
     pub account_name: String,
-    pub environment_id: Option<i64>,
     pub ticket: i64,
     #[serde(rename = "type")]
     pub position_type: String,

@@ -9,7 +9,6 @@ fn warmup_target(id: i64, strategy: &str) -> LiveStrategyTarget {
     LiveStrategyTarget {
         account_strategy_id: id,
         account_id: 1,
-        environment_id: 1,
         strategy: strategy.into(),
         symbol: strategy_symbol(strategy).into(),
         live_started_at: 1,
@@ -42,7 +41,7 @@ fn a_coin_quantity_would_still_be_converted_to_lots() {
     assert!(lots < hundred_coin_contract.min_lots);
 }
 
-/// `exness_combined` sizes through each market's own `volume_step` and
+/// `oct_12_2026` sizes through each market's own `volume_step` and
 /// `contract_size`, so what it returns is already a lot volume. Converting
 /// it again would divide a USDJPY order by 100,000.
 #[test]
@@ -67,7 +66,7 @@ fn minimum_lots_match_the_frozen_specs() {
     assert_eq!(lot_spec("usdjpy_volume_thrust").min_lots, 0.01);
     assert_eq!(lot_spec("usdjpy_volume_thrust").contract_size, 100_000.0);
     // Every sleeve's floor is the one its own `Instrument` sizes against.
-    for sleeve in exness_combined::BOOK {
+    for sleeve in oct_12_2026::BOOK {
         assert_eq!(
             lot_spec(sleeve.id()).min_lots,
             sleeve.broker_minimum_lots(),
@@ -87,7 +86,7 @@ fn minimum_lots_match_the_frozen_specs() {
 fn the_lot_floor_ignores_how_the_symbol_was_spelled() {
     // ETHUSD since 2026-09-23: its 0.10 floor is the highest in the book now
     // that JP225's three lots have left, and still ten times the FX step.
-    let mut slot = slot_for("ethusd_pullback");
+    let mut slot = slot_for("ethusd_confluence");
     for spelling in ["ethusd", "ETHUSD", " Ethusd "] {
         slot.target.symbol = spelling.into();
         assert_eq!(
@@ -101,7 +100,7 @@ fn the_lot_floor_ignores_how_the_symbol_was_spelled() {
             quantity: 0.05,
         };
         assert_eq!(
-            slot.entry_refusal(under_floor, true),
+            slot.entry_refusal(under_floor, Some(0)),
             Some("strategy volume is below the broker minimum"),
             "spelling {spelling} admitted an order ETHUSD rejects"
         );
@@ -112,10 +111,7 @@ fn the_lot_floor_ignores_how_the_symbol_was_spelled() {
 /// stops them drifting apart.
 #[test]
 fn live_strategies_match_the_book() {
-    let book: Vec<&str> = exness_combined::BOOK
-        .iter()
-        .map(|sleeve| sleeve.id())
-        .collect();
+    let book: Vec<&str> = oct_12_2026::BOOK.iter().map(|sleeve| sleeve.id()).collect();
     assert_eq!(LIVE_STRATEGIES.to_vec(), book);
 }
 
@@ -123,7 +119,7 @@ fn live_strategies_match_the_book() {
 /// sleeve, or a backtest and its live twin trade different instruments.
 #[test]
 fn the_two_spellings_agree_on_every_market() {
-    for sleeve in exness_combined::BOOK {
+    for sleeve in oct_12_2026::BOOK {
         assert_eq!(
             strategy_symbol(sleeve.id()),
             crate::strategies::market_symbol(sleeve.display()),
@@ -145,18 +141,22 @@ fn warmup_loads_only_active_markets() {
 #[test]
 fn warmup_uses_longest_requirement_per_active_symbol() {
     let plan = WarmupPlan::for_targets(&[
-        warmup_target(1, "ethusd_pullback"),
-        warmup_target(2, "ethusd_kalman"),
-        warmup_target(3, "usdjpy_rvol"),
+        warmup_target(1, "ethusd_confluence"),
+        warmup_target(2, "ethusd_obv_break"),
+        warmup_target(3, "usdjpy_pullback"),
     ]);
     // Sleeves sharing a feed collapse into ONE requirement -- the deepest of
     // them -- and a second market gets its own. The requirement is the sleeve's
     // own answer rather than a number written here, so a re-fitted cell moves
     // this test with it instead of silently outgrowing it.
-    let ethusd = Sleeve::from_id("ethusd_pullback")
+    let ethusd = Sleeve::from_id("ethusd_confluence")
         .unwrap()
         .warmup_sessions()
-        .max(Sleeve::from_id("ethusd_kalman").unwrap().warmup_sessions());
+        .max(
+            Sleeve::from_id("ethusd_obv_break")
+                .unwrap()
+                .warmup_sessions(),
+        );
     assert_eq!(
         plan.calendar_days["ethusd"],
         warmup_calendar_days("ethusd", ethusd)
@@ -165,7 +165,9 @@ fn warmup_uses_longest_requirement_per_active_symbol() {
         plan.calendar_days["usdjpy"],
         warmup_calendar_days(
             "usdjpy",
-            Sleeve::from_id("usdjpy_rvol").unwrap().warmup_sessions()
+            Sleeve::from_id("usdjpy_pullback")
+                .unwrap()
+                .warmup_sessions()
         )
     );
 }
@@ -204,8 +206,8 @@ fn requested_strategies_are_live_capable() {
 /// property that matters most in this file.
 #[test]
 fn every_live_strategy_routes_to_exactly_one_market() {
-    assert_eq!(strategy_symbol("usdjpy_rvol"), "usdjpy");
-    assert_eq!(strategy_symbol("usdjpy_rvol"), "usdjpy");
+    assert_eq!(strategy_symbol("usdjpy_pullback"), "usdjpy");
+    assert_eq!(strategy_symbol("usdjpy_pullback"), "usdjpy");
     assert_eq!(strategy_symbol("ethusd_confluence"), ETHUSD_SYMBOL);
     let markets = crate::strategies::known_markets();
     for strategy in LIVE_STRATEGIES {
@@ -256,7 +258,7 @@ fn no_live_strategy_reads_the_level_two_feed() {
     // The rule itself is unchanged: an NQ id would still be routed to the
     // level-two feed if one were ever seated again.
     assert_eq!(strategy_feed("nq_ofi"), LiveFeed::Ohlcv);
-    assert_eq!(strategy_feed("usdjpy_rvol"), LiveFeed::Ohlcv);
+    assert_eq!(strategy_feed("usdjpy_pullback"), LiveFeed::Ohlcv);
 }
 
 #[test]
@@ -364,7 +366,6 @@ pub(super) fn test_slot() -> LiveSlot {
         target: LiveStrategyTarget {
             account_strategy_id: 1,
             account_id: 1,
-            environment_id: 1,
             strategy: "usdjpy_volume_thrust".into(),
             symbol: "usdjpy".into(),
             live_started_at: 0,
@@ -377,6 +378,7 @@ pub(super) fn test_slot() -> LiveSlot {
         deferred_entries: HashMap::new(),
         pending_exits: HashMap::new(),
         blocked: None,
+        ghosts: HashSet::new(),
     }
 }
 
@@ -492,35 +494,23 @@ fn self_flattening_strategies_are_left_alone() {
     }
 }
 
-/// The clock-driven close is only as good as the offset it learns, and that
-/// offset is the one thing here derived from the host machine rather than from
-/// the data. A bar stamped in New York wall clock, arriving now, must place the
-/// New York day where that bar says it is -- whatever timezone the machine is
-/// set to, and with the feed's own few seconds of lag rounded away.
+/// The clock-driven close needs New York's time of day with no bar in hand,
+/// which is exactly when the feed has gone dark. It is the host clock plus the
+/// US daylight-saving rule, so a runtime that has seen no bar still knows it,
+/// and no bar -- however old -- can move it.
 #[test]
-fn the_new_york_offset_is_learned_from_a_bar_and_outlives_it() {
-    let mut runtime = runtime_holding("usdjpy_rvol", 0);
+fn the_new_york_clock_needs_no_bar() {
+    let runtime = runtime_holding("usdjpy_pullback", 0);
+    let utc = runtime.utc_now().expect("host clock");
+    let expected = (utc + crate::backtest::data::new_york_offset_seconds(utc)).rem_euclid(86_400);
+    let second = runtime
+        .ny_second_of_day()
+        .expect("clock known without a bar");
+    let drift = (second - expected).rem_euclid(86_400);
     assert!(
-        runtime.ny_second_of_day().is_none(),
-        "a runtime that has seen no bar must not claim to know the time"
+        drift <= 2 || drift >= 86_398,
+        "clock reads {second}, expected {expected}"
     );
-
-    // Pretend New York is four hours behind the host, and hand over a bar that
-    // closed three seconds ago in New York terms -- which is what the feed
-    // actually delivers, and the only shape the hour-rounding is meant for.
-    for offset in [-4 * 3_600, -5 * 3_600] {
-        let utc = runtime.utc_now().expect("host clock");
-        let closed_ny = utc + offset - 3;
-        runtime.observe_clock("usdjpy", bar_at_ts(closed_ny - 60));
-
-        let second = runtime.ny_second_of_day().expect("offset learned");
-        let expected = (utc + offset).rem_euclid(86_400);
-        let drift = (second - expected).rem_euclid(86_400);
-        assert!(
-            drift <= 2 || drift >= 86_398,
-            "offset {offset}: clock reads {second}, expected about {expected}"
-        );
-    }
 }
 
 /// Every other exit here is driven by a bar ARRIVING on the market being
@@ -538,6 +528,26 @@ fn a_position_left_past_its_session_close_is_flattened_on_the_clock() {
     for strategy in LIVE_STRATEGIES {
         let mut slot = slot_for(strategy);
         let session_end = slot.strategy.session_end_minute().unwrap() as i64;
+        // How long the market is CLOSED between this session's end and the next
+        // start: 61 minutes for an `off` cell (16:59 -> 18:00 New York).
+        let start_minute = slot.strategy.session_start_minute().unwrap() as i64;
+        let closed_seconds = (start_minute - session_end).rem_euclid(1_440) * 60;
+        if slot.strategy.holds_overnight() {
+            slot.positions.insert(
+                "primary".to_owned(),
+                LogicalPosition {
+                    side: Side::Long,
+                    volume: 1.0,
+                },
+            );
+            for offset in [0, 1_800, 4 * 3_600, 12 * 3_600] {
+                assert!(
+                    !slot.session_overdue((session_end * 60 + offset).rem_euclid(86_400)),
+                    "{strategy} holds overnight and must never be flattened on the clock"
+                );
+            }
+            continue;
+        }
         // Seconds into the New York day, `offset` seconds past the close.
         let at = |offset: i64| (session_end * 60 + offset).rem_euclid(86_400);
 
@@ -554,25 +564,34 @@ fn a_position_left_past_its_session_close_is_flattened_on_the_clock() {
                 volume: 3.0,
             },
         );
-        // One bar past the close is the instant `fill_models.exness` prices
-        // the exit at; the few seconds of grace only let a healthy feed's own
-        // exit land first.
+        // One bar OF ITS OWN CANDLE past the close is the instant
+        // `fill_models.exness` prices the exit at; the few seconds of grace only
+        // let a healthy feed's own exit land first.
+        let bar = session_overdue_seconds(strategy);
+        assert_eq!(
+            bar,
+            sleeve_of(strategy).unwrap().candle_seconds(),
+            "{strategy} is not given one bar of its own candle"
+        );
         assert!(
-            !slot.session_overdue(at(30 * 60)),
+            !slot.session_overdue(at(bar)),
             "{strategy} is closed before the model's own exit instant"
         );
         assert!(
-            !slot.session_overdue(at(30 * 60 + 9)),
+            !slot.session_overdue(at(bar + 9)),
             "{strategy} races the strategy's own exit inside the grace"
         );
         assert!(
-            slot.session_overdue(at(30 * 60 + 10)),
+            slot.session_overdue(at(bar + 10)),
             "{strategy} left open past its close with no bar to trigger an exit"
         );
-        assert!(
-            slot.session_overdue(at(4 * 3_600)),
-            "{strategy} left open past its close with no bar to trigger an exit"
-        );
+        // Deeper into the closed gap, where there is one to be deep in.
+        if closed_seconds > bar + 4 * 3_600 {
+            assert!(
+                slot.session_overdue(at(bar + 4 * 3_600)),
+                "{strategy} left open past its close with no bar to trigger an exit"
+            );
+        }
         // Deep inside the session -- one minute after it opens -- the ring
         // arithmetic must not read as "long past the close".
         let start = slot.strategy.session_start_minute().unwrap() as i64;
@@ -581,6 +600,44 @@ fn a_position_left_past_its_session_close_is_flattened_on_the_clock() {
             "{strategy} is flattened one minute into its own session"
         );
     }
+}
+
+/// A 60-minute sleeve is not overdue at the 30-minute mark that a 30-minute
+/// sleeve on the same market is: on 2026-10-08 a flat half hour flattened
+/// `usdjpy_lux_htf_manipulation_60m` at 13:30, an hour-candle sleeve whose
+/// modelled exit is 14:00.
+#[test]
+fn the_overdue_deadline_is_one_bar_of_each_sleeves_own_candle() {
+    assert_eq!(session_overdue_seconds("usdjpy_yf_alphatrend_30m"), 30 * 60);
+    assert_eq!(
+        session_overdue_seconds("usdjpy_adaptive_pullback_60m-barlb"),
+        60 * 60
+    );
+    assert_eq!(
+        session_overdue_seconds("gbpjpy_luxalgo_manipulation_120m"),
+        120 * 60
+    );
+    assert_eq!(
+        session_overdue_seconds("not_a_sleeve"),
+        SESSION_OVERDUE_MINUTES * 60
+    );
+
+    let mut short = slot_for("usdjpy_yf_alphatrend_30m");
+    let mut long = slot_for("usdjpy_adaptive_pullback_60m-barlb");
+    for slot in [&mut short, &mut long] {
+        slot.positions.insert(
+            "primary".to_owned(),
+            LogicalPosition {
+                side: Side::Long,
+                volume: 1.0,
+            },
+        );
+    }
+    let close = long.strategy.session_end_minute().unwrap() as i64 * 60;
+    let half_hour = close + 30 * 60 + SESSION_OVERDUE_GRACE_SECONDS;
+    assert!(short.session_overdue(half_hour));
+    assert!(!long.session_overdue(half_hour));
+    assert!(long.session_overdue(close + 60 * 60 + SESSION_OVERDUE_GRACE_SECONDS));
 }
 
 /// `ethusd_confluence` completes its 15:30 candle on the bar that OPENS the
@@ -607,6 +664,12 @@ fn every_live_strategy_reports_its_real_session_end() {
         let session_end = built
             .session_end_minute()
             .unwrap_or_else(|| panic!("{strategy} has no session end minute"));
+        // An `off` cell's session is the BROKER DAY: it ends at the 17:00 rollover's
+        // last minute, 16:59 New York.
+        if strategy.ends_with("-off") {
+            assert_eq!(session_end, 1_019, "{strategy} session end changed");
+            continue;
+        }
         let expected = match strategy_symbol(strategy) {
             // Shifted six hours: 08:00 on the JP225 clock is 02:00 New York,
             // and 10:00 on the HK50 clock is 04:00.
@@ -618,7 +681,9 @@ fn every_live_strategy_reports_its_real_session_end() {
             "eurjpy" => 870,
             "ukoil" => 870,
             "ethusd" => 960,
-            "ustec" | "us500" => 960,
+            "ustec" | "us500" | "btc" => 960,
+            "de40" | "uk100" => 690,
+            "usoil" => 870,
             other => panic!("{other} has no expected session end"),
         };
         assert_eq!(session_end, expected, "{strategy} session end changed");
@@ -738,7 +803,6 @@ fn runtime_holding(strategy: &str, last_bar_minute: i64) -> PortfolioRuntime {
         benchmark_closes: HashMap::new(),
         benchmark_latest: HashMap::new(),
         warm_strategies: HashSet::new(),
-        ny_skew_seconds: None,
     };
     let bar = bar_at_minute(last_bar_minute);
     match (market, strategy_feed(strategy)) {
@@ -821,8 +885,23 @@ fn a_stream_with_no_bars_never_arms_the_watchdog() {
 /// bars and send its real orders to Brent.
 #[test]
 fn a_live_row_must_name_its_sleeve_s_instrument() {
-    assert_eq!(required_symbol("ethusd_pullback"), Some("ETHUSD"));
+    assert_eq!(required_symbol("ethusd_confluence"), Some("ETHUSD"));
+    // The 2026-10-12 book adds GBPUSD (an off-hours cell).
+    assert_eq!(
+        required_symbol("gbpusd_qp_rsi2_pullback_30m-off"),
+        Some("GBPUSD")
+    );
     assert_eq!(required_symbol("ukoil_level_confluence"), Some("UKOIL"));
+    // The four markets the 2026-09-30 book added, in the BROKER's spelling:
+    // Exness calls its DAX CFD `DE30` and its bitcoin `BTCUSD`.
+    // DE40 left with `de40:lux_sweep_reclaim@60m` on 2026-10-12.
+    assert_eq!(required_symbol("de40_lux_sweep_reclaim_60m"), None);
+    assert_eq!(required_symbol("uk100_xma_cross"), Some("UK100"));
+    assert_eq!(required_symbol("usoil_xma_cross"), Some("USOIL"));
+    assert_eq!(required_symbol("btc_jump"), Some("BTCUSD"));
+    // Dropped 2026-09-30.
+    assert_eq!(required_symbol("ethusd_pullback"), None);
+    assert_eq!(required_symbol("us500_lux_swing_sweep_mss_5m"), None);
     // Dropped 2026-09-23, so they must resolve to nothing as well.
     assert_eq!(required_symbol("jp225_kalman"), None);
     assert_eq!(required_symbol("ukoil_xma_cross"), None);
@@ -831,7 +910,7 @@ fn a_live_row_must_name_its_sleeve_s_instrument() {
     // pass the symbol check by naming an instrument nothing trades any more.
     assert_eq!(required_symbol("hk50_level_confluence"), None);
 
-    for sleeve in exness_combined::BOOK {
+    for sleeve in oct_12_2026::BOOK {
         let symbol = required_symbol(sleeve.id()).expect("every sleeve routes");
         assert!(symbol_matches_strategy(sleeve.id(), symbol));
         assert!(symbol_matches_strategy(sleeve.id(), &symbol.to_lowercase()));
@@ -842,7 +921,7 @@ fn a_live_row_must_name_its_sleeve_s_instrument() {
     // A different instrument, and a symbol nothing in the book trades.
     assert!(!symbol_matches_strategy("ukoil_level_confluence", "ETHUSD"));
     assert!(!symbol_matches_strategy("ethusd_confluence", "BTCUSD"));
-    assert!(!symbol_matches_strategy("usdjpy_rvol", "DE40"));
+    assert!(!symbol_matches_strategy("usdjpy_pullback", "DE40"));
 }
 
 /// `blocked` stops new risk; it must never stop an exit.
@@ -1061,18 +1140,99 @@ async fn reconciled(
 ///
 /// Starting a session after the market opened is ordinary: the replay takes an
 /// entry the runtime was not running to send, so it believes it holds something
-/// the broker has never seen. Skip that trade, keep taking signals.
-/// `audusd_zscore` was retired for a whole session over exactly this on
-/// 2026-09-11, for a position it had never sent an order for.
+/// the broker has never seen. Skip that trade -- and keep the STRATEGY in it, as
+/// the backtest is, so the next signal it takes is the backtest's next signal.
+/// `audusd_zscore` was retired for a whole session over a phantom on
+/// 2026-09-11; telling the strategy to forget it instead made it flat and free
+/// to take trades the backtest never took.
 #[actix_web::test]
 async fn a_replayed_entry_the_broker_never_took_is_skipped_not_blocked() {
     let (blocked, left, abandons) = reconciled(&[("primary", Side::Long)], &[]).await;
     assert_eq!(blocked, None, "a phantom must not retire the sleeve");
-    assert_eq!(left, 0, "the phantom must be dropped from the slot");
+    assert_eq!(left, 0, "the phantom must be dropped from the broker book");
     assert_eq!(
-        abandons, 1,
-        "and the strategy must be told, or it closes a position the slot no longer has"
+        abandons, 0,
+        "the strategy must stay in the position, where the backtest is"
     );
+}
+
+/// A strategy that emits a scripted list of actions, one list per bar.
+struct Scripted(std::collections::VecDeque<Vec<Action>>);
+
+impl Strategy for Scripted {
+    fn update(&mut self, _bar: Bar, _equity: f64) -> Action {
+        Action::Hold
+    }
+
+    fn update_all(&mut self, _bar: Bar, _equity: f64) -> Vec<Action> {
+        self.0.pop_front().unwrap_or_default()
+    }
+}
+
+/// THE CASCADE THE GHOST EXISTS TO STOP. An entry live cannot send -- here a
+/// stale catch-up signal -- must leave the strategy holding, its exit must send
+/// nothing, and the slot must end flat with no error and no block. On
+/// 2026-10-01 the discard this replaced re-armed a USTEC sleeve that then took a
+/// short the backtest never had.
+#[actix_web::test]
+async fn an_entry_live_cannot_send_is_held_as_a_ghost_and_its_exit_is_silent() {
+    let mut slot = test_slot();
+    let enter = Action::Enter {
+        side: Side::Long,
+        price: 100.0,
+        quantity: 0.5,
+    };
+    let close = Action::Close {
+        price: 101.0,
+        fraction: 1.0,
+    };
+    slot.strategy = Box::new(Scripted(vec![vec![enter], vec![close]].into()));
+    let db = Database::new("unused-in-this-test");
+
+    slot.on_bar(&db, bar_at_minute(600), Some(3_600)).await;
+    assert!(
+        slot.ghosts.contains("primary"),
+        "the refused entry is a ghost"
+    );
+    assert!(
+        slot.positions.is_empty(),
+        "and the broker book holds nothing"
+    );
+
+    slot.on_bar(&db, bar_at_minute(601), Some(0)).await;
+    assert!(slot.ghosts.is_empty(), "the strategy's exit ends the ghost");
+    assert!(slot.positions.is_empty());
+    assert!(
+        slot.pending_exits.is_empty(),
+        "no exit is owed to the broker"
+    );
+    assert_eq!(slot.blocked, None, "and nothing about it blocks the sleeve");
+}
+
+/// A ghost left behind must never swallow a REAL position's exit. A new entry
+/// proves the strategy was flat, so it clears any ghost on its key first.
+#[test]
+fn a_new_entry_clears_a_stale_ghost_on_its_key() {
+    let enter = Action::Enter {
+        side: Side::Short,
+        price: 100.0,
+        quantity: 0.5,
+    };
+    assert_eq!(super::slot::entry_key(enter).as_deref(), Some("primary"));
+    let partial = Action::Close {
+        price: 100.0,
+        fraction: 0.5,
+    };
+    assert_eq!(
+        super::slot::exit_key(partial),
+        None,
+        "a partial close leaves the position, so it cannot end a ghost"
+    );
+    let full = Action::Close {
+        price: 100.0,
+        fraction: 1.0,
+    };
+    assert_eq!(super::slot::exit_key(full).as_deref(), Some("primary"));
 }
 
 /// The dangerous direction, unchanged. A real broker position with nobody

@@ -32,7 +32,7 @@ from datetime import datetime, timezone
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
 SURVIVORS = os.path.join(HERE, "..", "results", "exness")
-FIXTURES = os.path.join(ROOT, "live_trade", "src", "strategies", "idk", "fixtures")
+FIXTURES = os.path.join(ROOT, "live_trade", "src", "strategies", "exness", "oct-12-2026", "fixtures")
 
 #: Every TikTok sleeve the canon can seat: key -> sealed survivor file.
 #: The key is `symbol:family@<bar>m`; the bar is part of the identity because
@@ -47,12 +47,29 @@ SLEEVES = {
     "usdjpy:lux_htf_manipulation@60m": "usdjpy_lux_htf_manipulation_60m.json",
     "eurjpy:lux_ny_vwap_pullback@15m": "eurjpy_lux_ny_vwap_pullback_15m.json",
     "ethusd:lux_body_momentum@15m": "ethusd_lux_body_momentum_15m_widestop_isethusd2021.json",
+    "eurjpy:jt_hull_suite@15m": "eurjpy_jt_hull_suite_15m.json",
+    "gbpjpy:pql_rvol_spike@5m": "gbpjpy_pql_rvol_spike_5m.json",
+    "usdjpy:yf_qqe_mod@60m": "usdjpy_yf_qqe_mod_60m.json",
+    "gbpjpy:mql_big_move_cont@60m": "gbpjpy_mql_big_move_cont_60m.json",
+    "usdjpy:yf_alphatrend@30m": "usdjpy_yf_alphatrend_30m.json",
+    # Bar-lookback (`EXNESS_BAR_LOOKBACKS=1`) `cfd_families` cells from the
+    # 2026-10-11 barlb wave. Not TikTok cells, but they need the same thing:
+    # a child process, because the flag is read once at import and changes
+    # what every sealed lookback means. Keyed `symbol:family@<bar>m-barlb`.
+    "eurjpy:jump@15m-barlb": "eurjpy_jump_15m-barlb.json",
+    "eurjpy:squeeze@5m-barlb": "eurjpy_squeeze_5m-barlb.json",
+    "usdjpy:adaptive_pullback@60m-barlb": "usdjpy_adaptive_pullback_60m-barlb.json",
+    "usdjpy:failed_break@5m-barlb": "usdjpy_failed_break_5m-barlb.json",
 }
 
 
 def _pool():
-    """Every TikTok survivor the canon could seat (null PASS or PASS*), keyed
-    like `SLEEVES`, read off `SURVIVORS.json`."""
+    """Every child-run survivor the canon could seat, keyed like `SLEEVES`,
+    read off `SURVIVORS.json`: TikTok cells (null PASS or PASS*), the barlb
+    and off-hours waves (every row there is a survivor), and native
+    `cfd_families` cells at bar sizes other than the book's own 30m
+    (`@<bar>m-nat`). Native 30m cells run in-process in
+    `exness_combined_strategies` and are not listed here."""
     try:
         with open(os.path.join(SURVIVORS, "SURVIVORS.json"), encoding="utf-8") as handle:
             rows = json.load(handle)["survivors"]
@@ -60,9 +77,17 @@ def _pool():
         return {}
     out = {}
     for r in rows:
-        if (str(r.get("study_wave", "")).startswith("tiktok")
-                and r.get("null_verdict") in ("PASS", "PASS*")):
-            out.setdefault(f"{r['symbol']}:{r['family']}@{r['timeframe']}", r["file"])
+        wave, tf = str(r.get("study_wave", "")), str(r.get("timeframe", ""))
+        if wave.startswith("tiktok"):
+            if r.get("null_verdict") not in ("PASS", "PASS*"):
+                continue
+        elif wave.startswith(("barlb", "offhours")):
+            pass
+        elif tf.endswith("m") and tf[:-1].isdigit() and tf != "30m":
+            tf = f"{tf}-nat"
+        else:
+            continue
+        out.setdefault(f"{r['symbol']}:{r['family']}@{tf}", r["file"])
     return out
 
 
@@ -74,14 +99,56 @@ FIX_FROM, FIX_TO, FIX_WARM = "2025-01-01", "2026-08-21", "2024-01-01"
 
 
 def is_tt(key):
+    """True for every sleeve run in a child here: TikTok cells and barlb cells."""
     return "@" in key
 
 
+def _tf(key):
+    return key.split("@", 1)[1]
+
+
+def is_barlb(key):
+    """Bar-counted lookbacks (`@<bar>m-barlb`, `@<bar>m-barlb-off`)."""
+    return "-barlb" in _tf(key)
+
+
+def is_off(key):
+    """Off-hours cell (`...-off`): entries only while RTH is shut."""
+    return _tf(key).endswith("-off")
+
+
+def is_native(key, cell=None):
+    """Runs under `cfd_families`' own registry rather than the TikTok one."""
+    tf = _tf(key)
+    if "-barlb" in tf or tf.endswith("-nat"):
+        return True
+    cell = sealed(key) if cell is None else cell
+    return cell.get("search") == "cfd_families"
+
+
+def row_symbol(key):
+    """The symbol a sleeve's trades, marks and context are filed under.
+
+    An off-hours cell holds positions while the cash session is shut, but the
+    book marks a position only on its symbol's bars -- the in-session bars every
+    other sleeve on that symbol is also sized against. So an off-hours cell gets
+    its own series, `<symbol>~off`: the same instrument, every 30m bar of the
+    day. Its drawdown is then marked through the night, and no other sleeve's
+    marks or volatility throttle change. `real_symbol` maps it back."""
+    symbol = key.split(":", 1)[0]
+    return f"{symbol}~off" if is_off(key) else symbol
+
+
+def real_symbol(symbol):
+    return symbol.split("~", 1)[0]
+
+
 def split(key):
-    """`symbol:family@30m` -> (symbol, family, 30)."""
+    """`symbol:family@30m` (or `-barlb`, `-off`, `-barlb-off`, `-nat`) ->
+    (symbol, family, 30)."""
     symbol, rest = key.split(":", 1)
     family, tf = rest.split("@", 1)
-    return symbol, family, int(tf.rstrip("m"))
+    return symbol, family, int(tf.split("m", 1)[0])
 
 
 def sealed(key):
@@ -91,7 +158,15 @@ def sealed(key):
 
 def protocol(key):
     """The environment this cell was sealed under, as a sorted tuple."""
-    return tuple(sorted((sealed(key).get("protocol_change") or {}).items()))
+    cell = sealed(key)
+    env = dict(cell.get("protocol_change") or {})
+    if is_barlb(key):
+        env["EXNESS_BAR_LOOKBACKS"] = "1"
+    if is_off(key):
+        env["EXNESS_WINDOW"] = "off"
+    if is_native(key, cell):
+        env["TT_BOOK_NATIVE"] = "1"
+    return tuple(sorted(env.items()))
 
 
 def stamp(text):
@@ -117,7 +192,8 @@ def _run(mode, keys, **job):
         running = []
         for n, (env_items, members) in enumerate(jobs):
             env = dict(os.environ)
-            for name in ("EXNESS_IS_FIRST_YEAR", "EXNESS_TT_STOP_WIDEN"):
+            for name in ("EXNESS_IS_FIRST_YEAR", "EXNESS_TT_STOP_WIDEN", "EXNESS_BAR_LOOKBACKS",
+                         "EXNESS_WINDOW", "TT_BOOK_NATIVE"):
                 env.pop(name, None)
             env.update(dict(env_items))
             env["PYTHONIOENCODING"] = "utf-8"
@@ -164,8 +240,12 @@ def export_parity(keys=None):
 def _worker(spec):
     import platform
     platform._wmi = None
-    from sandbox.research import cfd_tt_families as tt   # installs the registry
-    cf = tt.cf
+    if os.environ.get("TT_BOOK_NATIVE") == "1":
+        # barlb / native-bar / cfd off-hours cells: no TT registry.
+        from sandbox.research import cfd_families as cf
+    else:
+        from sandbox.research import cfd_tt_families as tt   # installs the registry
+        cf = tt.cf
     TS = cf.TS
     out = {"cells": {}, "bars30": {}, "ctx": {}}
     for key in spec["keys"]:
@@ -184,23 +264,25 @@ def _worker(spec):
             result = cf.backtest(family, bars, ctx, params, lo=spec["lo"],
                                  hi=spec["hi"], initial=cf.INITIAL_BALANCE,
                                  include_trades=True, **fills)
+            alias = row_symbol(key)
             log = []
             for trade in result["trade_log"]:
                 trade = dict(trade)
-                trade["symbol"], trade["sleeve"] = symbol, key
+                trade["symbol"], trade["sleeve"] = alias, key
                 log.append(trade)
             out["cells"][key] = {
-                "key": key, "symbol": symbol, "family": f"{family}@{bar}m",
+                "key": key, "symbol": alias, "family": key.split(":", 1)[1],
                 "tt_family": family, "bar": bar, "params": params,
                 "log": log, "return_pct": result["return_pct"],
                 "max_dd_pct": result["max_dd_pct"],
                 "trades": result["trades"]}
-            if symbol not in out["bars30"]:
+            if alias not in out["bars30"]:
                 cf.BAR_MINUTES = 30
-                out["bars30"][symbol] = [
+                # Off-hours: every bar of the day (see `row_symbol`).
+                out["bars30"][alias] = [
                     b for b in cf.all_bars(symbol, "validate", 30)
-                    if cf.in_session(symbol, b[TS])]
-                out["ctx"][symbol] = {"cfg": ctx["cfg"], "symbol": symbol}
+                    if alias != symbol or cf.in_session(symbol, b[TS])]
+                out["ctx"][alias] = {"cfg": ctx["cfg"], "symbol": symbol}
         else:
             warm, lo, hi = stamp(FIX_WARM), stamp(FIX_FROM), stamp(FIX_TO)
             # IDEALISED FILLS, as every other fixture: the fill model is proven
@@ -217,6 +299,11 @@ def _worker(spec):
                 "vol_target": ctx["vol_target"],
                 "entry_days": None,
                 "shift_hours": ctx["cfg"]["shift_hours"],
+                # Off-hours cells: `session` is the broker day and `rth` the
+                # cash session (real NY minutes) entries and fills must avoid.
+                "window": cf.window_of(ctx["cfg"]),
+                "rth": list(ctx["cfg"].get("rth") or ()),
+                "bar_lookbacks": bool(getattr(cf, "BAR_LOOKBACKS", False)),
                 "warm_from": warm, "from": lo, "to": hi,
                 "bars": [list(b[:6]) for b in kept],
                 "trades": [{"entry_ts": t["entry_ts"], "exit_ts": t["exit_ts"],
@@ -225,7 +312,7 @@ def _worker(spec):
                            for t in result["trade_log"]],
                 "signals": result["signals"], "fills": result["fills"],
             }
-            name = f"parity_{symbol}_{family}_{bar}m.json"
+            name = f"parity_{symbol}_{family}_{_tf(key)}.json"
             with open(os.path.join(FIXTURES, name), "w", encoding="utf-8") as handle:
                 json.dump(payload, handle, separators=(",", ":"))
             out["cells"][key] = (f"{len(kept):7d} bars {len(payload['trades']):5d} "

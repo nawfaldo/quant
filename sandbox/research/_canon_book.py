@@ -51,8 +51,12 @@ def main():
         result, log, bars, ctx = cb.sleeve_trades(row, shown=shown)
         members.append(row)
         logs[key] = log
-        bars_by[symbol] = bars
-        ctx_by[symbol] = ctx
+        # An off-hours sleeve's series is `<symbol>~off` (24h bars); its trades
+        # carry that name, so it must not overwrite the in-session series.
+        from sandbox.research import tt_book
+        series = tt_book.row_symbol(key) if row.get("tt") else symbol
+        bars_by[series] = bars
+        ctx_by[series] = ctx
         standalone[key] = result
         print(f"{key:28} {len(log):5d} trades  standalone "
               f"{result['return_pct']:+8.2f}%", flush=True)

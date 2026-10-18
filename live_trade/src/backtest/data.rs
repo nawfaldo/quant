@@ -41,6 +41,50 @@ fn civil_from_days(z0: i64) -> (i64, i64, i64) {
     let m = if mp < 10 { mp + 3 } else { mp - 9 };
     (y + if m <= 2 { 1 } else { 0 }, m, d)
 }
+/// Seconds to add to a real UTC instant to get New York wall clock: -4h while
+/// US daylight saving is in force, -5h otherwise.
+///
+/// COMPUTED FROM THE RULE, NEVER LEARNED FROM A BAR. Every bar table stores New
+/// York wall clock, and the live runtime used to infer the offset from the
+/// newest bar it had been handed. A restart that replayed three weeks of
+/// catch-up bars through the live loop then "learned" an offset of minus three
+/// weeks, judged each stale signal fresh, and sent real orders for them --
+/// seven instant open/close round trips on 2026-10-01 at 08:38 UTC for signals
+/// dated as far back as 2026-09-08.
+///
+/// The US rule since 2007: daylight time from the second Sunday of March at
+/// 02:00 local standard time (07:00 UTC) to the first Sunday of November at
+/// 02:00 local daylight time (06:00 UTC).
+pub fn new_york_offset_seconds(utc: i64) -> i64 {
+    let (year, _, _) = civil_from_days(utc.div_euclid(86_400));
+    // 1970-01-01 was a Thursday: (days + 4) mod 7 is 0 on a Sunday.
+    let first_sunday = |month: i64| {
+        let first = days_from_civil(year, month, 1);
+        first + (7 - (first + 4).rem_euclid(7)).rem_euclid(7)
+    };
+    let starts = (first_sunday(3) + 7) * 86_400 + 7 * 3_600;
+    let ends = first_sunday(11) * 86_400 + 6 * 3_600;
+    if (starts..ends).contains(&utc) {
+        -4 * 3_600
+    } else {
+        -5 * 3_600
+    }
+}
+
+/// Seconds to add to a real UTC instant to get Berlin wall clock: +2h during EU
+/// summer time (last Sunday of March 01:00 UTC to last Sunday of October 01:00
+/// UTC), +1h otherwise.
+pub fn berlin_offset_seconds(utc: i64) -> i64 {
+    let (year, _, _) = civil_from_days(utc.div_euclid(86_400));
+    let last_sunday = |month: i64| {
+        let last = days_from_civil(year, month + 1, 1) - 1;
+        last - (last + 4).rem_euclid(7)
+    };
+    let starts = last_sunday(3) * 86_400 + 3_600;
+    let ends = last_sunday(10) * 86_400 + 3_600;
+    if (starts..ends).contains(&utc) { 2 * 3_600 } else { 3_600 }
+}
+
 pub(crate) fn format_day(day: i64) -> String {
     let (y, m, d) = civil_from_days(day);
     format!("{y:04}-{m:02}-{d:02}")

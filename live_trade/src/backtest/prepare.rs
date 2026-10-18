@@ -6,10 +6,10 @@ use super::{
     types::{Bar, OrderFlowFeatures},
 };
 use crate::api::parquet_store::{self, NANOS_PER_MINUTE, NANOS_PER_SECOND, ParquetStore};
-use crate::strategies::idk::exness_combined;
+use crate::strategies::exness::oct_12_2026;
 use crate::{
     error::ApiError,
-    strategies::idk::{PreferredData, preferred_data},
+    strategies::exness::{PreferredData, preferred_data},
 };
 use arrow_array::RecordBatch;
 use std::collections::{BTreeMap, HashMap};
@@ -95,14 +95,21 @@ fn trim_to_shifted_window(bars: &mut Vec<Bar>, market: &str, to: &str, canonical
     if !canonical_book {
         return;
     }
-    let Some(shift) = exness_combined::BOOK
+    let Some(shift) = oct_12_2026::BOOK
         .into_iter()
         .find(|sleeve| sleeve.market() == market)
-        .map(exness_combined::Sleeve::shift_hours)
-        .filter(|shift| *shift != 0)
+        .map(crate::strategies::cfd::Sleeve::shift_hours)
     else {
         return;
     };
+    trim_to_shift(bars, shift, to, canonical_book);
+}
+
+/// `trim_to_shifted_window` for a series whose shift is already known.
+fn trim_to_shift(bars: &mut Vec<Bar>, shift: i64, to: &str, canonical_book: bool) {
+    if !canonical_book || shift == 0 {
+        return;
+    }
     // `load_bars` keeps `timestamp < to + 1 day`, so that is the boundary the
     // shift is measured against.
     let Some(end) = parse_iso_days(to).map(|day| (day + 1) * 86_400) else {
@@ -117,17 +124,27 @@ async fn prepare_strategies(
     strategies: &[&str],
 ) -> Result<PreparedRun, ApiError> {
     let symbol = request.symbol.to_ascii_lowercase();
+    // THE MODEL PICKS THE BOOK. Exness Pro runs the Exness registry; FundedNext
+    // runs the FundedNext book. A strategy from the other book is refused rather
+    // than priced under costs it was never sealed against.
+    let book = request.book()?;
     // Both allowlists are derived from the registry rather than transcribed. A
     // name listed here that `build_strategy` cannot construct makes the strategy
     // selectable in the UI and then fails the run with "unknown strategy", and a
     // market listed here with no loader does the same thing one layer down.
-    if !crate::strategies::known_markets().contains(&symbol.as_str()) {
+    if !crate::strategies::book_markets(book).contains(&symbol.as_str()) {
         return Err(ApiError::BadRequest("unknown symbol".into()));
     }
-    let registered = crate::strategies::for_environment("idk");
     for strategy in strategies {
-        if !registered.iter().any(|entry| entry.name == *strategy) {
-            return Err(ApiError::BadRequest("unknown strategy".into()));
+        match crate::strategies::cfd::Sleeve::from_display(strategy) {
+            Some(sleeve) if sleeve.book() == book => {}
+            Some(_) => {
+                return Err(ApiError::BadRequest(format!(
+                    "{strategy} is not priced under the {} model",
+                    request.model()?
+                )));
+            }
+            None => return Err(ApiError::BadRequest("unknown strategy".into())),
         }
     }
     let label = strategies.join(" + ");
@@ -145,7 +162,7 @@ async fn prepare_strategies(
     let mixed = markets.len() > 1;
     // A mixed set is served by loading each market separately and feeding every
     // strategy only its own bars. Point value is the one thing that stops being
-    // shareable, and `valid_instrument` below already pins this environment to
+    // shareable, and `valid_instrument` below already pins every run to
     // Forex, where `point_value` is 1.0 for every symbol; Mini and Micro differ
     // (es 50, nq 20) and would need a per-slot config before a mixed set could
     // run on them.
@@ -196,6 +213,12 @@ async fn prepare_strategies(
     // is what its research replica reads too.
     let mut symbols: Vec<String> = Vec::new();
     let mut sources: Vec<PreferredData> = Vec::new();
+    // THE CLOCK IS PART OF THE KEY TOO, since 2026-10-12. An `off`-window sleeve
+    // runs on the broker day's +7h clock while the market's in-session sleeves
+    // run on its own, and Python's `replay` treats it as a separate series
+    // (`<market>~off`) whose trades are ordered on that clock. One stream cannot
+    // carry two shifts, so the market simply appears once per clock.
+    let mut shifts: Vec<i64> = Vec::new();
     let mut strategy_symbols: Vec<usize> = Vec::new();
     for strategy in strategies {
         let market = if mixed {
@@ -205,15 +228,18 @@ async fn prepare_strategies(
         };
         let wanted = preferred_data(strategy)
             .ok_or_else(|| ApiError::BadRequest("strategy has no market-data preference".into()))?;
-        let index = match symbols
-            .iter()
-            .zip(&sources)
-            .position(|(known, known_source)| *known == market && *known_source == wanted)
-        {
+        let shift = crate::strategies::cfd::Sleeve::from_display(strategy).map_or(
+            0,
+            crate::strategies::cfd::Sleeve::shift_hours,
+        );
+        let index = match (0..symbols.len()).position(|known| {
+            symbols[known] == market && sources[known] == wanted && shifts[known] == shift
+        }) {
             Some(index) => index,
             None => {
                 symbols.push(market);
                 sources.push(wanted);
+                shifts.push(shift);
                 symbols.len() - 1
             }
         };
@@ -252,19 +278,38 @@ async fn prepare_strategies(
             .max()
             .unwrap_or(0)
     };
+    // The admission run starts here when it is earlier than the report window,
+    // so the bars, the warm-up and the fills all reach back to it.
+    let admission_day = match request.admission_from.as_deref() {
+        Some(value) => Some(parse_iso_days(value).ok_or_else(|| {
+            ApiError::BadRequest(format!("invalid admission date {value:?}; expected YYYY-MM-DD"))
+        })?),
+        None => None,
+    }
+    .filter(|day| parse_iso_days(&request.from_date).is_some_and(|from| *day < from));
+    let base_from = match admission_day {
+        Some(day) => format_day(day),
+        None => request.from_date.clone(),
+    };
     let mut symbol_bars: Vec<Vec<Bar>> = Vec::new();
     if split {
         for (series, (market, per_series)) in symbols.iter().zip(&sources).enumerate() {
-            let warm_from = parse_iso_days(&request.from_date)
+            let warm_from = parse_iso_days(&base_from)
                 .map(|day| format_day(day - warm_days(series)))
-                .unwrap_or_else(|| request.from_date.clone());
-            let from = if canonical_book {
-                &warm_from
-            } else {
-                &request.from_date
-            };
+                .unwrap_or_else(|| base_from.clone());
+            let from = if canonical_book { &warm_from } else { &base_from };
             let mut loaded = load_bars(store, market, from, &request.to_date, *per_series).await?;
-            trim_to_shifted_window(&mut loaded, market, &request.to_date, canonical_book);
+            match book {
+                crate::strategies::cfd::Book::Exness => {
+                    trim_to_shifted_window(&mut loaded, market, &request.to_date, canonical_book);
+                }
+                // The series' OWN clock: every FundedNext series is one shift
+                // (an off-hours DE40 series is +7h, HK50 +6h), and Python's
+                // `ef.backtest` stops each at `shifted_ts >= hi`.
+                crate::strategies::cfd::Book::FundedNext => {
+                    trim_to_shift(&mut loaded, shifts[series], &request.to_date, canonical_book);
+                }
+            }
             // NOT SESSION-FILTERED HERE, AND THAT IS LOAD-BEARING.
             //
             // Filtering to the sleeve's session at load looks free -- a
@@ -304,7 +349,7 @@ async fn prepare_strategies(
         load_bars(
             store,
             &symbol,
-            &request.from_date,
+            &base_from,
             &request.to_date,
             sources.first().copied().unwrap_or(source),
         )
@@ -321,26 +366,46 @@ async fn prepare_strategies(
     // still be open -- or not -- when the reported window starts.
     let mut fills = HashMap::new();
     for (series, market) in symbols.iter().enumerate() {
-        if fills.contains_key(market) {
+        // Keyed by market AND clock: the minute table is the same, but a candle
+        // stamp on the +7h broker-day clock is un-shifted by 7h to reach it.
+        let shift = shifts.get(series).copied().unwrap_or(0);
+        let key = fill_key(market, shift);
+        if fills.contains_key(&key) {
             continue;
         }
-        let warm_from = parse_iso_days(&request.from_date)
+        let warm_from = parse_iso_days(&base_from)
             .map(|day| format_day(day - warm_days(series)))
-            .unwrap_or_else(|| request.from_date.clone());
-        let from = if canonical_book {
-            &warm_from
-        } else {
-            &request.from_date
-        };
+            .unwrap_or_else(|| base_from.clone());
+        let from = if canonical_book { &warm_from } else { &base_from };
         let (lower, upper) = day_range(from, &request.to_date)?;
         // `load_ohlcv_bars` reaches 90 days behind `from` as well.
         let lower = lower.map(|value| value - 90 * 86_400 * NANOS_PER_SECOND);
-        let shift = exness_combined::BOOK
-            .into_iter()
-            .find(|sleeve| sleeve.market() == market.as_str())
-            .map_or(0, exness_combined::Sleeve::shift_hours);
-        if let Some(loaded) = MarketFills::load(store, market, shift, lower, upper)? {
-            fills.insert(market.clone(), Arc::new(loaded));
+        if let Some(loaded) = MarketFills::load(store, market, book, shift, lower, upper)? {
+            fills.insert(key, Arc::new(loaded));
+        }
+    }
+    // Markets with nothing stored past the run's end (see `ended_markets`).
+    let run_end = day_range(&request.from_date, &request.to_date)?.1;
+    let mut ended_markets = Vec::new();
+    for market in &symbols {
+        let (table, _, _) = live_ohlcv_source(market);
+        // The first instant with NO data: one past the stored last bar, or the
+        // requested `data_end`, whichever is earlier.
+        let cut = request
+            .data_end
+            .as_deref()
+            .and_then(parse_iso_days)
+            .map(|day| day * 86_400 * NANOS_PER_SECOND);
+        let last = store.max_timestamp(&table)?.map(|last| last + 1);
+        let stop = match (last, cut) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        };
+        if let (Some(stop), Some(end)) = (stop, run_end)
+            && stop <= end
+            && !ended_markets.contains(market)
+        {
+            ended_markets.push(market.clone());
         }
     }
     Ok(PreparedRun {
@@ -352,6 +417,9 @@ async fn prepare_strategies(
             initial: balance,
             symbol,
             start_day,
+            admission_day,
+            ended_markets,
+            canon_replay: request.canon_replay,
             // The 2026-09-07 book's own cap, applied only when the run IS that
             // book. A partial selection is not the configuration the cap was
             // chosen for, and capping it would size a research run by a policy
@@ -367,7 +435,7 @@ async fn prepare_strategies(
                     std::env::var("EXNESS_GROSS_CAP")
                         .ok()
                         .and_then(|value| value.parse::<f64>().ok())
-                        .or(exness_combined::CANON_GROSS_CAP)
+                        .or(oct_12_2026::CANON_GROSS_CAP)
                 })
                 .flatten()
                 .filter(|cap| *cap > 0.0),
@@ -443,7 +511,7 @@ async fn load_bars(
             // 2025-2026 they differ on the SAME minute by a median of 475
             // points and up to 1,117, stepping down at each quarterly roll.
             // What makes the split safe is that no indicator ever spans it:
-            // `ExnessCombined` rebuilds the sleeve at the boundary, exactly as
+            // `CfdSleeve` rebuilds the sleeve at the boundary, exactly as
             // Python rebuilds its context for the second segment.
             let ohlcv = load_ohlcv_bars(store, symbol, from, to).await?;
             let level_two = load_order_flow_bars(store, symbol, from, to).await?;
@@ -513,6 +581,11 @@ pub(crate) async fn load_live_level_two_history(
 fn live_ohlcv_source(symbol: &str) -> (String, &'static str, i64) {
     match symbol {
         "xniusd" => ("xniusd_30m".into(), "tick_volume", 1_800),
+        // FUNDEDNEXT-ONLY MARKETS have no vendor table, so the cells were
+        // signalled off FundedNext's own minutes (`cfd_families.table_for`), and
+        // so are their live twins: the feed for these is the FundedNext terminal.
+        "xauusd" | "us2000" | "us30" | "cadjpy" | "nzdusd" | "euraud" | "usdchf" | "chfjpy"
+        | "gbpaud" => (format!("fundednext_{symbol}_1m"), "volume", 60),
         _ => (format!("{symbol}_1m"), "volume", 60),
     }
 }
@@ -1034,4 +1107,10 @@ mod tests {
         assert_eq!(bars[0].volume, 12.0, "both rows' volume");
         assert_eq!(bars[1].ts, 1_736_154_000);
     }
+}
+
+/// The `PreparedRun::fills` key for a market read on a clock shifted by
+/// `shift_hours`: the same broker table, a different stamp offset.
+pub(crate) fn fill_key(market: &str, shift_hours: i64) -> String {
+    format!("{market}@{shift_hours}")
 }

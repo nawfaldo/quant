@@ -1,4 +1,4 @@
-//! Prints the live rows the `idk` account must hold for the 2026-09-07 book.
+//! Prints the live rows the live account must hold for the book.
 //!
 //! WHY A TOOL AND NOT A LIST IN THE ACTIVATION SCRIPT. The activation writes
 //! `mt5_account_strategies`, whose `symbol` column is what the bridge sends the
@@ -18,7 +18,7 @@
 //! ```
 
 use live_trade::live::portfolio::{LIVE_STRATEGIES, required_symbol};
-use live_trade::strategies::idk::exness_combined::{BOOK, BOOK_ID, BOOK_NAME};
+use live_trade::strategies::exness::oct_12_2026::{BOOK, BOOK_ID, BOOK_NAME};
 
 fn main() -> anyhow::Result<()> {
     // The live list and the book must be the same twenty-two. They are

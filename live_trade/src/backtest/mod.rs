@@ -13,7 +13,9 @@ pub(crate) mod types;
 
 pub use combine::combine_realized;
 pub use data::{format_ts, iso_day};
-pub use engine::costs::{CostModel, cost_model};
+pub use engine::costs::{
+    CostModel, FUNDEDNEXT_MODEL_ID, MODEL_ID, cost_model, fundednext_cost_model, model_book,
+};
 pub use engine::{RunResult, execute};
 pub use prepare::{PreparedRun, prepare, run, run_combined};
 pub use request::RunRequest;

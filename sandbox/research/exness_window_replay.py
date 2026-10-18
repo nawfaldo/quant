@@ -45,11 +45,28 @@ from sandbox.research import cfd_families as ef
 ROOT = os.path.join(os.path.dirname(__file__), "..", "results")
 SURVIVORS = os.path.join(ROOT, "exness", "SURVIVORS.json")
 CLOCK_KEYS = ("last_entry_minute", "signal_minute", "entry_minute")
-BARS = {"30m": 30, "60m": 60}
+#: `--bars` limits the replay to these bar sizes. Bar-lookback survivors
+#: (`<n>m-barlb`) are replayed only by a process launched with
+#: EXNESS_BAR_LOOKBACKS=1, and the rest only without it, because the flag is
+#: read once at import and changes what every sealed integer means.
+BARS = (5, 15, 30, 60, 240)
 
 
-def output(window):
-    return os.path.join(ROOT, f"exness_window_replay_{window}.json")
+def bar_of(timeframe):
+    """Bar minutes of a survivor's timeframe, or None when this process can't
+    replay it (wrong lookback mode, daily, or not in `BARS`)."""
+    if timeframe.endswith("-barlb") != ef.BAR_LOOKBACKS:
+        return None
+    head = timeframe.removesuffix("-barlb")
+    if not head.endswith("m") or not head[:-1].isdigit():
+        return None
+    bar = int(head[:-1])
+    return bar if bar in BARS else None
+
+
+def output(window, tag=""):
+    lookbacks = "-barlb" if ef.BAR_LOOKBACKS else ""
+    return os.path.join(ROOT, f"exness_window_replay_{window}{lookbacks}{tag}.json")
 
 
 def _integers(value):
@@ -116,12 +133,12 @@ def _stat(result):
                                        "trades", "edge_vs_drift_t_stat")}
 
 
-def replay(window):
+def replay(window, tag=""):
     rows = [s for s in json.load(open(SURVIVORS, encoding="utf-8"))["survivors"]
-            if s["timeframe"] in BARS]
+            if bar_of(s["timeframe"]) and not s["family"].startswith(("fb_", "sb_"))]
     groups = {}
     for row in rows:
-        groups.setdefault((row["symbol"], BARS[row["timeframe"]]), []).append(row)
+        groups.setdefault((row["symbol"], bar_of(row["timeframe"])), []).append(row)
     results, skipped = [], []
     started = time.time()
     for (symbol, bar), items in sorted(groups.items()):
@@ -143,7 +160,10 @@ def replay(window):
             continue
         families = {row["family"] for row in items if row["family"] in ef.FAMILIES}
         bars, ctx = ef.context(symbol, "validate", bar, families)
-        mapping = lookback_map(symbol, bar, old_session)
+        # Bar-counted lookbacks are bars in every window; mapping them through
+        # the session tables would turn RSI(14) into whatever 14 sessions maps to.
+        mapping = ({} if ef.BAR_LOOKBACKS
+                   else lookback_map(symbol, bar, old_session))
         old_shift = ef.SHIFT_HOURS.get(symbol, 0)
         for row in items:
             if row["family"] not in families:
@@ -162,24 +182,26 @@ def replay(window):
                 continue
             results.append({
                 "symbol": symbol, "family": row["family"], "bar": bar,
+                "barlb": ef.BAR_LOOKBACKS,
                 "wave": row["study_wave"], "params": params,
                 "in_sample": _stat(ins), "oos": _stat(oos),
                 "sealed_oos_return_pct": row["oos_return_pct"]})
         print(f"{window} {symbol} {bar}m: {len(items)} survivors "
               f"({time.time() - started:.0f}s)", flush=True)
     payload = {"window": window, "results": results, "skipped": skipped}
-    with open(output(window), "w", encoding="utf-8") as handle:
+    with open(output(window, tag), "w", encoding="utf-8") as handle:
         json.dump(payload, handle, indent=1, default=str)
-    print(f"wrote {output(window)}: {len(results)} replayed, "
+    print(f"wrote {output(window, tag)}: {len(results)} replayed, "
           f"{len(skipped)} skipped")
 
 
 def compare():
     runs = {}
-    for path in sorted(glob.glob(output("*"))):
+    for path in sorted(glob.glob(os.path.join(ROOT, "exness_window_replay_*.json"))):
         payload = json.load(open(path, encoding="utf-8"))
-        runs[payload["window"]] = {(r["symbol"], r["family"], r["bar"]): r
-                                   for r in payload["results"]}
+        runs.setdefault(payload["window"], {}).update(
+            {(r["symbol"], r["family"], r["bar"], r.get("barlb", False)): r
+             for r in payload["results"]})
     base = runs.get("rth", {})
     print(f"{'window':14}{'replayed':>9}{'OOS>0':>7}{'beats rth':>10}"
           f"{'median OOS%':>12}")
@@ -196,9 +218,14 @@ if __name__ == "__main__":
     parser.add_argument("--window", default="rth",
                         help="windows to replay in, as `cfd_families --window`")
     parser.add_argument("--compare", action="store_true")
+    parser.add_argument("--bars", default=None,
+                        help="comma list of bar minutes to replay (default all)")
+    parser.add_argument("--tag", default="", help="output file suffix (shards)")
     args = parser.parse_args()
+    if args.bars:
+        BARS = tuple(int(b) for b in args.bars.split(","))
     if args.compare:
         compare()
     else:
         for name in ef.expand_windows(args.window):
-            replay(name)
+            replay(name, args.tag)

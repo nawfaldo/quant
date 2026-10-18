@@ -24,7 +24,12 @@ FundedNext tables, then hands over to the stock initialiser.
 """
 import os
 
-from sandbox.research import fundednext_combined_strategies as fn  # noqa: F401  (patches first)
+raise SystemExit(
+    "fundednext_combined_montecarlo is not ported to the 2026-10-13 FundedNext "
+    "book: `fundednext_combined_strategies` no longer patches the Exness module, "
+    "so this would silently run the EXNESS canon. Use `fundednext_challenge`.")
+
+from sandbox.research import fundednext_combined_strategies as fn  # noqa: E402,F401
 from sandbox.research import exness_combined_montecarlo as mc
 
 mc.CACHE = os.path.join(mc.ecs.CACHE_DIR, "montecarlo_fundednext_inputs.pkl")

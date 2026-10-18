@@ -8,7 +8,7 @@ account/position state.
 
 ## One-time setup
 
-Create an MT5 account under an environment in the web app, then install the
+Create an MT5 account (`POST /api/accounts`), give it active strategies, then install the
 official MetaTrader package:
 
 ```powershell
@@ -44,7 +44,7 @@ account's execution and read-only candle feed to use the same terminal without
 overlapping IPC requests (`-10001: IPC send failed`). Any additional local MT5
 consumer must use `mt5/ipc_lock.py` as well or use a separate terminal.
 
-That runs **every** environment account. To run just one:
+That runs **every** account with an active strategy. To run just one:
 
 ```powershell
 py mt5\bridge.py --account-id 2
@@ -129,3 +129,12 @@ are not broker-hosted stop-loss orders. The bridge protects a backend-only
 outage, but a total outage of both backend and bridge can still leave an open
 position unmanaged. Keep MT5's own account-level protections in place and
 supervise the first live session.
+
+## Fake hand (FundedNext)
+
+On FundedNext accounts the bridge never calls `order_send`; `hand.py` places and
+closes orders by posting Win32 messages to the MT5 window (order dialog F9,
+position dialog). Other brokers keep using the API. Charts are opened on demand
+via File > New Chart, and the terminal window must stay open. Hand-opened
+positions carry magic 0 and a `march:<id>` comment, which the bridge treats as
+managed. Standalone: `py -3 mt5/hand.py -h`.

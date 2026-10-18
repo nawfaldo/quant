@@ -4,7 +4,7 @@
 //! `prepare` and the engine; when that produces a number nobody believes, this
 //! narrows down which of the three layers is responsible by removing two of
 //! them: it reads the market's own `<symbol>_1m` table, feeds the minutes
-//! straight into `ExnessCombined`, and counts the actions that come back.
+//! straight into `CfdSleeve`, and counts the actions that come back.
 //!
 //! ```text
 //! cargo run --release --bin exness_sleeve_probe -- jp225_swing_break 2024-06-01 2026-08-21
@@ -13,7 +13,7 @@
 use live_trade::backtest::data::iso_day;
 use live_trade::backtest::types_for_probe::{Action, Bar};
 use live_trade::parquet_store::{self, NANOS_PER_SECOND, ParquetStore};
-use live_trade::strategies::idk::exness_combined::{ExnessCombined, Sleeve};
+use live_trade::strategies::cfd::{CfdSleeve, Sleeve};
 
 #[actix_web::main]
 async fn main() -> anyhow::Result<()> {
@@ -45,7 +45,7 @@ async fn main() -> anyhow::Result<()> {
         )
         .map_err(|error| anyhow::anyhow!("{error:?}"))?;
 
-    let mut strategy = ExnessCombined::new(sleeve, 0.01);
+    let mut strategy = CfdSleeve::new(sleeve, 0.01);
     let (mut entries, mut closes) = (0usize, 0usize);
     let (mut first, mut last) = (None::<i64>, None::<i64>);
     let mut minutes = 0usize;

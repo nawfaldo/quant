@@ -1,4 +1,4 @@
-"""Atomically activate the 2026-09-07 Exness book on the IDK MT5 account.
+"""Atomically activate the Exness book on the live MT5 account.
 
 THE STRATEGY LIST IS NOT WRITTEN HERE. `mt5_account_strategies.symbol` is what
 the bridge sends an order to, and a sleeve carrying another instrument's symbol
@@ -20,6 +20,12 @@ command is a hard stop rather than a warning.
 
     py -m sandbox.research.activate_canonical_live            # dry run
     py -m sandbox.research.activate_canonical_live --apply
+    py -m sandbox.research.activate_canonical_live --apply --account-id 3
+
+THE LIVE ACCOUNT is the one account with an active strategy. Accounts used to be
+picked through their `idk` environment; environments are gone, and the retired
+trial account still sits in the table with nothing active. With no active
+account (a fresh setup) or more than one, name it with `--account-id`.
 """
 from __future__ import annotations
 
@@ -45,23 +51,35 @@ def book_rows():
                                 for row in payload["strategies"]]
 
 
+def live_account_id(db: sqlite3.Connection) -> int:
+    """The one account with an active strategy; anything else is refused."""
+    accounts = db.execute(
+        "SELECT a.id FROM mt5_accounts a WHERE EXISTS ("
+        "SELECT 1 FROM mt5_account_strategies s WHERE s.account_id=a.id AND s.active=1) "
+        "ORDER BY a.id").fetchall()
+    if len(accounts) != 1:
+        raise SystemExit(f"expected exactly one account with active strategies, found "
+                         f"{len(accounts)} -- name it with --account-id")
+    return int(accounts[0][0])
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--apply", action="store_true",
                         help="write the change; without it nothing is touched")
+    parser.add_argument("--account-id", type=int,
+                        help="the account to activate; default: the one with active strategies")
     args = parser.parse_args()
 
     book_id, target = book_rows()
     db = sqlite3.connect(DATABASE, timeout=30)
     db.row_factory = sqlite3.Row
-    accounts = db.execute(
-        "SELECT a.id FROM mt5_accounts a JOIN environments e "
-        "ON e.id=a.environment_id WHERE lower(e.name)=lower(?)",
-        ("idk",),
-    ).fetchall()
-    if len(accounts) != 1:
-        raise SystemExit(f"expected exactly one IDK account, found {len(accounts)}")
-    account_id = int(accounts[0]["id"])
+    if args.account_id is None:
+        account_id = live_account_id(db)
+    else:
+        account_id = args.account_id
+        if db.execute("SELECT 1 FROM mt5_accounts WHERE id=?", (account_id,)).fetchone() is None:
+            raise SystemExit(f"no MT5 account with id {account_id}")
 
     open_positions = db.execute(
         "SELECT COUNT(*) FROM mt5_strategy_positions "

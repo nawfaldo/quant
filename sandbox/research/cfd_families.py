@@ -438,6 +438,8 @@ from sandbox.research.usoil_families_research import (
 )
 
 RESULTS = os.path.join(os.path.dirname(__file__), "..", "results")
+#: Where `select` writes its result files; specs stay in RESULTS.
+RESULTS_OUT = os.environ.get("CFD_RESULTS_DIR") or RESULTS
 
 
 def _argv_option(flag):
@@ -486,13 +488,14 @@ BROKERS = {
         "spec_path": os.path.join(RESULTS, "fundednext_specs.json"),
         "table_prefix": "fundednext_",
         "tick_clock": "ny_plus_7",
-        "commission": {"forex": ("usd_per_lot", 7.0),
-                       "commodity": ("notional_pct", 0.0016),
+        "commission": {"forex": ("usd_per_lot", 3.0),
+                       "commodity": ("usd_per_lot", 3.0),
                        "crypto": ("notional_pct", 0.04),
                        "stock": ("notional_pct", 0.004)},
-        "cost_model": "spread + commission once at the open: forex $7/lot, "
-                      "commodities 0.0016%, crypto 0.04%, stocks 0.004% of "
-                      "notional, indices 0 (FundedNext help centre, 2026-09-24)",
+        "cost_model": "spread + commission once per trade: forex and commodities "
+                      "$3/lot (measured on demo 2026-10-14, billed at the close), "
+                      "crypto 0.04%, stocks 0.004% of notional (help centre, "
+                      "unmeasured), indices 0",
     },
 }
 
@@ -502,6 +505,11 @@ BROKER = os.environ.get("CFD_BROKER") or _argv_broker() or "exness"
 if BROKER not in BROKERS:
     raise SystemExit(f"unknown broker {BROKER!r}; known: {sorted(BROKERS)}")
 PROFILE = BROKERS[BROKER]
+#: A cost model from outside this file (`new_cfd_families.COST_MODELS`), as JSON, so a
+#: spawned worker inherits it from the environment like `CFD_BROKER`.
+if os.environ.get("CFD_COMMISSION"):
+    PROFILE = dict(PROFILE, commission={
+        k: tuple(v) for k, v in json.loads(os.environ["CFD_COMMISSION"]).items()})
 SPEC_PATH = PROFILE["spec_path"]
 RESULT_PREFIX = f"{BROKER}_families"
 TS, O, H, L, C, V = range(6)
@@ -510,13 +518,32 @@ TS, O, H, L, C, V = range(6)
 # protocol
 # --------------------------------------------------------------------------- #
 
-INITIAL_BALANCE = 1_000.0
+INITIAL_BALANCE = float(os.environ.get("CFD_BALANCE", "1000"))  # CFD_BALANCE: FundedNext runs use 6000
 RISK_FRACTION = 0.015
 MARGIN_FRACTION = 0.25          # self-imposed 4x notional ceiling
 
 IS_END = int(datetime(2025, 1, 1, tzinfo=timezone.utc).timestamp())
 OOS_END = int(datetime(2026, 8, 16, tzinfo=timezone.utc).timestamp())
 LAST_IS_YEAR = 2024
+
+#: `CFD_SPLIT=2024-2025` moves the protocol: in-sample is those calendar years
+#: (no earlier year counts, whatever the data allows), out-of-sample runs from
+#: the next 1 January to `CFD_OOS_END` (default: the start of today, UTC). Every
+#: result file then carries `_is2024-2025` in its prefix, so a moved split never
+#: overwrites the standard one.
+SPLIT_TAG = ""
+IS_FIRST_YEAR_FLOOR = None
+if os.environ.get("CFD_SPLIT"):
+    _first, _, _last = os.environ["CFD_SPLIT"].partition("-")
+    IS_FIRST_YEAR_FLOOR, LAST_IS_YEAR = int(_first), int(_last or _first)
+    IS_END = int(datetime(LAST_IS_YEAR + 1, 1, 1, tzinfo=timezone.utc).timestamp())
+    _end = os.environ.get("CFD_OOS_END")
+    OOS_END = (int(datetime.fromisoformat(_end).replace(tzinfo=timezone.utc).timestamp())
+               if _end else
+               int(datetime.now(timezone.utc).replace(hour=0, minute=0, second=0,
+                                                      microsecond=0).timestamp()))
+    SPLIT_TAG = f"_is{IS_FIRST_YEAR_FLOOR}-{LAST_IS_YEAR}"
+    RESULT_PREFIX += SPLIT_TAG
 
 #: Selection gates. Deliberately identical across asset classes: the eight old
 #: scripts used four different sets, which made their winners incomparable.
@@ -577,6 +604,12 @@ BAR_CHOICES = (5, 15, 30, 60, 120, 240, 1440)
 #:
 #: `Family.scope` records which side of that line each one lives on.
 DAILY = 1440
+
+
+#: `EXNESS_BAR_LOOKBACKS=1`: indicator lengths in BARS rather than sessions
+#: (see `periods`). Seals carry `-barlb` in the bar label so they never
+#: overwrite the session-scaled results.
+BAR_LOOKBACKS = os.environ.get("EXNESS_BAR_LOOKBACKS") == "1"
 
 
 def is_daily(bar=None):
@@ -774,7 +807,9 @@ BROKER_ALIAS = {"de40": "DE30", "btc": "BTCUSD", "nq": "USTEC", "es": "US500"}
 #: its index and oil names follow neither the repository nor Exness.
 FUNDEDNEXT_ALIAS = {"ustec": "NDX100", "nq": "NDX100", "es": "SPX500",
                     "us500": "SPX500", "de40": "GER30", "fr40": "FRA40",
-                    "stoxx50": "EUSTX50", "ukoil": "UKOUSD", "usoil": "USOUSD"}
+                    "stoxx50": "EUSTX50", "ukoil": "UKOUSD", "usoil": "USOUSD",
+                    #: `vix` is already a block name in `periods`.
+                    "vixcfd": "VIX"}
 
 #: Trading days a year, for annualising realised volatility. Crypto is the only
 #: family that quotes through the weekend.
@@ -821,6 +856,15 @@ SESSION = {
     "us500": (9 * 60 + 30, 16 * 60),
     "btc": (9 * 60 + 30, 16 * 60), "ethusd": (9 * 60 + 30, 16 * 60),
     "ethbtc": (9 * 60 + 30, 16 * 60),
+    #: FundedNext-only symbols (2026-10-16): metals like silver, US cash hours,
+    #: European cash hours.
+    "xauusd": (8 * 60, 16 * 60),
+    "us30": (9 * 60 + 30, 16 * 60), "us2000": (9 * 60 + 30, 16 * 60),
+    "vixcfd": (9 * 60 + 30, 16 * 60),
+    #: The volume profile puts these AUD crosses at 20:00-10:00, across
+    #: midnight, which leaves an rth window with no bars; London+NY like audusd.
+    "euraud": (60, 14 * 60), "gbpaud": (60, 14 * 60),
+    "swi20": (3 * 60, 11 * 60 + 30), "nth25": (3 * 60, 11 * 60 + 30),
 }
 
 #: Prefer the native 30m table where both exist. The metal crosses have a
@@ -910,6 +954,22 @@ for _s in ("nq", "es"):
 for _s in ("eurusd", "usdjpy", "gbpusd", "audjpy", "audusd", "eurjpy",
            "gbpjpy", "usdcad"):
     CLASS[_s] = "forex"
+#: FundedNext-only symbols (2026-10-16): every other pair, index and metal its
+#: terminal quotes. No vendor table -- `table_for` signals them off the
+#: broker's own minutes, which start 2024.
+FUNDEDNEXT_FOREX = (
+    "audcad", "audchf", "audnzd", "audsgd", "cadchf", "cadjpy", "chfjpy",
+    "euraud", "eurcad", "eurchf", "eurgbp", "eurhkd", "eurhuf", "eurnok",
+    "eurnzd", "eursgd", "gbpaud", "gbpcad", "gbpchf", "gbpnzd", "gbpsgd",
+    "mxnjpy", "nokjpy", "nzdcad", "nzdchf", "nzdjpy", "nzdsgd", "nzdusd",
+    "sgdjpy", "usdchf", "usdcnh", "usddkk", "usdhkd", "usdhuf", "usdmxn",
+    "usdnok", "usdsek", "usdsgd", "usdzar", "zarjpy")
+FUNDEDNEXT_INDEX = ("nth25", "swi20", "us2000", "us30", "vixcfd")
+for _s in FUNDEDNEXT_FOREX:
+    CLASS[_s] = "forex"
+for _s in FUNDEDNEXT_INDEX:
+    CLASS[_s] = "index"
+CLASS["xauusd"] = "commodity"
 
 #: The universe `--symbols all` expands to. Membership is not an assertion that
 #: a symbol is runnable -- `coverage` decides that against live data.
@@ -1430,6 +1490,10 @@ def table_for(symbol):
         return minute, "1m"
     if half in have:
         return half, "30m"
+    # No vendor table: a broker-only symbol is signalled off the broker's
+    # own minutes.
+    if broker_minute_table(symbol) in have:
+        return broker_minute_table(symbol), "1m"
     return None, None
 
 
@@ -1557,7 +1621,7 @@ def all_bars(symbol, phase, bar=None):
             f"{symbol}: {spec['table']} is native 30m and cannot be cut to "
             f"{bar}m -- pick 30 or coarser, or use a symbol with a 1m table")
     table, shift = spec["table"], spec["shift_hours"]
-    upper = "2025-01-01" if phase == "select" else None
+    upper = _is_end_date() if phase == "select" else None
     volume = store.volume_column(table, spec.get("volume_column"))
     key = (f"bars:v2:{table}:{bar}m:{spec['warmup']}:{upper}:{shift}:{volume}:"
            f"{data._table_fingerprint([table])}")
@@ -1567,8 +1631,25 @@ def all_bars(symbol, phase, bar=None):
                                end=upper, shift_hours=shift, volume_col=volume)
 
     scope = "is" if phase == "select" else "full"
-    return [tuple(row) for row in
+    rows = [tuple(row) for row in
             data._cached(f"families_{symbol}_{bar}m_{scope}", key, build)]
+    # CFD_BROKER_HOURS=1: keep signalling off the vendor table, but drop every
+    # vendor bar the broker did not quote (its market was closed), so no entry
+    # or exit can land in a closed market; the flatten falls on the last bar
+    # the broker quoted. Bars before the broker table starts are warm-up and
+    # stay. Holding across a closure is unaffected.
+    broker = broker_minute_table(symbol)
+    if (os.environ.get("CFD_BROKER_HOURS") == "1" and broker != table
+            and broker in tables()):
+        quoted = {row[0] for row in data._cached(
+            f"families_{symbol}_{bar}m_{scope}_brokerhours",
+            key + f":hours:{broker}:{data._table_fingerprint([broker])}",
+            lambda: store.read_bars(broker, bar_minutes=bar, start=spec["warmup"],
+                                    end=upper, shift_hours=shift))}
+        first = min(quoted) if quoted else None
+        rows = [row for row in rows
+                if first is None or row[0] < first or row[0] in quoted]
+    return rows
 
 
 def daily_bars(symbol, phase):
@@ -1940,7 +2021,7 @@ def vix_closes(symbol, phase, bars):
     """
     if symbol not in VIX_FACTOR or not have_vix():
         return None
-    upper = "2025-01-01" if phase == "select" else None
+    upper = _is_end_date() if phase == "select" else None
     key = f"vix:v2:{upper}:{data._table_fingerprint(['vix_1d'])}"
 
     def build():
@@ -2059,6 +2140,12 @@ def resolve(symbol, allow_stale=False, specs=None, window=None):
     return resolved
 
 
+def _is_end_date():
+    """`IS_END` as the `YYYY-MM-DD` the `select` phase reads bars up to
+    (exclusive). Follows `CFD_SPLIT`; 2025-01-01 by default."""
+    return datetime.fromtimestamp(IS_END, tz=timezone.utc).strftime("%Y-%m-%d")
+
+
 def is_years(symbol):
     first = INSTRUMENTS[symbol]["first_full_year"]
     # AN EXPLICIT LATER START, opt-in per symbol:
@@ -2072,6 +2159,8 @@ def is_years(symbol):
         name, _, value = item.strip().partition(":")
         if name == symbol and value.isdigit():
             first = max(first, int(value))
+    if IS_FIRST_YEAR_FLOOR is not None:
+        first = max(first, IS_FIRST_YEAR_FLOOR)
     return tuple(year for year in range(first, LAST_IS_YEAR + 1))
 
 
@@ -2092,31 +2181,40 @@ def periods(symbol, bar=None):
     "20-day EMA" stays a 20-day EMA whether that is 20 bars daily or 480 bars at
     5 minutes. A lookback written as a fixed bar count would silently become a
     different amount of history at every timeframe.
+
+    With `BAR_LOOKBACKS` every INDICATOR length is instead counted in bars at
+    its daily-chart setting -- the numbers daily mode already uses -- so RSI(14)
+    is 70 minutes at 5m and 56 hours at 4h, and the indicator speeds up with
+    the bar. What stays in sessions: `session` (exits, annualising), `swing`
+    day-count exits, `year` (the 52-week high), and every unconverted session
+    count below. Stops are on the daily range either way.
     """
     opened, closed = INSTRUMENTS[symbol]["session"]
     per_session = (1 if is_daily(bar)
                    else 1440 // (bar or BAR_MINUTES) if FULL_DAY
                    else max(2, (closed - opened) // (bar or BAR_MINUTES) + 1))
+    k = 1 if BAR_LOOKBACKS else per_session
     return {
-        "session": per_session, "atr": 2 * per_session,
-        "vol": 20 * per_session, "long_vol": 100 * per_session,
-        "trend": {"ema_20d": 20 * per_session, "ema_50d": 50 * per_session},
-        "zscore": (per_session, 2 * per_session, 5 * per_session),
-        "fast": (per_session, 2 * per_session),
-        "slow": (5 * per_session, 10 * per_session, 20 * per_session),
+        "session": per_session, "unit": k,
+        "atr": 14 if BAR_LOOKBACKS else 2 * per_session,
+        "vol": 20 * k, "long_vol": 100 * k,
+        "trend": {"ema_20d": 20 * k, "ema_50d": 50 * k},
+        "zscore": (k, 2 * k, 5 * k),
+        "fast": (k, 2 * k),
+        "slow": (5 * k, 10 * k, 20 * k),
         # 252 sessions is the real 52 weeks. 55 is a quarter, and using it for
         # `high_52w` would have named the family after a year and handed it
         # eleven weeks.
-        "channels": (per_session, 2 * per_session, 4 * per_session,
-                     10 * per_session, 20 * per_session, 55 * per_session,
-                     252 * per_session),
-        "year": 252 * per_session,
+        "channels": (k, 2 * k, 4 * k,
+                     10 * k, 20 * k, 55 * k,
+                     252 * k),
+        "year": 252 * k,
         # 14 sessions is Wilder's default and 2 sessions is the short
         # mean-reversion variant. Written in sessions so daily gets (2, 14)
         # rather than the (1, 2) a bar-count would have collapsed to.
-        "rsi": (max(2, 2 * per_session), max(3, 14 * per_session)),
-        "volume": (5 * per_session, 20 * per_session),
-        "compress": (5 * per_session, 10 * per_session, 20 * per_session),
+        "rsi": (max(2, 2 * k), max(3, 14 * k)),
+        "volume": (5 * k, 20 * k),
+        "compress": (5 * k, 10 * k, 20 * k),
         "swing": {"days_5": 5 * per_session, "days_15": 15 * per_session},
 
         # ---- lookbacks for the families added in the second wave ------------
@@ -2126,21 +2224,21 @@ def periods(symbol, bar=None):
         # values wherever one short and one long reading answer the question,
         # because these are multiplied by the shared 72-cell `common` grid and a
         # third value costs 144 cells per own-axis combination.
-        "xma_fast": (per_session, 2 * per_session),
-        "xma_slow": (5 * per_session, 20 * per_session),
+        "xma_fast": (k, 2 * k),
+        "xma_slow": (5 * k, 20 * k),
         # A ladder rather than an axis: `xma_ribbon` reads the SPREAD of all
         # five at once, so they are one setting, not five.
-        "ribbon": tuple(m * per_session for m in (1, 2, 4, 8, 16)),
-        "stoch": (per_session, 5 * per_session),
-        "stoch_smooth": max(2, per_session // 2),
-        "cci": (2 * per_session, 10 * per_session),
+        "ribbon": tuple(m * k for m in (1, 2, 4, 8, 16)),
+        "stoch": (k, 5 * k),
+        "stoch_smooth": max(2, k // 2),
+        "cci": (2 * k, 10 * k),
         # 12/26/9 sessions is the textbook setting in this study's units; the
         # short triple is the same shape compressed into a single session, which
         # is what a 30m trader would actually watch.
-        "macd": ((max(2, per_session // 2), per_session, max(2, per_session // 3)),
-                 (12 * per_session, 26 * per_session, 9 * per_session)),
-        "adx": (max(4, 2 * per_session), max(6, 14 * per_session)),
-        "aroon": (5 * per_session, 20 * per_session),
+        "macd": ((max(2, k // 2), k, max(2, k // 3)),
+                 (12 * k, 26 * k, 9 * k)),
+        "adx": (max(4, 2 * k), max(6, 14 * k)),
+        "aroon": (5 * k, 20 * k),
         # The SAME periods as `rsi`, deliberately. The whole thesis of `mfi` is
         # that weighting by money rather than by price picks different bars out
         # of the identical construction, and running the two at different
@@ -2148,25 +2246,25 @@ def periods(symbol, bar=None):
         # MFI at a 75 threshold also barely fires -- 8 signals in eleven
         # thousand bars -- because the flow sums smooth far harder than the
         # price sums do, so the thresholds sit lower than `rsi`'s as well.
-        "mfi": (max(2, 2 * per_session), max(3, 14 * per_session)),
-        "cmf": (5 * per_session, 20 * per_session),
+        "mfi": (max(2, 2 * k), max(3, 14 * k)),
+        "cmf": (5 * k, 20 * k),
         # OBV is a cumulative line, so it is read through a channel on itself
         # rather than through a level. Longer than the price channels on
         # purpose: a divergence needs both series to have made a swing.
-        "obv": (10 * per_session, 40 * per_session),
-        "linreg": (2 * per_session, 10 * per_session),
-        "er": (2 * per_session, 10 * per_session),
+        "obv": (10 * k, 40 * k),
+        "linreg": (2 * k, 10 * k),
+        "er": (2 * k, 10 * k),
         # The variance ratio needs a horizon AND a sample to measure it over.
         # The window is fixed at 100 sessions so the step is the only axis --
         # sweeping both would make a regime reading a two-dimensional search.
-        "vr_step": (per_session, 5 * per_session),
-        "vr_window": 100 * per_session,
-        "skew": (20 * per_session,),
+        "vr_step": (k, 5 * k),
+        "vr_window": 100 * k,
+        "skew": (20 * k,),
         # A fractal wing in BARS, not sessions: it is a shape in the bar series
         # and a 14-bar wing at 30m would need a full session either side before
         # a pivot could confirm, which is not a swing point, it is a channel.
         "wing": (2, 3, 5),
-        "rel": (per_session, 5 * per_session, 20 * per_session),
+        "rel": (k, 5 * k, 20 * k),
 
         # ---- the fourth wave: the night, the almanac, the horizon -----------
         # SESSION COUNTS, LEFT UNCONVERTED, and that is a deliberate exception
@@ -2220,56 +2318,56 @@ def periods(symbol, bar=None):
         # that could never fire, and three neighbours the robustness test would
         # have counted as failures for the wrong reason. A month and a quarter
         # of returns are the shortest windows worth regressing.
-        "pair": (20 * per_session, 60 * per_session),
+        "pair": (20 * k, 60 * k),
 
         # ---- the sixth wave: path statistics, microstructure, filters ------
         # EVERY ONE CARRIES A FLOOR IN BARS, and that is the exception this wave
         # needs. The rule above is "write it in sessions and convert", which on
-        # a daily bar makes `5 * per_session` equal to five. Five bars is a
+        # a daily bar makes `5 * k` equal to five. Five bars is a
         # legal moving-average period and is NOT a legal sample for a scaling
         # exponent, an entropy, a runs test or a fourth moment -- those return
         # `None` for the entire history at that length, which the grid would
         # spend budget on and `select` would report as "no cell passed".
         #
-        # So each of these is `max(floor_in_bars, sessions * per_session)`: the
+        # So each of these is `max(floor_in_bars, sessions * k)`: the
         # session reading wherever there is enough of it, and the shortest
         # window the statistic is defined on otherwise. The floors are the
         # estimators' own requirements, not preferences -- `hurst_exponent`
         # needs four times its longest lag, `permutation_entropy` needs enough
         # bars to fill a six-bin histogram, `tail_ratio` needs five returns in
         # each tail.
-        "hurst": (max(64, 10 * per_session), max(128, 40 * per_session)),
-        "entropy": (max(40, 5 * per_session), max(120, 20 * per_session)),
+        "hurst": (max(64, 10 * k), max(128, 40 * k)),
+        "entropy": (max(40, 5 * k), max(120, 20 * k)),
         # One value, exactly like `skew`. The fourth moment is a slow reading
         # and two lookbacks of it would be two noisy copies of one statement.
-        "kurtosis": (max(120, 20 * per_session),),
-        "autocorr": (max(60, 5 * per_session), max(160, 20 * per_session)),
+        "kurtosis": (max(120, 20 * k),),
+        "autocorr": (max(60, 5 * k), max(160, 20 * k)),
         # LAGS ONE AND TWO ONLY. Lag 1 is "does the last bar continue" and lag 2
         # is the first lag at which a bid-ask bounce has decayed, so the pair is
         # a real question. Past that the estimate's standard error swamps the
         # coefficient at any window a trading rule can afford.
         "lags": (1, 2),
-        "runs": (max(40, 5 * per_session), max(120, 20 * per_session)),
-        "kendall": (max(30, 2 * per_session), max(100, 10 * per_session)),
-        "tails": (max(150, 20 * per_session),),
-        "jump": (max(30, 2 * per_session), max(100, 10 * per_session)),
-        "semi": (max(40, 5 * per_session), max(120, 20 * per_session)),
+        "runs": (max(40, 5 * k), max(120, 20 * k)),
+        "kendall": (max(30, 2 * k), max(100, 10 * k)),
+        "tails": (max(150, 20 * k),),
+        "jump": (max(30, 2 * k), max(100, 10 * k)),
+        "semi": (max(40, 5 * k), max(120, 20 * k)),
         # SHORT AND LONG, AND THE FAMILY READS THE RATIO. Amihud's level is in
         # whatever volume unit the table happens to carry -- a tick count on one
         # feed and a contract count on another -- so a threshold on it would
         # rank feeds rather than markets. The short window against the long one
         # is dimensionless and needs no extra array to normalise it.
-        "amihud": (max(20, 5 * per_session), max(120, 20 * per_session)),
-        "estimator": (max(20, 5 * per_session), max(120, 20 * per_session)),
-        "bulk": (max(10, per_session), max(40, 5 * per_session)),
+        "amihud": (max(20, 5 * k), max(120, 20 * k)),
+        "estimator": (max(20, 5 * k), max(120, 20 * k)),
+        "bulk": (max(10, k), max(40, 5 * k)),
         # `(high_period, low_period)` pairs for the roofing filter, in bars. The
         # band is everything between them, so the pair IS the construct and the
         # two numbers cannot be swept independently without producing cells
         # whose passband is empty or inverted. A LABEL, therefore, and in
         # `CATEGORICAL` for the same reason `macd_set` is.
-        "roof": ((max(20, 2 * per_session), max(5, per_session // 2)),
-                 (max(60, 10 * per_session), max(8, 2 * per_session))),
-        "fisher": (max(10, per_session), max(30, 5 * per_session)),
+        "roof": ((max(20, 2 * k), max(5, k // 2)),
+                 (max(60, 10 * k), max(8, 2 * k))),
+        "fisher": (max(10, k), max(30, 5 * k)),
         # FRACTIONAL DIFFERENCING ORDERS, not periods. 0.3 keeps most of the
         # memory and is barely stationary; 0.6 is past the point where most
         # price series pass an ADF test and still keeps far more history than a
@@ -2280,9 +2378,9 @@ def periods(symbol, bar=None):
         # `(minimum, maximum)` clamp for the cycle estimator, in bars. Not an
         # axis: it is the range the measurement is allowed to report, and
         # sweeping it would be sweeping the answer.
-        "cycle": (max(8, per_session // 2), max(20, 4 * per_session)),
-        "halflife": (max(60, 10 * per_session), max(200, 40 * per_session)),
-        "quantile": (max(20, 4 * per_session), max(120, 20 * per_session)),
+        "cycle": (max(8, k // 2), max(20, 4 * k)),
+        "halflife": (max(60, 10 * k), max(200, 40 * k)),
+        "quantile": (max(20, 4 * k), max(120, 20 * k)),
         # CUSUM thresholds as a multiple of trailing volatility. The filter
         # resets after every event, so the multiple sets how many events a year
         # there are, and one and two sigma are the two orders of magnitude worth
@@ -3011,7 +3109,7 @@ def context(symbol, phase, bar=None, only=None, full_bars=None):
     #: history. A squeeze is a low reading, not a low absolute width, so it has
     #: to be scaled by price or it just reports which symbol is expensive.
     width = [None if m is None or s is None or m <= 0 else s / m
-             for m, s in zip(means[p["session"]], sigmas[p["session"]])]
+             for m, s in zip(means[p["unit"]], sigmas[p["unit"]])]
     from_start, from_end = month_position(bars)
     # `ts // 86400` and `ts % 86400 // 60` were recomputed for every bar of every
     # cell -- roughly a billion divmods across a 29,736-cell job. They depend
@@ -3751,7 +3849,7 @@ def extra_context(symbol, phase, bars, ctx, p, daily, bar, blocks=None):
         # block above: a substituted placeholder would leave every mean wrong
         # for a further `n` bars in a way no signal-side guard could catch.
         series, means, sigmas = {}, {}, {}
-        window = 20 * p["session"]
+        window = 20 * p["unit"]
         for order in p["fracdiff"]:
             line = ind.frac_diff(closes, order)
             series[order] = line
@@ -4058,7 +4156,7 @@ def squeeze_signal(index, bars, ctx, params, _state):
         return None
     width = ctx["width"][index]
     floor = ctx["width_min"][params["compress"]][index]
-    session = ctx["periods"]["session"]
+    session = ctx["periods"]["unit"]
     middle = ctx["mean"][session][index]
     if width is None or floor is None or middle is None or not math.isfinite(floor):
         return None
@@ -4365,7 +4463,7 @@ def xma_slope_signal(index, bars, ctx, params, _state):
     Scaled by the average true daily range so the threshold means the same at
     every timeframe and on every instrument, exactly as the stops are.
     """
-    lookback = ctx["periods"]["session"]
+    lookback = ctx["periods"]["unit"]
     if index < lookback:
         return None
     series = ctx["xma"][params["kind"]][params["period"]]
@@ -4527,7 +4625,7 @@ def vol_regime_signal(index, bars, ctx, params, _state):
     expanding = ratio >= params["ratio"]
     if expanding != (params["regime"] == "expanding"):
         return None
-    lookback = ctx["periods"]["session"]
+    lookback = ctx["periods"]["unit"]
     if index < lookback:
         return None
     move = bars[index][C] - bars[index - lookback][C]
@@ -5468,7 +5566,7 @@ def _breakout_levels(name, index, bars, ctx):
         window = ctx["prior_range"].get(ctx["day"][index])
         return window if window else (None, None)
     if name == "donchian":
-        channel = 4 * p["session"]
+        channel = 4 * p["unit"]
         return ctx["high"][channel][index], ctx["low"][channel][index]
     if name == "swing":
         wing = p["wing"][1]
@@ -5567,7 +5665,7 @@ def gated_swing_signal(index, bars, ctx, params, _state):
     p = ctx["periods"]
     close = bars[index][C]
     if params["trigger"] == "donchian":
-        channel = 20 * p["session"]
+        channel = 20 * p["unit"]
         top, bottom = ctx["high"][channel][index], ctx["low"][channel][index]
         if not present(top) or not present(bottom):
             return None
@@ -5614,7 +5712,7 @@ def pool_view(name, index, bars, ctx):
         # A five-session return: the coarsest reading in the study that does not
         # require a second bar table, and the only pool member that can disagree
         # with all four oscillators at once because it does not smooth.
-        span = 5 * p["session"]
+        span = 5 * p["unit"]
         if index < span:
             return None
         before = bars[index - span][C]
@@ -5819,7 +5917,7 @@ def regime_router_signal(index, bars, ctx, params, _state):
     if not present(value):
         return None
     if value >= high:
-        channel = 4 * p["session"]
+        channel = 4 * p["unit"]
         top, bottom = ctx["high"][channel][index], ctx["low"][channel][index]
         if not present(top) or not present(bottom):
             return None
@@ -5841,7 +5939,7 @@ def _nested_pair(construct, index, bars, ctx):
     """`(fast entry side, slow standing bias)`; either may be `None`."""
     bar, p = bars[index], ctx["periods"]
     if construct == "donchian":
-        quick, slow = p["session"], 20 * p["session"]
+        quick, slow = p["unit"], 20 * p["unit"]
         top, bottom = ctx["high"][quick][index], ctx["low"][quick][index]
         far_top, far_bottom = ctx["high"][slow][index], ctx["low"][slow][index]
         if (not present(top) or not present(bottom) or not present(far_top)
@@ -5870,7 +5968,7 @@ def _nested_pair(construct, index, bars, ctx):
             return None, None
         fast = -1 if value > 75.0 else 1 if value < 25.0 else None
         return fast, (1 if far > 50.0 else -1)
-    quick, slow = p["session"], 5 * p["session"]
+    quick, slow = p["unit"], 5 * p["unit"]
     atr = ctx["atr"][index]
     if index < slow or not atr or not present(atr):
         return None, None
@@ -6381,7 +6479,7 @@ def night_relative_signal(index, bars, ctx, params, _state):
     relative = ctx["relative"]
     if relative is None:
         return None
-    lookback = ctx["periods"]["session"]
+    lookback = ctx["periods"]["unit"]
     if index < lookback:
         return None
     line = relative["line"]
@@ -7138,7 +7236,7 @@ def hurst_signal(index, bars, ctx, params, _state):
     band = params["band"]
     if 0.5 - band < value < 0.5 + band:
         return None
-    lookback = ctx["periods"]["session"]
+    lookback = ctx["periods"]["unit"]
     if index < lookback:
         return None
     move = bars[index][C] - bars[index - lookback][C]
@@ -7179,7 +7277,7 @@ def entropy_signal(index, bars, ctx, params, _state):
     ordered = value <= params["threshold"]
     if ordered != (params["state"] == "ordered"):
         return None
-    lookback = ctx["periods"]["session"]
+    lookback = ctx["periods"]["unit"]
     if index < lookback:
         return None
     move = bars[index][C] - bars[index - lookback][C]
@@ -7282,7 +7380,7 @@ def runs_signal(index, bars, ctx, params, _state):
         return None
     if sticky != (params["state"] == "sticky"):
         return None
-    lookback = ctx["periods"]["session"]
+    lookback = ctx["periods"]["unit"]
     if index < lookback:
         return None
     move = bars[index][C] - bars[index - lookback][C]
@@ -7389,7 +7487,7 @@ def jump_signal(index, bars, ctx, params, _state):
     jumpy = value >= params["share"]
     if jumpy != (params["state"] == "jumpy"):
         return None
-    lookback = ctx["periods"]["session"]
+    lookback = ctx["periods"]["unit"]
     if index < lookback:
         return None
     move = bars[index][C] - bars[index - lookback][C]
@@ -7457,7 +7555,7 @@ def amihud_signal(index, bars, ctx, params, _state):
     illiquid = ratio >= params["ratio"]
     if illiquid != (params["state"] == "illiquid"):
         return None
-    lookback = ctx["periods"]["session"]
+    lookback = ctx["periods"]["unit"]
     if index < lookback:
         return None
     move = bars[index][C] - bars[index - lookback][C]
@@ -7500,7 +7598,7 @@ def estimator_signal(index, bars, ctx, params, _state):
     whipping = ratio >= params["ratio"]
     if whipping != (params["state"] == "whipping"):
         return None
-    lookback = ctx["periods"]["session"]
+    lookback = ctx["periods"]["unit"]
     if index < lookback:
         return None
     move = bars[index][C] - bars[index - lookback][C]
@@ -7946,7 +8044,7 @@ def vol_of_vol_signal(index, bars, ctx, params, _state):
     unsteady = value >= params["dispersion"]
     if unsteady != (params["state"] == "unsteady"):
         return None
-    lookback = ctx["periods"]["session"]
+    lookback = ctx["periods"]["unit"]
     if index < lookback:
         return None
     move = bars[index][C] - bars[index - lookback][C]
@@ -8085,26 +8183,34 @@ def momentum_stack_signal(index, bars, ctx, params, _state):
     close = bars[index][C]
     if close <= 0:
         return None
-    total = ctx["prefix_sum"]
-    square = ctx["prefix_square"]
     score = 0.0
-    for span in (ctx["periods"]["session"], 5 * ctx["periods"]["session"],
-                 20 * ctx["periods"]["session"]):
+    for span in (ctx["periods"]["unit"], 5 * ctx["periods"]["unit"],
+                 20 * ctx["periods"]["unit"]):
         if index < 2 * span:
             return None
         before = bars[index - span][C]
         if before <= 0:
             return None
         move = close - before
-        # The dispersion of CLOSES over twice the horizon, from the prefix sums
-        # -- the same O(1) trick `half_life` uses. A per-horizon standard
-        # deviation of returns would need its own context block for each span;
-        # the close dispersion over the same window is the scale the move has to
-        # be read against and is already tabulated.
+        # The dispersion of CLOSES over twice the horizon, TWO-PASS over the
+        # window itself. It used to come from the prefix sums (`prefix_sum`,
+        # `prefix_square`), and that is catastrophic cancellation: the squared
+        # sums reach ~1e9 on USDJPY, so a 2-bar variance near 4e-5 carried
+        # ~0.3% noise that depended on WHERE THE SERIES STARTED. A score of
+        # 2.995 then crossed 3.0 or not by accident, and a live engine, whose
+        # history starts elsewhere, disagreed with the backtest on exactly
+        # those bars (2026-10-12, porting `usdjpy:momentum_stack@30m-barlb-off`).
+        # The window is at most 40 closes, so the direct sums cost nothing.
         start = index + 1 - 2 * span
         count = 2 * span
-        mean = (total[index + 1] - total[start]) / count
-        variance = (square[index + 1] - square[start]) / count - mean * mean
+        total = 0.0
+        for bar in bars[start:index + 1]:
+            total += bar[C]
+        mean = total / count
+        variance = 0.0
+        for bar in bars[start:index + 1]:
+            variance += (bar[C] - mean) * (bar[C] - mean)
+        variance /= count
         if variance <= 1e-12:
             return None
         score += move / math.sqrt(variance)
@@ -8229,7 +8335,7 @@ def stat_view(name, index, bars, ctx):
     That is what makes summing them legal.
     """
     p = ctx["periods"]
-    span = p["session"]
+    span = p["unit"]
     if index < span:
         return None
     before = bars[index - span][C]
@@ -8885,14 +8991,14 @@ FAMILIES = {
         "direction": ("breakout", "fade"), "buffer_atr": (0.0, .25),
         "last_entry_minute": g["last"], **g["common"]}),
     "donchian": Family(donchian_signal, lambda p, g: {
-        "channel": (p["session"], 2 * p["session"], 4 * p["session"]),
+        "channel": (p["unit"], 2 * p["unit"], 4 * p["unit"]),
         "last_entry_minute": g["last"], **g["common"]}),
     "ma_cross": Family(ma_cross_signal, lambda p, g: {
         "fast": p["fast"], "slow": p["slow"],
         "last_entry_minute": g["last"], **g["common"]}),
     "momentum": Family(momentum_signal, lambda p, g: {
         "direction": ("breakout", "fade"), "signal_minute": g["signal"],
-        "lookback": (p["session"], 2 * p["session"]),
+        "lookback": (p["unit"], 2 * p["unit"]),
         "threshold_atr": (.5, 1.0), **g["common"]}),
     "gap": Family(gap_signal, lambda p, g: {
         "direction": ("fade", "follow"),
@@ -9021,7 +9127,7 @@ FAMILIES = {
         **g["common"]}),
     "key_reversal": Family(key_reversal_signal, lambda p, g: {
         "direction": ("fade", "follow"),
-        "channel": (p["session"], 4 * p["session"], 20 * p["session"]),
+        "channel": (p["unit"], 4 * p["unit"], 20 * p["unit"]),
         "last_entry_minute": g["last"], **g["common"]}),
     "climax": Family(climax_signal, lambda p, g: {
         "direction": ("fade", "follow"), "volume_period": p["volume"],
@@ -9046,7 +9152,7 @@ FAMILIES = {
     # ---- multi-day ----------------------------------------------------------
     "swing_donchian": Family(swing_donchian_signal, lambda p, g: {
         "direction": ("breakout", "fade"),
-        "channel": (10 * p["session"], 20 * p["session"], 55 * p["session"]),
+        "channel": (10 * p["unit"], 20 * p["unit"], 55 * p["unit"]),
         **g["swing"]}, hold="swing"),
     "swing_ma": Family(swing_ma_signal, lambda p, g: {
         "direction": ("breakout", "fade"), "fast": p["fast"], "slow": p["slow"],
@@ -9121,7 +9227,7 @@ FAMILIES = {
         "last_entry_minute": g["last"], **g["common"]}, reads=("aroon",)),
     "rsi_divergence": Family(rsi_divergence_signal, lambda p, g: {
         "direction": ("fade", "follow"), "period": p["rsi"],
-        "channel": (4 * p["session"], 20 * p["session"]), "gap": (5.0, 10.0),
+        "channel": (4 * p["unit"], 20 * p["unit"]), "gap": (5.0, 10.0),
         "last_entry_minute": g["last"], **g["common"]}),
 
     # ---- price geometry -----------------------------------------------------
@@ -9146,7 +9252,7 @@ FAMILIES = {
         "buffer_atr": (0.0, .25), "last_entry_minute": g["last"], **g["common"]}, reads=("floor_pivots",)),
     "pullback": Family(pullback_signal, lambda p, g: {
         "direction": ("breakout", "fade"),
-        "channel": (4 * p["session"], 20 * p["session"]), "depth": (.5, 1.0),
+        "channel": (4 * p["unit"], 20 * p["unit"]), "depth": (.5, 1.0),
         "reference": ("ema_20d", "ema_50d"),
         "last_entry_minute": g["last"], **g["common"]}),
     "volatility_breakout": Family(volatility_breakout_signal, lambda p, g: {
@@ -9166,7 +9272,7 @@ FAMILIES = {
         "last_entry_minute": g["last"], **g["common"]}, reads=("obv",)),
     "obv_divergence": Family(obv_divergence_signal, lambda p, g: {
         "direction": ("fade", "follow"),
-        "channel": (4 * p["session"], 20 * p["session"]),
+        "channel": (4 * p["unit"], 20 * p["unit"]),
         "last_entry_minute": g["last"], **g["common"]}, reads=("obv",)),
     "mfi": Family(mfi_signal, lambda p, g: {
         "direction": ("fade", "follow"), "period": p["mfi"],
@@ -9209,7 +9315,7 @@ FAMILIES = {
         scope="intraday", reads=gate_reads() + ("opening",)),
     "gated_donchian": Family(gated_donchian_signal, lambda p, g: {
         "gate": g["gates"], "polarity": ("confirm", "oppose"),
-        "channel": (4 * p["session"], 20 * p["session"]),
+        "channel": (4 * p["unit"], 20 * p["unit"]),
         "last_entry_minute": g["last"], **g["common"]}, reads=gate_reads()),
     "gated_fade": Family(gated_fade_signal, lambda p, g: {
         "trigger": g["fades"], "gate": g["gates"],
@@ -9499,7 +9605,7 @@ FAMILIES = {
         "last_entry_minute": g["last"], **g["common"]}, reads=("prefix",)),
     "adaptive_pullback": Family(adaptive_pullback_signal, lambda p, g: {
         "direction": ("breakout", "fade"),
-        "channel": (4 * p["session"], 20 * p["session"]), "depth": (.5, 1.0),
+        "channel": (4 * p["unit"], 20 * p["unit"]), "depth": (.5, 1.0),
         "reference": ("ema_20d", "ema_50d"), "period": p["hurst"],
         "response": (.5, 1.0), "last_entry_minute": g["last"],
         **g["common"]}, reads=("hurst",)),
@@ -11442,7 +11548,8 @@ def _dispatch(pool, jobs, workers, note=""):
 
 def label_bar(bar=None):
     bar = BAR_MINUTES if bar is None else bar
-    return "1d" if is_daily(bar) else f"{bar}m"
+    return ("1d" if is_daily(bar) else f"{bar}m") + (
+        "-barlb" if BAR_LOOKBACKS else "")
 
 
 def scope_tag(only):
@@ -11468,7 +11575,7 @@ def output_path(symbol, bar=None, only=None):
     days = entry_days_tag()
     window = window_of(INSTRUMENTS[symbol])
     return os.path.join(
-        RESULTS, f"{RESULT_PREFIX}_{symbol}_{label_bar(bar)}"
+        RESULTS_OUT, f"{RESULT_PREFIX}_{symbol}_{label_bar(bar)}"
                  f"{'_' + tag if tag else ''}"
                  f"{'_days-' + days if days else ''}"
                  f"{'_win-' + window if window != 'rth' else ''}.json")
@@ -11589,7 +11696,8 @@ def select(symbol, workers, spread_bp=None, bar=None, only=None):
             "slippage_bp": SLIPPAGE_BP,
             "total_cost_bp": cost_bp(symbol, spread_bp),
             "in_sample_years": list(is_years(symbol)),
-            "holdout": "2025-01-01 through 2026-08-16",
+            "holdout": f"{_is_end_date()} through "
+                       f"{datetime.fromtimestamp(OOS_END, tz=timezone.utc).date()}",
             "initial_balance": INITIAL_BALANCE,
             "sizing": "1.5% volatility-throttled stop risk, MT5 lots, "
                       "4x notional ceiling",
@@ -11671,6 +11779,48 @@ def validate(symbol, spread_bp=None, bar=None, only=None):
         handle.write("\n")
 
 
+COINFLIP_SEEDS = int(os.environ.get("CFD_COINFLIP_SEEDS", "100"))
+
+
+def coinflip(symbol, spread_bp=None, bar=None, only=None):
+    """Coin flip on each OOS winner: its exact sealed params, entries and exits
+    unchanged, every direction replaced by `random_side`, over the same OOS
+    window. An OOS winner is a validated family with OOS return > 0. Writes
+    `p_value` = share of flips whose OOS return >= the real one."""
+    bar = BAR_MINUTES if bar is None else bar
+    path = output_path(symbol, bar, only)
+    with open(path, encoding="utf-8") as handle:
+        payload = json.load(handle)
+    validation = payload.get("validation")
+    if validation is None:
+        raise SystemExit(f"{path}: run `validate` first")
+    winners = {f: v for f, v in validation.items()
+               if v["oos"]["return_pct"] > 0}
+    if not winners:
+        print(f"{symbol} {label_bar(bar)}: no OOS winner, no coin flip")
+        return
+    install_fills(symbol, bar)
+    bars, ctx = context(symbol, "validate", bar, only)
+    out = {}
+    for family, row in winners.items():
+        params = rehydrate(payload["families"][family]["params"])
+        real = row["oos"]["return_pct"]
+        flips = [backtest(family, bars, ctx, params, lo=IS_END, hi=OOS_END,
+                          spread_bp=spread_bp, null_seed=seed)["return_pct"]
+                 for seed in range(1, COINFLIP_SEEDS + 1)]
+        p = sum(1 for r in flips if r >= real) / len(flips)
+        out[family] = {"real_oos_return_pct": real, "seeds": COINFLIP_SEEDS,
+                       "flip_median_pct": statistics.median(flips),
+                       "flip_returns_pct": flips, "p_value": p}
+        print(f"{symbol} {label_bar(bar)} {family:<16} OOS {real:+.1f}% "
+              f"flip median {statistics.median(flips):+.1f}% p={p:.2f}")
+    destination = path[:-len(".json")] + "_coinflip.json"
+    with open(destination, "w", encoding="utf-8") as handle:
+        json.dump({"symbol": symbol, "bar_minutes": bar, "coinflip": out},
+                  handle, indent=2, sort_keys=True, default=_json_default)
+        handle.write("\n")
+
+
 def why(symbol, workers, spread_bp=None, requested=None, bar=None):
     """Re-select with every signal direction replaced by a coin flip.
 
@@ -11737,8 +11887,10 @@ def why(symbol, workers, spread_bp=None, requested=None, bar=None):
                       f"{outside['return_pct']:+.1f}%")
     tag = scope_tag(requested)
     destination = os.path.join(
-        RESULTS, f"{RESULT_PREFIX}_null_{symbol}_{label_bar(bar)}"
-                 f"{'_' + tag if tag else ''}.json")
+        RESULTS_OUT, f"{RESULT_PREFIX}_null_{symbol}_{label_bar(bar)}"
+                 f"{'_' + tag if tag else ''}"
+                 f"{'_days-' + entry_days_tag() if entry_days_tag() else ''}"
+                 f"{'_win-' + window_of(INSTRUMENTS[symbol]) if window_of(INSTRUMENTS[symbol]) != 'rth' else ''}.json")
     with open(destination, "w", encoding="utf-8") as handle:
         json.dump({"symbol": symbol, "bar_minutes": bar, "spread_bp": spread_bp,
                    "select_rank": rank, "null_control": rows}, handle,
@@ -11953,7 +12105,8 @@ def main():
                                             "ticks",
                                             "watch", "coverage", "profile",
                                             "families", "budget", "cost",
-                                            "select", "validate", "why"))
+                                            "select", "validate", "coinflip",
+                                            "why"))
     parser.add_argument("--symbols", default="all",
                         help="comma-separated names, an asset class "
                              "(commodity/index/crypto/stock/forex/future), "
@@ -12114,6 +12267,8 @@ def _run_window(args, window, symbols, bars, only, failures):
                     select(symbol, args.workers, args.spread_bp, bar, only)
                 elif args.command == "validate":
                     validate(symbol, args.spread_bp, bar, only)
+                elif args.command == "coinflip":
+                    coinflip(symbol, args.spread_bp, bar, only)
                 else:
                     why(symbol, args.workers, args.spread_bp, only, bar)
             except KeyboardInterrupt:

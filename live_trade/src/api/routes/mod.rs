@@ -2,8 +2,8 @@ use crate::live;
 use actix_web::{HttpResponse, http::Method, web};
 use serde_json::json;
 
+mod accounts;
 mod backtests;
-mod environments;
 mod march;
 mod market;
 mod settings;
@@ -15,7 +15,7 @@ pub fn configure(config: &mut web::ServiceConfig) {
             web::get().to(|| async { HttpResponse::Ok().json(json!({"status":"ok"})) }),
         )
         .configure(settings::configure)
-        .configure(environments::configure)
+        .configure(accounts::configure)
         .configure(market::configure)
         .configure(backtests::configure)
         .configure(march::configure)

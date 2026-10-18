@@ -108,23 +108,55 @@ WORKSPACE = HERE.parent
 #: MetaTrader, and a stale spec would then stop the feed. `canon_markets` checks
 #: the MEMBERSHIP against the registry instead, which needs neither.
 DUKASCOPY = {
-    "audusd": (_ins.INSTRUMENT_FX_MAJORS_AUD_USD, "audusd_1m", (60, 840)),
-    "eurjpy": (_ins.INSTRUMENT_FX_CROSSES_EUR_JPY, "eurjpy_1m", (60, 870)),
-    "gbpjpy": (_ins.INSTRUMENT_FX_CROSSES_GBP_JPY, "gbpjpy_1m", (0, 810)),
-    "usdjpy": (_ins.INSTRUMENT_FX_MAJORS_USD_JPY, "usdjpy_1m", (0, 780)),
+    # THE BROKER DAY since 2026-10-14: the FundedNext book trades
+    # `audusd:jump@60m-barlb-off` outside the cash session.
+    "audusd": (_ins.INSTRUMENT_FX_MAJORS_AUD_USD, "audusd_1m", (1020, 1019)),
+    "eurjpy": (_ins.INSTRUMENT_FX_CROSSES_EUR_JPY, "eurjpy_1m", (1020, 1019)),
+    "gbpjpy": (_ins.INSTRUMENT_FX_CROSSES_GBP_JPY, "gbpjpy_1m", (1020, 1019)),
+    # THE BROKER DAY since 2026-10-12: `usdjpy:momentum_stack@30m-barlb-off` and
+    # `usdjpy:sar@30m-barlb-off` trade OUTSIDE the cash session, 18:00-16:59 New
+    # York. A wrapping window is exactly the FX week: the evening leg Sunday to
+    # Thursday, the morning leg Monday to Friday.
+    "usdjpy": (_ins.INSTRUMENT_FX_MAJORS_USD_JPY, "usdjpy_1m", (1020, 1019)),
+    # SEATED 2026-10-12 with `gbpusd:qp_rsi2_pullback@30m-off`, a broker-day cell.
+    "gbpusd": (_ins.INSTRUMENT_FX_MAJORS_GBP_USD, "gbpusd_1m", (1020, 1019)),
     # "jp225" LEFT 2026-09-23 with every jp225 sleeve. Its wrapping-session
     # handling in `is_open` stays, in case it is re-seated.
     "ukoil": (_ins.INSTRUMENT_CMD_ENERGY_E_BRENT, "ukoil_1m", (540, 870)),
     # SEATED 2026-09-28 with the TikTok sleeves: Dukascopy's Nasdaq 100 and
     # S&P 500 CFDs, the series `ustec_1m` and `us500_1m` were imported from.
     # US cash hours, New York, no wrap.
-    "ustec": (_ins.INSTRUMENT_IDX_AMERICA_E_NQ_100, "ustec_1m", (570, 960)),
-    "us500": (_ins.INSTRUMENT_IDX_AMERICA_E_SANDP_500, "us500_1m", (570, 960)),
+    # The broker day since 2026-10-14 for the FundedNext book's off-hours USTEC
+    # cells (qtt_triple_ema, cf_prevday_continuation, dt_rsi_dip_vol, tr_supertrend).
+    "ustec": (_ins.INSTRUMENT_IDX_AMERICA_E_NQ_100, "ustec_1m", (1020, 1019)),
+    # SEATED 2026-09-30 with the 23-sleeve book. Each instrument was checked
+    # against its stored table on 2026-10-03 and matched to the digit (OHLC of
+    # 2026-09-30 10:00-10:02 New York).
+    "uk100": (_ins.INSTRUMENT_IDX_EUROPE_E_FUTSEE_100, "uk100_1m", (1020, 1019)),
+    # The broker day since 2026-10-14: FundedNext `usoil:roofing@60m-barlb-off`.
+    "usoil": (_ins.INSTRUMENT_CMD_ENERGY_E_LIGHT, "usoil_1m", (1020, 1019)),
+    # SEATED 2026-10-14 with the FundedNext book. Each checked against its stored
+    # table that day and matched to the digit (5 minutes of OHLC).
+    "de40": (_ins.INSTRUMENT_IDX_EUROPE_E_DAAX, "de40_1m", (1020, 1019)),
+    "eurusd": (_ins.INSTRUMENT_FX_MAJORS_EUR_USD, "eurusd_1m", (1020, 1019)),
+    "us500": (_ins.INSTRUMENT_IDX_AMERICA_E_SANDP_500, "us500_1m", (1020, 1019)),
+    # SEATED 2026-10-14 after `fr40_1m` / `hk50_1m` were re-imported from these
+    # exact instruments (checked to the digit that day). The Hang Seng session
+    # is 21:00-04:00 New York, which wraps.
+    # SEATED 2026-10-18 with the 80-sleeve FundedNext book (seal 9e0e0b402357),
+    # whose cells run in New York clock windows across the broker day.
+    "audjpy": (_ins.INSTRUMENT_FX_CROSSES_AUD_JPY, "audjpy_1m", (1020, 1019)),
+    "usdcad": (_ins.INSTRUMENT_FX_MAJORS_USD_CAD, "usdcad_1m", (1020, 1019)),
+    "fr40": ("FRA.IDX/EUR", "fr40_1m", (1020, 1019)),
+    "hk50": ("HKG.IDX/HKD", "hk50_1m", (1020, 1019)),
 }
 
-#: ETHUSD is the whole crypto leg now.
+#: ETHUSD and BTC are the crypto leg.
 #:
-#: BTCUSDT WAS FED HERE AND IS NOT ANY MORE. It was required while
+#: BTCUSDT IS FED AGAIN since 2026-09-30, as a traded market (`btc:jump`) rather
+#: than a benchmark. The history below is why it once was not.
+#:
+#: BTCUSDT WAS FED HERE AND THEN WAS NOT. It was required while
 #: `ethusd:idio_break` was in the book -- that cell asked whether ETHUSD broke
 #: its own channel while BTC stayed inside its own, so BTC had to be fetched and
 #: carried onto ETHUSD's bars as `Bar::benchmark`. The decay screen removed the
@@ -133,21 +165,23 @@ DUKASCOPY = {
 #: registry reports every market that must be fed INCLUDING a benchmark, so
 #: re-seating a benchmarked sleeve fails the preflight here rather than running
 #: a cell that silently never fires.
-BINANCE = {"ethusd": ("ETHUSDT", "ethusd_1m")}
+BINANCE = {"ethusd": ("ETHUSDT", "ethusd_1m"),
+           # `btc:jump` joined the book 2026-09-30; `btc_1m` is Binance BTCUSDT.
+           "btc": ("BTCUSDT", "btc_1m")}
 
 #: Markets the canon has held that this script deliberately does not feed, so a
 #: reader looking for one finds the reason rather than an omission.
+#: FundedNext-only markets: no vendor table, signalled off FundedNext's own
+#: minutes, which `tools/fundednext_stream_1m.py` streams. Not this script's.
+BROKER_FED = {"xauusd", "us2000", "us30", "cadjpy", "nzdusd", "euraud", "usdchf",
+              "chfjpy", "gbpaud"}
+
 NOT_FED = {
     "nq": "barred as a symbol 2026-09-03; its level-two feed and nq_1m came "
           "over Bookmap and its own importers, never this script",
     "xalusd": "xalusd:gated_fade left the book 2026-08-29; it was the one "
               "broker-sourced signal, because Dukascopy carries no aluminium "
               "(COPPER, XPD, XPT) and Binance is a crypto exchange",
-    "hk50": "dropped 2026-09-07 on data quality -- 6% of weekdays carried no "
-            "30-minute bar at all",
-    "gbpusd": "gbpusd:obv_break dropped 2026-09-03 by the decay screen",
-    "uk100": "uk100:gated_fade dropped 2026-09-03 by the decay screen",
-    "btc": "fed only while ethusd:idio_break needed it as a benchmark",
 }
 
 #: THE LOOP CHASES THE BAR; IT DOES NOT SAMPLE ON A TIMER.
@@ -407,6 +441,20 @@ def canon_markets():
     markets = payload.get("markets")
     if not isinstance(markets, list) or not markets:
         return None
+    # THE FUNDEDNEXT BOOK TOO, since 2026-10-14: its own registry, less the
+    # markets `NOT_FED` holds back (their sleeves are inactive on the account).
+    for name in ("fundednext_live_book.exe", "fundednext_live_book"):
+        other = WORKSPACE / "live_trade" / "target" / "release" / name
+        if other.is_file():
+            try:
+                done = subprocess.run([str(other)], capture_output=True, text=True,
+                                      timeout=60, cwd=str(WORKSPACE))
+                extra = json.loads(done.stdout).get("markets") or []
+            except (OSError, ValueError, subprocess.SubprocessError):
+                return None
+            markets = list(markets) + [m for m in extra
+                                       if m not in NOT_FED and m not in BROKER_FED]
+            break
     return payload.get("book_id", "?"), set(markets)
 
 
@@ -587,8 +635,90 @@ def _install_keepalive():
 _SESSION = _install_keepalive()
 
 
-def fetch(instrument, start, stop):
-    return _dk.fetch(instrument, _dk.INTERVAL_MIN_1, _dk.OFFER_SIDE_BID, start, stop)
+class VendorRefused(Exception):
+    """Dukascopy ANSWERED, but with something that is not a list of bars."""
+
+
+#: THE 2026-10-02 OUTAGES. Through Friday Dukascopy answered every request for
+#: minutes at a time (13:04-13:09, 13:34-13:39, 15:05-15:10, 15:49-15:52,
+#: 16:20-16:25 UTC ...) with a JSON payload that is not a list of rows. The
+#: library iterates whatever `json.loads` hands it, so a JSON object's keys
+#: became "rows" and `row[0] > end_timestamp` compared a character with a float:
+#: `TypeError: '>' not supported between instances of 'str' and 'float'`. It
+#: then retried that SEVEN times a second apart inside one `fetch`, so every
+#: tail spent ~10s failing; no fetch "came back", the stall watchdog restarted a
+#: healthy daemon (exit 4) over and over, and the health file told the server
+#: the feed was dead -- so it kept its 180-second fuse and flattened the book.
+#:
+#: Checked here, one request at a time, so a refusal is named and its payload
+#: logged instead of surfacing as a type error three frames deep.
+_raw_fetch = _dk._fetch
+
+
+def _checked_fetch(*args, **kwargs):
+    payload = _raw_fetch(*args, **kwargs)
+    if isinstance(payload, list) and all(
+            isinstance(row, list) and row and isinstance(row[0], (int, float))
+            for row in payload):
+        return payload
+    raise VendorRefused(repr(payload)[:300])
+
+
+_dk._fetch = _checked_fetch
+
+#: Retries INSIDE one `fetch` for the minute loop: one, a second apart. The
+#: chase already re-asks every couple of seconds, so the library's own seven
+#: only turned a refusal into a ten-second stall per symbol. The catch-up keeps
+#: the library default, because it runs once and has nothing to re-ask it.
+TAIL_RETRIES = 0
+CATCHUP_RETRIES = 7
+
+
+def fetch(instrument, start, stop, retries=CATCHUP_RETRIES):
+    # `max_retries=0` is still two attempts: `_stream` raises once
+    # `attempts - 1 > max_retries`.
+    return _dk.fetch(instrument, _dk.INTERVAL_MIN_1, _dk.OFFER_SIDE_BID, start, stop,
+                     max_retries=retries)
+
+
+#: The current run of refusals: `(first monotonic, count, last monotonic)`, or
+#: `None` while the vendor serves bars. Logged once when it starts, with the
+#: payload, and once when it ends -- not once per symbol per attempt.
+_refusals = None
+_refusal_lock = Lock()
+
+#: How recently a refusal must have come for the chase to stop fanning out.
+REFUSAL_BACKOFF_SECONDS = 30.0
+
+
+def note_refusal(symbol, refusal):
+    global _refusals
+    now = time.monotonic()
+    with _refusal_lock:
+        if _refusals is None:
+            _refusals = (now, 1, now)
+            log(f"dukascopy REFUSED {symbol} -- payload {refusal}; treating it as "
+                "a quiet vendor (no restart), probing one symbol until it serves")
+        else:
+            first, count, _ = _refusals
+            _refusals = (first, count + 1, now)
+
+
+def note_served():
+    global _refusals
+    with _refusal_lock:
+        if _refusals is None:
+            return
+        first, count, last = _refusals
+        _refusals = None
+    log(f"dukascopy serving again after {count} refused fetch(es) over "
+        f"{last - first:.0f}s")
+
+
+def vendor_refusing():
+    with _refusal_lock:
+        return (_refusals is not None
+                and time.monotonic() - _refusals[2] < REFUSAL_BACKOFF_SECONDS)
 
 
 def is_open(symbol, now=None):
@@ -610,6 +740,19 @@ def is_open(symbol, now=None):
     minute = now.hour * 60 + now.minute
     lower = opened - SESSION_MARGIN_MINUTES
     upper = closed + SESSION_MARGIN_MINUTES
+    if opened > closed and lower <= upper:
+        # A WRAPPING SESSION WHOSE DAILY GAP THE MARGIN SWALLOWS -- the FX broker
+        # day, 18:00-16:59, shut 61 minutes. Taken literally the widened window
+        # is empty and the market read as shut all week. It is open around the
+        # clock from Sunday's evening open to Friday's close.
+        day = now.weekday()
+        if day == 5:
+            return False
+        if day == 6:
+            return minute >= lower
+        if day == 4:
+            return minute <= upper
+        return True
     if lower <= upper:
         return now.weekday() < 5 and lower <= minute <= upper
     if minute >= lower:
@@ -663,11 +806,22 @@ def tail(symbol):
     """Fetch the newest minutes for `symbol` and store whatever is new."""
     instrument, table, _ = DUKASCOPY[symbol]
     now = datetime.now(tz=UTC)
-    frame = fetch(instrument, now - timedelta(minutes=TAIL_MINUTES), now)
+    try:
+        frame = fetch(instrument, now - timedelta(minutes=TAIL_MINUTES), now,
+                      retries=TAIL_RETRIES)
+    except VendorRefused as refusal:
+        # THE VENDOR ANSWERED, so the loop is alive: this is a quiet vendor,
+        # not a wedge. Restarting would not help (it never did on 2026-10-02)
+        # and the health file must keep telling the server so, or it flattens
+        # the book on its short fuse.
+        note_fetch()
+        note_refusal(symbol, refusal)
+        return 0
     # AFTER the fetch, BEFORE the write, and unconditional on the row count.
     # This is the daemon's liveness signal, and what it has to prove is that
     # the loop came back -- not that the vendor had anything to say.
     note_fetch()
+    note_served()
     return write_rows(table, frame, table_max_seconds(table))
 
 
@@ -751,7 +905,10 @@ def chase(stop, probe, due):
         if attempts and past > CHASE_DEADLINE_SECONDS:
             return total, None, attempts
         attempts += 1
-        if attempts <= CHASE_FAST_ATTEMPTS:
+        # NO FAN-OUT WHILE THE VENDOR IS REFUSING. If the refusals are a rate
+        # limit, ten symbols four times a second is the worst thing to send; one
+        # probe every `CHASE_INTERVAL_SECONDS` finds out when it lifts.
+        if attempts <= CHASE_FAST_ATTEMPTS and not vendor_refusing():
             # Fan out while the bar is due. The first of these is the one that
             # pays the handshake and is expected to come back empty; the rest
             # ride its connection and cost a fifth as much.
@@ -948,6 +1105,9 @@ def publish_health():
         # market makes it large for entirely healthy reasons.
         "row_age": round(max(0.0, monotonic - _last_row_at), 1),
         "in_session": sorted(s for s in DUKASCOPY if is_open(s)),
+        # True while Dukascopy answers with something that is not bars; the
+        # fetches still count in `fetch_age`. For an operator reading the file.
+        "vendor_refusing": vendor_refusing(),
     }
     try:
         HEALTH_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -961,6 +1121,74 @@ def publish_health():
 def note_rows():
     global _last_row_at
     _last_row_at = time.monotonic()
+
+
+#: When the broker's own minute tables are refreshed: once a day, after every
+#: session in the book has closed (the latest, ETHUSD/BTC/USTEC, close 16:00).
+BROKER_REFRESH_AFTER_MINUTE = 17 * 60 + 15
+
+#: The MT5 importer's key where it differs from the market: US500's table is
+#: filed under the importer's `es` key.
+BROKER_IMPORTER_KEY = {"us500": "es"}
+
+
+def refresh_broker_minutes(stop):
+    """Keep `exness_<broker>_1m` current, once a day, on its own thread.
+
+    THE BACKTEST PRICES EVERY FILL FROM THESE TABLES, and nothing kept them
+    current: on 2026-10-03 they ended between 2026-08-21 and 2026-09-25, so a
+    backtest of any recent day silently fell back to the idealised vendor fill
+    and differed from the live account for that reason alone. One import of
+    yesterday and today after the last session closes is enough for "backtest
+    the day I traded" to price it the way the account was filled.
+
+    Read-only against MT5, through the importer's own terminal lock, so it
+    shares the terminal with the bridge. A failure is logged and retried the
+    next day; it never touches the vendor feed.
+    """
+    done_day = None
+    while not stop.wait(300.0):
+        now = datetime.now(tz=NEW_YORK)
+        if now.hour * 60 + now.minute < BROKER_REFRESH_AFTER_MINUTE or done_day == now.date():
+            continue
+        done_day = now.date()
+        first = (now.date() - timedelta(days=1)).isoformat()
+        # ONE IMPORT PER BROKER, each for its own book's markets: the backtest
+        # of an Exness day prices fills off `exness_*`, a FundedNext day off
+        # `fundednext_*` (the FundedNext terminal, NY+7 server clock handled by
+        # the importer). A market only one book trades is imported for it only.
+        for broker, binary in (("exness", "exness_live_book"),
+                               ("fundednext", "fundednext_live_book")):
+            markets = registry_markets(binary)
+            if not markets:
+                log(f"broker minute refresh SKIPPED for {broker}: no {binary} build")
+                continue
+            keys = sorted({BROKER_IMPORTER_KEY.get(m, m) for m in markets})
+            log(f"refreshing {broker} minute tables ({', '.join(keys)}) for {first} .. {now.date()}")
+            try:
+                done = subprocess.run(
+                    [python_exe(), str(HERE / "exness_import_1m.py"), "--broker", broker,
+                     "--symbols", *keys, "--from-date", first, "--to-date", now.date().isoformat()],
+                    cwd=str(WORKSPACE), capture_output=True, text=True, timeout=1800)
+                tail = ((done.stdout or "") + (done.stderr or "")).strip().splitlines()[-1:]
+                log(f"{broker} minute refresh {'done' if done.returncode == 0 else 'FAILED'}"
+                    + (f": {tail[0]}" if tail and done.returncode != 0 else ""))
+            except (OSError, subprocess.SubprocessError) as error:
+                log(f"{broker} minute refresh FAILED: {type(error).__name__}: {error}")
+
+
+def registry_markets(binary):
+    """The markets a built registry binary reports, or `None`."""
+    for name in (f"{binary}.exe", binary):
+        path = WORKSPACE / "live_trade" / "target" / "release" / name
+        if path.is_file():
+            try:
+                done = subprocess.run([str(path)], capture_output=True, text=True,
+                                      timeout=60, cwd=str(WORKSPACE))
+                return set(json.loads(done.stdout).get("markets") or [])
+            except (OSError, ValueError, subprocess.SubprocessError):
+                return None
+    return None
 
 
 def stall_watchdog(stop, feeds):
@@ -1075,6 +1303,7 @@ def main():
 
     # Armed before the catch-up, which is itself a place this can wedge.
     Thread(target=stall_watchdog, args=(stop, feeds), daemon=True).start()
+    Thread(target=refresh_broker_minutes, args=(stop,), daemon=True).start()
 
     # CATCH UP the Dukascopy tables. This process has just been off for an
     # unknown length of time and the tail window is ten minutes, so a longer gap
