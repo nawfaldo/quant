@@ -375,8 +375,10 @@ def daily_series(state, risk, fixed=False):
 
 
 def _phase(days, rng, target):
-    """One phase on resampled blocks. Returns (outcome, trading days used)."""
-    equity, used, traded = ACCOUNT, 0, 0
+    """One phase on resampled blocks. Returns (outcome, trading days used, the
+    phase's worst day below its daily-loss reference, its deepest point below
+    $6,000), dollars."""
+    equity, used, traded, worst_day, deepest = ACCOUNT, 0, 0, 0.0, 0.0
     goal, floor = ACCOUNT + target, ACCOUNT - MAX_LOSS
     n = len(days)
     while used < MC_MAX_DAYS:
@@ -384,43 +386,71 @@ def _phase(days, rng, target):
         for ret, dip, did, gap in days[start:start + MC_BLOCK_DAYS]:
             used += 1
             low = equity * (1 + dip)
+            ref = equity * (1 + gap)
+            worst_day, deepest = max(worst_day, ref - low), max(deepest, ACCOUNT - low)
             if low <= floor:
-                return "max", used
-            if low <= equity * (1 + gap) - DAILY_LOSS:
-                return "daily", used
+                return "max", used, worst_day, deepest
+            if low <= ref - DAILY_LOSS:
+                return "daily", used, worst_day, deepest
             equity *= 1 + ret
             traded += did
             if equity <= floor:
-                return "max", used
+                return "max", used, worst_day, deepest
             if equity >= goal and traded >= MIN_DAYS:
-                return "pass", used
-    return "stuck", used
+                return "pass", used, worst_day, deepest
+    return "stuck", used, worst_day, deepest
+
+
+def mc_paths(days, paths, seed):
+    """`paths` challenges (both phases) on resampled day blocks:
+    [(outcome, trading days used, worst day $, deepest $)] per path."""
+    import random
+    rng = random.Random(seed)
+    out = []
+    for _ in range(paths):
+        total, worst_day, deepest = 0, 0.0, 0.0
+        for target in PHASE_TARGETS:
+            outcome, used, day, deep = _phase(days, rng, target)
+            total, worst_day, deepest = total + used, max(worst_day, day), max(deepest, deep)
+            if outcome != "pass":
+                break
+        out.append((outcome, total, worst_day, deepest))
+    return out
+
+
+#: Trading-day horizons for "passed within N days".
+MC_WITHIN = (20, 40, 60)
+
+
+def mc_stats(rows):
+    """The Monte Carlo summary of `mc_paths` rows. Drawdowns are over PASSING
+    paths only (a failed path sits at its limit by definition; its rate is the
+    daily / max columns), p50 / p95. `expected_days`: trading days until a pass
+    when every failed attempt is restarted at once -- mean days per attempt over
+    the pass rate."""
+    def pct(values, q):
+        values = sorted(values)
+        return values[min(len(values) - 1, int(q * len(values)))] if values else None
+
+    n = len(rows)
+    won = [r for r in rows if r[0] == "pass"]
+    p = len(won) / n
+    days = [r[1] for r in won]
+    return {**{k: round(100 * sum(r[0] == k for r in rows) / n, 1)
+               for k in ("pass", "daily", "max", "stuck")},
+            "paths": n,
+            # binomial standard error of the pass rate, in percentage points
+            "pass_se": round(100 * (p * (1 - p) / n) ** 0.5, 2),
+            "median_trading_days": pct(days, 0.5), "p90_trading_days": pct(days, 0.9),
+            "within": {d: round(100 * sum(x <= d for x in days) / n, 1) for d in MC_WITHIN},
+            "expected_days": round(sum(r[1] for r in rows) / n / p, 1) if p else None,
+            **{f"{name}_{q}": (round(pct([r[i] for r in won], q / 100)) if won else None)
+               for name, i in (("worst_day", 2), ("deepest", 3)) for q in (50, 95)}}
 
 
 def _mc_cell(job):
     days, risk, paths, seed = job
-    import random
-    rng = random.Random(seed)
-    tally = {"pass": 0, "daily": 0, "max": 0, "stuck": 0}
-    lengths = []
-    for _ in range(paths):
-        total = 0
-        for target in PHASE_TARGETS:
-            outcome, used = _phase(days, rng, target)
-            total += used
-            if outcome != "pass":
-                tally[outcome] += 1
-                break
-        else:
-            tally["pass"] += 1
-            lengths.append(total)
-    lengths.sort()
-    p = tally["pass"] / paths
-    return {"risk": risk, "paths": paths,
-            **{k: round(100 * v / paths, 1) for k, v in tally.items()},
-            # binomial standard error of the pass rate, in percentage points
-            "pass_se": round(100 * (p * (1 - p) / paths) ** 0.5, 2),
-            "median_trading_days": lengths[len(lengths) // 2] if lengths else None}
+    return {"risk": risk, **mc_stats(mc_paths(days, paths, seed))}
 
 
 #: `fundednext_report`'s windows, for the oct-13 live book.

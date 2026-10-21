@@ -1,0 +1,1 @@
+CreateObject("WScript.Shell").Run "cmd /c start """" /low /affinity FFFF /b ""C:\Program Files\Git\bin\bash.exe"" -c ""HOST_TAG=pc WORKERS=8 RESERVE=4 bash /c/Users/JawirGaming66/quant/sandbox/results/logs/ncf/run2.sh /c/Users/JawirGaming66/quant/sandbox/results/logs/ncf/q_redo.txt >> /c/Users/JawirGaming66/quant/sandbox/results/logs/ncf/pc_extra2.out 2>&1""", 0, False

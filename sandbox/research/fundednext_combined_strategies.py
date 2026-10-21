@@ -50,9 +50,12 @@ FundedNext SPX500 / NDX100 (`EXCLUDE_SYMBOLS`; the export drops them too).
               risk, then the most members. The 2026 test runs the real,
               unstressed trades.
          -> sealed to `SEAL_PATH`, then `test`, then `final`.
-  test   the sealed book on 2026: the Monte Carlo and a challenge from every
-         real 2026 start day, at the sealed dial only. Appended to `TEST_LOG`;
-         a test of a different seal than the first is printed NOT CLEAN.
+  test   the sealed book, at the sealed dial only, by challenge Monte Carlo
+         (the default report, `_mc_table`): stressed and plain, on 2024-2025
+         where it was chosen and on 2026 -- pass, fails, median / p90 days,
+         passed within 20/40/60 days, expected days with retries, and worst
+         day / deepest on passing paths. Appended to `TEST_LOG`; a test of a
+         different seal than the first is printed NOT CLEAN.
   final  the sealed rule, unchanged, on 2024-2026 -> `FINAL_PATH`, the book to
          trade. Refused without a test of the seal. Its own pass rate is
          in-sample; the number to expect is the 2026 test's (less, if that test
@@ -314,6 +317,26 @@ def _group_path(symbol, bar, protocol=None):
     return os.path.join(GROUP_DIR, f"{alias}_{bar}m_{tag}.pkl")
 
 
+def _cells_path(path):
+    """The pool file names a group file was generated from, one per line."""
+    return path[:-len(".pkl")] + ".cells"
+
+
+def _write_cells(path, names):
+    with open(_cells_path(path), "w", encoding="utf-8") as handle:
+        handle.write("\n".join(sorted(names)))
+
+
+def _is_current(path, names):
+    """A group file is reused only if it was generated from exactly these cells
+    (a pool edit that keeps a group's name must not keep its old logs)."""
+    try:
+        with open(_cells_path(path), encoding="utf-8") as handle:
+            return os.path.exists(path) and handle.read() == "\n".join(sorted(names))
+    except OSError:
+        return False
+
+
 def _log_group(job):
     """One (symbol, bar) group's logs -> its own file."""
     (symbol, bar), items = job
@@ -362,6 +385,7 @@ def _log_group(job):
                      "ctx": {alias: {"cfg": ctx["cfg"], "symbol": symbol}}},
                     handle, protocol=5)
     os.replace(path + ".tmp", path)
+    _write_cells(path, [name for name, _ in items])
 
 
 def _lead_has():
@@ -391,7 +415,7 @@ def pool_logs(workers, lo, hi, fresh=False):
         key = (_protocol(name, cell), cell["symbol"], cell["bar_minutes"])
         groups.setdefault(key, []).append(name)
     keys = sorted(groups, key=lambda k: (k[2], -len(groups[k]), k))
-    todo = [k for k in keys if not os.path.exists(_group_path(k[1], k[2], k[0]))]
+    todo = [k for k in keys if not _is_current(_group_path(k[1], k[2], k[0]), groups[k])]
     if twohost.IS_MAC and twohost.enabled():
         have = _lead_has()
         todo = [k for k in todo[::-1]
@@ -437,12 +461,15 @@ def pool_logs(workers, lo, hi, fresh=False):
         if twohost.IS_MAC:
             print("twohost: Mac side finished; the PC collects and writes the summary")
             return
-        for got in twohost.collect(unit(k) for k in todo).values():
+        results = twohost.collect(unit(k) for k in todo)
+        for k in todo:
+            got = results[unit(k)]
             if "data" in got:  # a group the Mac worked: install it here
                 path = os.path.join(GROUP_DIR, got["group"])
                 with open(path + ".tmp", "wb") as handle:
                     handle.write(got["data"])
                 os.replace(path + ".tmp", path)
+                _write_cells(path, groups[k])
     summary, missing = {}, []
     for k in keys:
         path = _group_path(k[1], k[2], k[0])
@@ -613,15 +640,23 @@ def _dud(log):
 
 
 def _mc_job(job):
-    """One (size, dial) STRESSED challenge Monte Carlo: `DRAWS` draws, each with
-    every sleeve a dud at `DUD_SHARE`, `paths` split across them."""
+    """One (size, dial) STRESSED challenge Monte Carlo of the best-first `n`."""
+    n, risk, paths, _ = job
+    state = _prefix(_STATE, n, risk)
+    rows, days, duds = stressed_paths(state, risk, paths)
+    from sandbox.research import fundednext_challenge as ch
+    return {"risk": risk, "members": n, "days": days, **ch.mc_stats(rows),
+            "dud_share_drawn": round(duds / (DRAWS * max(1, n)), 2)}
+
+
+def stressed_paths(state, risk, paths):
+    """The STRESSED challenge Monte Carlo's paths: `DRAWS` draws, each with
+    every sleeve on a dud symbol (`DUD_SHARE` of draws) losing its edge, `paths`
+    split across them. Returns (`mc_paths` rows, server days, duds drawn)."""
     import random
-    import statistics
     from sandbox.research import exness_combined_montecarlo as mc
     from sandbox.research import fundednext_challenge as ch
-    n, risk, paths, _ = job
     mc._MARKING.clear()   # the marking cache holds for one set of bars only
-    state = _prefix(_STATE, n, risk)
     per = max(1, paths // DRAWS)
     # The dud is a SYMBOL: a fake edge is usually the market's regime, and it
     # takes every sleeve on that market with it (a sleeve-level dud let 15 gold
@@ -633,22 +668,26 @@ def _mc_job(job):
     symbols = {k.split(":", 1)[0] for k in state["logs"]}
     dud_in = {s: set(random.Random(s).sample(range(DRAWS), round(DUD_SHARE * DRAWS)))
               for s in symbols}
-    draws, duds = [], 0
+    rows, duds = [], 0
     for d in range(DRAWS):
         out = {k for k in state["logs"] if d in dud_in[k.split(":", 1)[0]]}
         duds += len(out)
         logs = {k: (_dud(v) if k in out else v) for k, v in state["logs"].items()}
         days = ch.daily_series({**state, "logs": logs}, risk, fixed=True)
-        draws.append(ch._mc_cell((days, risk, per, 7000 + d)))
-    total = per * DRAWS
-    p = sum(c["pass"] for c in draws) / DRAWS / 100
-    medians = [c["median_trading_days"] for c in draws if c["median_trading_days"]]
-    return {"risk": risk, "members": n, "paths": total, "days": len(days),
-            **{k: round(sum(c[k] for c in draws) / DRAWS, 1)
-               for k in ("pass", "daily", "max", "stuck")},
-            "pass_se": round(100 * (p * (1 - p) / total) ** 0.5, 2),
-            "median_trading_days": int(statistics.median(medians)) if medians else None,
-            "dud_share_drawn": round(duds / (DRAWS * max(1, n)), 2)}
+        rows += ch.mc_paths(days, per, 7000 + d)
+    return rows, len(days), duds
+
+
+def montecarlo(state, risk, paths, seed):
+    """The book's two challenge Monte Carlos: STRESSED (symbol duds) and PLAIN
+    (its real days, block-resampled with `seed`)."""
+    from sandbox.research import exness_combined_montecarlo as mc
+    from sandbox.research import fundednext_challenge as ch
+    rows, days, _ = stressed_paths(state, risk, paths)
+    mc._MARKING.clear()
+    plain = ch.mc_paths(ch.daily_series(state, risk, fixed=True), paths, seed)
+    return {"stressed": {"risk": risk, "days": days, **ch.mc_stats(rows)},
+            "plain": {"risk": risk, "days": days, **ch.mc_stats(plain)}}
 
 
 def dial(state, path, paths, workers):
@@ -684,13 +723,31 @@ def _book(state, chosen, best):
     return [dict(rows[_key(m)], minlot_usd=m["minlot_usd"]) for m in fitted]
 
 
-MC_HEAD = f"{'risk':>6}{'pass both':>13}{'daily':>8}{'max':>8}{'stuck':>8}{'days':>7}"
+MC_HEAD = (f"{'':10}{'pass':>7}{'max':>6}{'daily':>6}{'median':>8}{'p90':>5}"
+           f"{'<=20d':>7}{'<=40d':>7}{'<=60d':>7}{'w/ retry':>10}{'worst day':>11}{'deepest':>10}")
+MC_NOTE = ("  days: trading days to pass both phases (median / p90 of passing paths); "
+           "<=Nd: share of ALL paths passed within N; w/ retry: expected days until a pass "
+           "restarting every failed attempt; worst day / deepest: $ p50/p95 of PASSING paths")
 
 
-def _mc_line(c, mark=""):
-    days = c["median_trading_days"]
-    return (f"{c['risk']:>6}{c['pass']:>7.1f}% +-{c['pass_se']:.1f}{c['daily']:>7.1f}%"
-            f"{c['max']:>7.1f}%{c['stuck']:>7.1f}%{days if days else '-':>7}{mark}")
+def _mc_line(c, label=""):
+    def cut(v):
+        return "-" if v is None else f"{v:g}"
+
+    return (f"{label:10}{c['pass']:>6.1f}%{c['max']:>5.1f}%{c['daily']:>5.1f}%"
+            f"{cut(c['median_trading_days']):>8}{cut(c['p90_trading_days']):>5}"
+            + "".join(f"{c['within'][d]:>6.1f}%" for d in sorted(c["within"]))
+            + f"{cut(c['expected_days']):>10}"
+            f"{cut(c['worst_day_50']) + '/' + cut(c['worst_day_95']):>11}"
+            f"{cut(c['deepest_50']) + '/' + cut(c['deepest_95']):>10}")
+
+
+def _mc_table(out):
+    print(MC_HEAD)
+    for label in ("stressed", "plain"):
+        if label in out:
+            print(_mc_line(out[label], label))
+    print(MC_NOTE)
 
 
 def _show(title, rows, chosen, rejected, cells, best, paths, members):
@@ -714,8 +771,7 @@ def _show(title, rows, chosen, rejected, cells, best, paths, members):
           f"risk, then most members, within {PASS_TOLERANCE:g} point of the best stressed "
           f"pass rate ({top:.1f}%); every sleeve's minimum lot within "
           f"{OVERSHOOT_MAX:g}x of its asked risk")
-    print(MC_HEAD)
-    print(_mc_line(best))
+    _mc_table({"stressed": best})
     by_symbol = {}
     for m in members:
         by_symbol[m["symbol"]] = by_symbol.get(m["symbol"], 0) + 1
@@ -776,28 +832,19 @@ def _tests():
 
 
 def test(workers):
-    """The sealed book on 2026, once, at the sealed dial."""
-    from sandbox.research import exness_combined_montecarlo as mc
+    """The sealed book on 2026, once, at the sealed dial: its challenge Monte
+    Carlos (stressed and plain) on 2024-2025, where it was chosen, and on 2026."""
     from sandbox.research import fundednext_challenge as ch
     with open(SEAL_PATH, encoding="utf-8") as handle:
         seal = json.load(handle)
     history = _tests()
     first = history[0]["seal"] if history else seal["id"]
     clean = first == seal["id"] and not seal["pool_saw_2026"]
-    lo, hi, risk, paths = ef.IS_END, ef.OOS_END, seal["risk"], seal["rule"]["paths"]
-    state = load_state(seal["members"], lo, hi)
-    with open(TEST_STATE, "wb") as handle:
-        pickle.dump(state, handle, protocol=5)
-
-    mc._MARKING.clear()
-    days = ch.daily_series(state, risk, fixed=True)
-    cell = ch._mc_cell((days, risk, paths, 2026))
-    jobs = [("2026", risk, start, hi) for start in ch.starts_of(lo, hi, 1)]
-    ctx = multiprocessing.get_context("spawn")
-    with ctx.Pool(max(1, min(workers, len(jobs))), initializer=ch._init_worker,
-                  initargs=(TEST_STATE,)) as pool:
-        rolled = pool.map(ch._work, jobs, chunksize=4)
-    real = ch.summarise(rolled, risk)
+    start, lo, hi = _stamp(seal["chosen_on"][0]), ef.IS_END, ef.OOS_END
+    risk, paths = seal["risk"], seal["rule"]["paths"]
+    windows = {}
+    for label, x, y in (("2024-2025", start, lo), ("2026", lo, hi)):
+        windows[label] = montecarlo(load_state(seal["members"], x, y), risk, paths, 2026)
 
     print(f"\nSTEP 2 -- 2026 TEST  seal {seal['id']}  {len(seal['members'])} sleeves  "
           f"risk {risk}  {_label(lo)}..{_label(hi)}")
@@ -808,21 +855,20 @@ def test(workers):
               "clean test is data after 2026-10-13")
     else:
         print(f"  NOT CLEAN: 2026 was already spent on seal {first}")
-    print(f"\nMonte Carlo, {paths:,} paths, {ch.MC_BLOCK_DAYS}-day blocks of "
-          f"{len(days)} 2026 server days")
-    print(MC_HEAD)
-    print(_mc_line(cell))
-    pct = real["pass_both_pct"]
-    print(f"\nreal 2026 start days: {real['starts']} starts, {real['resolved']} resolved, "
-          f"pass both {'-' if pct is None else f'{pct:.1f}%'}, "
-          f"fail daily {real['fail_daily']}, fail max {real['fail_max']}, "
-          f"open {real['p1_open'] + real['p2_open']}, "
-          f"median {real['both_median_days'] or '-'} calendar days to pass both")
+    print(f"\nchallenge Monte Carlo, {paths:,} paths each, {ch.MC_BLOCK_DAYS}-day blocks; "
+          f"stressed = each symbol a dud (no edge) in {DUD_SHARE:.0%} of {DRAWS} draws, "
+          f"plain = the window's real days")
+    for label, out in windows.items():
+        print(f"\n{label} ({out['plain']['days']} server days)"
+              + ("  -- where the book was chosen" if label != "2026" else ""))
+        _mc_table(out)
     print("  no-edge line: ~33% pass. Loss limits judged at each bar's worst price "
           "(1-minute highs/lows) -> if anything harsh.")
+    cell = windows["2026"]
     history.append({"seal": seal["id"], "clean": clean, "risk": risk,
                     "tested_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-                    "montecarlo": cell, "real": real})
+                    "montecarlo": cell["plain"], "stressed": cell["stressed"],
+                    "in_sample": windows["2024-2025"]})
     with open(TEST_LOG, "w", encoding="utf-8") as handle:
         json.dump(history, handle, indent=2, default=str)
         handle.write("\n")
@@ -847,11 +893,12 @@ def final(workers):
           f"THE BOOK TO TRADE", rows, chosen, rejected, cells, best, paths, members)
     admitted, chosen = len(chosen), members
     t = tested[-1]
-    real = t["real"]["pass_both_pct"]
     print(f"\nexpect the 2026 test{'' if t['clean'] else ' or LESS (it was not clean)'}"
-          f", not the table above: Monte Carlo "
-          f"{t['montecarlo']['pass']:.1f}% pass, real start days "
-          f"{'-' if real is None else f'{real:.1f}%'} (seal {seal['id']}, risk {seal['risk']})")
+          f", not the table above (seal {seal['id']}, risk {seal['risk']}):")
+    if "stressed" in t:
+        _mc_table({"stressed": t["stressed"], "plain": t["montecarlo"]})
+    else:   # a test logged before the Monte Carlo report
+        print(f"  Monte Carlo {t['montecarlo']['pass']:.1f}% pass")
     with open(FINAL_PATH, "w", encoding="utf-8") as handle:
         json.dump({"seal": seal["id"], "rule": seal["rule"], "risk": best["risk"],
                    "chosen_on": [_label(summary["start"]), _label(ef.OOS_END)],
