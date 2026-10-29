@@ -51,10 +51,19 @@
 		const key = streamKey;
 		let stopped = false;
 		let timer: ReturnType<typeof setTimeout>;
+		// An unchanged response is skipped, so the accounts, positions and chart
+		// effects do not rerun on identical data every second.
+		let lastText = '';
 		const poll = async () => {
 			try {
 				const res = await fetch(`/api/live?symbols=${key}`, { cache: 'no-store' });
-				if (res.ok && !stopped) live = await res.json();
+				if (res.ok) {
+					const text = await res.text();
+					if (!stopped && text !== lastText) {
+						lastText = text;
+						live = JSON.parse(text);
+					}
+				}
 			} catch {
 				// offline or the server restarting: try again next tick
 			}

@@ -6,6 +6,7 @@
 	import type { Bar } from '#lib/server/bars.ts';
 	import type { Position } from '#lib/server/positions.ts';
 	import { chartSymbol } from '#lib/symbols.ts';
+	import { onDestroy } from 'svelte';
 
 	let {
 		symbol = $bindable('USTEC'),
@@ -37,10 +38,16 @@
 		return initialBars ?? [];
 	}
 
+	let request = 0; // only the newest load may apply its result
+	let reload: ReturnType<typeof setTimeout> | undefined;
+	onDestroy(() => clearTimeout(reload));
+
 	async function load(nextSymbol: string, m: number, refresh = true) {
+		const mine = ++request;
 		const res = await fetch(`/api/bars?symbol=${nextSymbol}&tf=${m}`);
-		if (!res.ok) return;
+		if (!res.ok || mine !== request) return;
 		const next = await res.json();
+		if (mine !== request) return;
 		const newSymbol = nextSymbol !== symbol;
 		// Before the bars, so live minutes merge into the right candles.
 		symbol = nextSymbol;
@@ -50,7 +57,7 @@
 		// A symbol new to MT5's Market Watch needs a few seconds to download its
 		// recent history; reload once it has, if this chart is still showing it.
 		if (newSymbol && refresh)
-			setTimeout(() => symbol === nextSymbol && minutes === m && load(nextSymbol, m, false), 5000);
+			reload = setTimeout(() => symbol === nextSymbol && minutes === m && load(nextSymbol, m, false), 5000);
 	}
 
 	// A pane created without the page's bars (a new chart in the layout) loads its own.

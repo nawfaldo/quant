@@ -16,12 +16,15 @@ export type Bar = { time: number; open: number; high: number; low: number; close
 const toSeconds = (ts: string) => Date.parse(ts.slice(0, 19) + 'Z') / 1000;
 
 const cache = new Map<string, { mtime: number; bars: Bar[] }>();
+const CACHE_MAX = 200;
 
 async function tailOfFile(path: string, n: number): Promise<Bar[]> {
 	const mtime = statSync(path).mtimeMs;
 	const key = `${path}:${n}`;
 	const hit = cache.get(key);
 	if (hit && hit.mtime === mtime) return hit.bars;
+	// Keep the cache bounded: a new shard every day would otherwise add entries forever.
+	if (cache.size >= CACHE_MAX) cache.delete(cache.keys().next().value!);
 
 	const file = await asyncBufferFromFile(path);
 	const metadata = await parquetMetadataAsync(file);
@@ -141,7 +144,18 @@ const MARKETS = new Set(['USTEC', 'US500', 'USOIL', 'UK100', 'UKOIL', 'DE40', 'F
 
 // Symbols with Dukascopy or Binance 1-minute data in the store (an unprefixed
 // `<symbol>_1m` file or folder), upper case, sorted; markets only, no stocks.
+let symbolsCache: { at: number; names: string[] } | undefined;
+const SYMBOLS_TTL_MS = 10_000;
+
 export function listSymbols(): string[] {
+	// /api/live asks once per symbol per second; the store's folder listing rarely changes.
+	if (symbolsCache && Date.now() - symbolsCache.at < SYMBOLS_TTL_MS) return symbolsCache.names;
+	const names = scanSymbols();
+	symbolsCache = { at: Date.now(), names };
+	return names;
+}
+
+function scanSymbols(): string[] {
 	const byTable = Object.fromEntries(Object.entries(TABLE_NAME).map(([s, t]) => [t, s]));
 	const names = new Set<string>();
 	for (const entry of readdirSync(STORE)) {
