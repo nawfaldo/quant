@@ -442,10 +442,11 @@ def mc_stats(rows):
             # binomial standard error of the pass rate, in percentage points
             "pass_se": round(100 * (p * (1 - p) / n) ** 0.5, 2),
             "median_trading_days": pct(days, 0.5), "p90_trading_days": pct(days, 0.9),
+            "p75_trading_days": pct(days, 0.75), "p95_trading_days": pct(days, 0.95),
             "within": {d: round(100 * sum(x <= d for x in days) / n, 1) for d in MC_WITHIN},
             "expected_days": round(sum(r[1] for r in rows) / n / p, 1) if p else None,
             **{f"{name}_{q}": (round(pct([r[i] for r in won], q / 100)) if won else None)
-               for name, i in (("worst_day", 2), ("deepest", 3)) for q in (50, 95)}}
+               for name, i in (("worst_day", 2), ("deepest", 3)) for q in (50, 75, 95)}}
 
 
 def _mc_cell(job):

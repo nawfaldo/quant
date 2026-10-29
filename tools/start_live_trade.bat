@@ -74,7 +74,7 @@ REM trade that differs -- entry bar, side, fill, stop or exit -- stops the launc
 REM here, before anything can place an order on logic the sandbox never ran.
 call :say "0/4 parity gate: live strategies against their sandbox trade logs"
 pushd "%WORKSPACE%\live_trade"
-cargo test --lib -- oct_12_2026 oct_13_2026 strategies::cfd::
+cargo test --lib -- oct_12_2026 oct_21_2026 strategies::cfd::
 set "PARITY=%ERRORLEVEL%"
 popd
 if not "%PARITY%"=="0" (
@@ -144,10 +144,23 @@ REM SECOND time and the two fight over the same account session. It only
 REM misbehaves when the launcher is started from a shell with that PATH, which
 REM is exactly the kind of bug that works when you test it by double-clicking
 REM and fails when something else runs it.
-call :terminal "%TERMINAL%"
-if errorlevel 1 goto fail
-call :terminal "%FN_TERMINAL%"
-if errorlevel 1 goto fail
+REM ONLY A TERMINAL SOME ACTIVE ACCOUNT MAPS TO: with Exness paused (no active
+REM Exness row) its terminal is not opened at all.
+REM A terminal no active account maps to is CLOSED if a previous run left it
+REM open (by its own path: both installations are terminal64.exe).
+"%SystemRoot%\System32\findstr.exe" /L /I /C:"%TERMINAL%" "%TERMINAL_MAP%" >nul
+if not errorlevel 1 (
+  call :terminal "%TERMINAL%"
+  if errorlevel 1 goto fail
+) else (
+  call :say "Exness paused: closing its terminal if open"
+  powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \"Name='terminal64.exe'\" | Where-Object { $_.ExecutablePath -eq $env:TERMINAL } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }"
+)
+"%SystemRoot%\System32\findstr.exe" /L /I /C:"%FN_TERMINAL%" "%TERMINAL_MAP%" >nul
+if not errorlevel 1 (
+  call :terminal "%FN_TERMINAL%"
+  if errorlevel 1 goto fail
+)
 REM Generous: a cold terminal start includes the login and, on the first run
 REM after an update, a silent upgrade.
 "%PYTHON%" "tools\live_stack_ready.py" terminal --timeout 300
@@ -159,6 +172,12 @@ REM this only has to start it once. Already-running is fine -- the feed script
 REM refuses to start a second copy of the Binance stream on the same table.
 call :say "2/4 starting market data feeds"
 call "%WORKSPACE%\tools\run_idk_market_feeds.bat"
+REM FundedNext's own minutes, live: the FundedNext book checks every candle
+REM against them (CFD_BROKER_HOURS) and fills off them. Needs the FundedNext
+REM terminal, which stage 1 started. Its own supervisor, like the feeds.
+call "%WORKSPACE%\tools\run_fundednext_stream.bat"
+"%PYTHON%" "tools\live_stack_ready.py" fn_stream --timeout 300
+if errorlevel 1 goto fail
 REM The catch-up runs before the first health write, and it is sized by how long
 REM the tables have been stale -- minutes after a weekend.
 "%PYTHON%" "tools\live_stack_ready.py" feeds --timeout 600

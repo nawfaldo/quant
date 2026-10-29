@@ -161,6 +161,44 @@ fn broker_source(market: &str, book: Book) -> Option<(String, f64)> {
     }
 }
 
+/// `cfd_families.FUNDEDNEXT_CLOSED`: the New York minutes `[start, end)` (wrapping
+/// midnight when `end < start`) in which FundedNext takes no order on the
+/// broker symbol `broker` (lower case) although it may quote -- read 2026-10-26
+/// off its trade sessions (server NY+7): FX 00:15-23:55, gold and the US
+/// indices 01:15-24:00, UK100 02:15-24:00, FRA40 11:15-24:00.
+pub fn fundednext_closed(broker: &str) -> Option<(i64, i64)> {
+    match broker {
+        "xauusd" | "ndx100" | "spx500" | "us30" | "us2000" => Some((17 * 60, 18 * 60 + 15)),
+        "uk100" => Some((17 * 60, 19 * 60 + 15)),
+        "fra40" => Some((17 * 60, 4 * 60 + 15)),
+        _ if broker.len() == 6 && broker.bytes().all(|b| b.is_ascii_alphabetic()) && broker != "xagusd" => {
+            Some((16 * 60 + 55, 17 * 60 + 15))
+        }
+        _ => None,
+    }
+}
+
+/// Whether a broker minute table takes orders at `ny_seconds` (New York wall
+/// clock): false only inside a FundedNext table's `fundednext_closed` window.
+pub fn broker_trades_at(table: &str, ny_seconds: i64) -> bool {
+    let Some(broker) = table
+        .strip_prefix("fundednext_")
+        .and_then(|rest| rest.strip_suffix("_1m"))
+    else {
+        return true;
+    };
+    let Some((start, end)) = fundednext_closed(broker) else {
+        return true;
+    };
+    let minute = ny_seconds.div_euclid(60).rem_euclid(1_440);
+    let shut = if start < end {
+        (start..end).contains(&minute)
+    } else {
+        minute >= start || minute < end
+    };
+    !shut
+}
+
 /// The broker minute table `market` reads under `book`'s broker.
 pub fn broker_minute_table(market: &str, book: Book) -> Option<String> {
     broker_source(market, book).map(|(table, _)| table)
@@ -214,7 +252,7 @@ impl MarketFills {
     /// Builds a market's fills from already-decoded minutes. `rows` is
     /// `(stamp, open, close, spread_points)` in any order.
     pub fn from_rows(market: &str, shift_hours: i64, rows: Vec<(i64, f64, f64, f64)>) -> Self {
-        Self::from_rows_at(market, point_size(market).unwrap_or(0.0), shift_hours, rows)
+        Self::from_rows_at(market, point_size(market).unwrap_or(0.0), shift_hours, "", rows)
     }
 
     /// `from_rows` at an explicit point, for a broker other than Exness.
@@ -222,6 +260,7 @@ impl MarketFills {
         market: &str,
         point: f64,
         shift_hours: i64,
+        table: &str,
         mut rows: Vec<(i64, f64, f64, f64)>,
     ) -> Self {
         // STABLE, so a stamp stored twice keeps its LAST row -- the one
@@ -235,6 +274,10 @@ impl MarketFills {
         let mut spread_bp = Vec::with_capacity(rows.len());
         for (ts, open, close, spread) in rows {
             if !(open > 0.0 && close > 0.0 && spread > 0.0) {
+                continue;
+            }
+            // Quoted but taking no order (`broker_trades_at`): no fill here.
+            if !broker_trades_at(table, ts) {
                 continue;
             }
             let bp = 1e4 * spread * point / close;
@@ -293,7 +336,7 @@ impl MarketFills {
                 ));
             }
         }
-        Ok(Some(Self::from_rows_at(market, point, shift_hours, rows)))
+        Ok(Some(Self::from_rows_at(market, point, shift_hours, &table, rows)))
     }
 
     /// `CFD_BROKER_HOURS`: whether the vendor candle stamped `bucket` (on the
@@ -345,6 +388,13 @@ impl MarketFills {
         self.moved(ts, open, whole_seconds(bar_seconds as f64 + self.lag))
     }
 
+    /// A FundedNext rollover flatten sent on the CLOCK `lead` seconds before its
+    /// candle ends (`cfd_families.FLATTEN_LEAD_SECONDS`): `price_by_bar_1m` at
+    /// `max(0, bar - lead) + queue` -- no feed lag, it waits on no bar.
+    pub fn flatten_after(&self, ts: i64, open: f64, bar_seconds: i64, lead: i64) -> Option<f64> {
+        self.moved(ts, open, whole_seconds((bar_seconds - lead).max(0) as f64 + BRIDGE_QUEUE_SECONDS))
+    }
+
     fn moved(&self, ts: i64, open: f64, delay: i64) -> Option<f64> {
         if open == 0.0 || !open.is_finite() {
             return None;
@@ -361,6 +411,10 @@ impl MarketFills {
 /// already filtered at each sleeve's own width (`execute_combined`); the engine
 /// asks this for the 30-minute buckets its sizing throttle reads.
 impl crate::strategies::cfd::BrokerQuotes for MarketFills {
+    fn fill_minute(&self, minute: i64) -> Option<bool> {
+        Some(self.minute_at(minute).is_some() && self.minute_at(minute + self.entry_delay).is_some())
+    }
+
     fn quoted_real(&self, start: i64, end: i64) -> bool {
         let Some(first) = self.quoted.first() else {
             return true;
@@ -448,5 +502,37 @@ mod tests {
         assert_eq!((fx.entry_delay, fx.exit_delay), (2, 1_802));
         let eth = MarketFills::from_rows("ethusd", 0, Vec::new());
         assert_eq!((eth.entry_delay, eth.exit_delay), (3, 1_803));
+    }
+
+    /// FundedNext's trade sessions (2026-10-26): quoted is not tradeable.
+    #[test]
+    fn fundednext_takes_no_order_outside_its_trade_session() {
+        let at = |h: i64, m: i64| 20_386 * 86_400 + (h * 60 + m) * 60;
+        // FX: 16:55-17:15 shut; 16:54 and 17:15 open.
+        assert!(broker_trades_at("fundednext_usdchf_1m", at(16, 54)));
+        assert!(!broker_trades_at("fundednext_usdchf_1m", at(16, 55)));
+        assert!(!broker_trades_at("fundednext_chfjpy_1m", at(17, 5)));
+        assert!(broker_trades_at("fundednext_chfjpy_1m", at(17, 15)));
+        // Gold and US indices: 17:00-18:15 shut.
+        assert!(broker_trades_at("fundednext_xauusd_1m", at(16, 59)));
+        assert!(!broker_trades_at("fundednext_spx500_1m", at(18, 5)));
+        assert!(broker_trades_at("fundednext_spx500_1m", at(18, 15)));
+        assert!(!broker_trades_at("fundednext_us2000_1m", at(18, 14)));
+        // UK100 to 19:15, FRA40 wraps midnight to 04:15.
+        assert!(!broker_trades_at("fundednext_uk100_1m", at(19, 0)));
+        assert!(!broker_trades_at("fundednext_fra40_1m", at(3, 30)));
+        assert!(broker_trades_at("fundednext_fra40_1m", at(4, 15)));
+        // Exness tables are untouched.
+        assert!(broker_trades_at("exness_usdchf_1m", at(17, 5)));
+    }
+
+    #[test]
+    fn a_quoted_minute_outside_the_session_is_no_fill() {
+        let minute = 20_386 * 86_400 + (17 * 60 + 5) * 60;
+        let rows = vec![(minute, 0.82, 0.82, 10.0), (minute + 600, 0.82, 0.82, 10.0)];
+        let fills = MarketFills::from_rows_at("usdchf", 1e-5, 0, "fundednext_usdchf_1m", rows);
+        assert!(fills.minute_at(minute).is_none(), "17:05 is refused");
+        assert!(fills.minute_at(minute + 600).is_some(), "17:15 fills");
+        assert!(fills.quoted(minute, 300), "but the candle still counts as quoted");
     }
 }

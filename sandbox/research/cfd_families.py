@@ -10139,6 +10139,66 @@ TICK_SPREAD_BP = {}
 #: skipped or zeroed. Filled by `install_fills`.
 ENTRY_PRICE = {}
 EXIT_PRICE = {}
+#: `{bar_ts: price}` for a FundedNext rollover flatten before 17:00 (see
+#: `FLATTEN_LEAD_SECONDS`).
+FLATTEN_PRICE = {}
+
+#: FUNDEDNEXT CLOSES BEFORE ITS 17:00 BREAK. A session window that ends at the
+#: 17:00 rollover (`closed == 1439`, 16:59 New York) has no candle at its close,
+#: so it flattened on its last candle once that CLOSED -- 17:00:05, inside
+#: FundedNext's daily break: FX keeps quoting but refuses every order
+#: 17:00-~17:15, and live logged `[Market closed]` until 17:20 (2026-10-21).
+#: The runtime now closes every such FundedNext position on the clock just
+#: before 17:00 (`flatten_lead_seconds`), all at once
+#: (`live::portfolio::flatten_before_rollover`), and the backtest prices it at that minute plus the bridge queue -- no feed lag, the
+#: close waits on no bar. A last candle the clock cannot see (a feed that stops
+#: early) keeps the ordinary exit.
+FLATTEN_LEAD_SECONDS = 120
+#: As late as each market takes an order (`FUNDEDNEXT_CLOSED`): FX stops at
+#: 16:55, so 16:54:00; gold and ustec trade to 17:00 and quote through 16:59,
+#: so 16:58:00; us500 stops quoting at ~16:57 (16:56 on some Fridays), so
+#: 16:56:00.
+FLATTEN_LEAD_BY_SYMBOL = {"us500": 240}
+FLATTEN_LEAD_FX_SECONDS = 360
+
+
+def flatten_lead_seconds(symbol):
+    if symbol in FLATTEN_LEAD_BY_SYMBOL:
+        return FLATTEN_LEAD_BY_SYMBOL[symbol]
+    return FLATTEN_LEAD_FX_SECONDS if _is_fx_pair(symbol) else FLATTEN_LEAD_SECONDS
+
+
+#: FUNDEDNEXT REFUSES ORDERS IN THESE NEW YORK MINUTES THOUGH IT QUOTES.
+#: `[start, end)` minutes of the NY day (`end` < `start` wraps midnight), read
+#: 2026-10-26 off the broker's own trade sessions (`SymbolInfoSessionTrade`,
+#: server clock NY+7): FX 00:15-23:55, gold and the US indices 01:15-24:00,
+#: UK100 02:15-24:00, FRA40 11:15-24:00. Its FX quotes keep printing through
+#: 16:55-17:15 and the index/gold quotes return at 18:00, so a quoted minute
+#: was not a tradeable one: 215 of the canon book's 11,913 entries filled in
+#: them (us500 day_of_week@5m-evening 117 of 145). Keyed by the broker symbol.
+FUNDEDNEXT_CLOSED = {
+    "xauusd": (17 * 60, 18 * 60 + 15),
+    "ndx100": (17 * 60, 18 * 60 + 15),
+    "spx500": (17 * 60, 18 * 60 + 15),
+    "us30": (17 * 60, 18 * 60 + 15),
+    "us2000": (17 * 60, 18 * 60 + 15),
+    "uk100": (17 * 60, 19 * 60 + 15),
+    "fra40": (17 * 60, 4 * 60 + 15),
+}
+FUNDEDNEXT_CLOSED_FX = (16 * 60 + 55, 17 * 60 + 15)
+
+
+def _is_fx_pair(symbol):
+    return len(symbol) == 6 and symbol.isalpha() and symbol not in ("xauusd", "xagusd")
+
+
+def fundednext_closed(broker_symbol):
+    """`(start, end)` NY minutes FundedNext refuses orders on `broker_symbol`
+    (lower case), or None."""
+    broker_symbol = broker_symbol.lower()
+    if broker_symbol in FUNDEDNEXT_CLOSED:
+        return FUNDEDNEXT_CLOSED[broker_symbol]
+    return FUNDEDNEXT_CLOSED_FX if _is_fx_pair(broker_symbol) else None
 
 #: Everything between the runtime deciding and MT5 executing, in seconds.
 #:
@@ -10272,7 +10332,10 @@ def fill_maps(symbol, bar=None):
     # v3: under `python -m` the fill model read a second, empty copy of this
     #      module (see the top of the file) and applied NO clock offset, so a
     #      map built by a command-line sweep could be six hours away again.
-    key = (f"fills:{FILL_MODEL}:v3:{table}:{spec['table']}:{bar}m:{spec['warmup']}:"
+    # v4: a fourth map, the early session flatten (`FLATTEN_LEAD_SECONDS`).
+    # v5: FundedNext minutes outside its trade session are not fills
+    #      (`FUNDEDNEXT_CLOSED`).
+    key = (f"fills:{FILL_MODEL}:v5:lead{flatten_lead_seconds(symbol)}:{table}:{spec['table']}:{bar}m:{spec['warmup']}:"
            f"{spec['shift_hours']}:{lag}:{BRIDGE_QUEUE_SECONDS}:"
            f"{data._table_fingerprint([table, spec['table']])}"
            f"{':modelled-' + _model_tag(symbol) if modelled_cost(symbol) else ''}")
@@ -10287,8 +10350,11 @@ def fill_maps(symbol, bar=None):
         exits = lx.price_by_bar_1m(
             symbol, opens,
             lx.exit_delay_seconds(bars, lag, BRIDGE_QUEUE_SECONDS))
+        flattens = lx.price_by_bar_1m(
+            symbol, opens,
+            max(0, bar * 60 - flatten_lead_seconds(symbol)) + BRIDGE_QUEUE_SECONDS)
         lx.release_minutes()
-        return spreads, entries, exits
+        return spreads, entries, exits, flattens
 
     return data._cached(f"fills_{FILL_MODEL}_{symbol}_{label_bar(bar)}", key,
                         build)
@@ -10313,10 +10379,11 @@ def install_fills(symbol, bar=None, quiet=False):
     contain a trade is the only one this question is about
     ([[trade-coverage-not-bar-coverage-decides-live-validity]]).
     """
-    spreads, entries, exits = fill_maps(symbol, bar)
+    spreads, entries, exits, flattens = fill_maps(symbol, bar)
     TICK_SPREAD_BP[symbol] = spreads
     ENTRY_PRICE[symbol] = entries
     EXIT_PRICE[symbol] = exits
+    FLATTEN_PRICE[symbol] = flattens
     # THE SELECTION WINDOW CANNOT START BEFORE THE COST DOES, and until this
     # was enforced the gate was asking the impossible. Every fill in this study
     # is now priced from `exness_<broker>_1m`, which starts 2020 on FX and
@@ -10685,6 +10752,14 @@ THREE HOLDING REGIMES. A `session` family is flattened at the close, as every
     by_exit = (exit_prices if exit_prices is not None
                else EXIT_PRICE.get(symbol))
     exit_at = None if not by_exit else by_exit.get
+    # A FundedNext session ending at the 17:00 rollover is closed just before 17:00 on
+    # the clock, as the runtime sends it (`FLATTEN_LEAD_SECONDS`), so it never
+    # lands in the break. Only on the installed maps: a caller passing its own
+    # `exit_prices` keeps its own exit path.
+    by_flatten = (FLATTEN_PRICE.get(symbol)
+                  if exit_prices is None and BROKER == "fundednext" else None)
+    flatten_at = None if not by_flatten else by_flatten.get
+    bar_span = BAR_MINUTES
     # WHAT AN `sl`/`tp` ON THE ORDER WOULD BUY, and nothing else.
     #
     # `exit_prices` charges every exit as a late market order because that is
@@ -10816,6 +10891,12 @@ THREE HOLDING REGIMES. A `session` family is flattened at the close, as every
                            or day_of[index + 1] != day)
             if not swing and (minute >= closed or last_of_day):
                 price, reason = fbar[O], "session"
+                # Only a window ending at the 17:00 rollover (`closed` 1439):
+                # live closes it at 16:59:00 on the clock. `in_session` keeps
+                # the bar AT any other close, which flattens there as before.
+                if (flatten_at is not None and closed == 1439 and last_of_day
+                        and minute < closed and minute + bar_span > closed):
+                    reason = "session_early"
             else:
                 stop = position["stop"]
                 if overnight and session_of[index] != position["seen"]:
@@ -10867,7 +10948,9 @@ THREE HOLDING REGIMES. A `session` family is flattened at the close, as every
                 # Applied to every reason the account sends as a market order.
                 # With `broker_stops` the price levels are held at the broker
                 # and keep the idealised fill; the clock-driven exits do not.
-                if exit_at is not None and reason not in broker_exits:
+                if reason == "session_early":
+                    price, reason = flatten_at(ts, price), "session"
+                elif exit_at is not None and reason not in broker_exits:
                     price = exit_at(ts, price)
                 gross = side * (price - position["entry"])
                 # Two legs now: the spread, once, and financing for every

@@ -146,7 +146,11 @@ fn shown_equity(names: &[&str]) -> Vec<Vec<f64>> {
         admission_day: None,
         ended_markets: Vec::new(),
         canon_replay: false,
+        challenge_windows: Vec::new(),
+        challenge_paths: 0,
         gross_cap: None,
+        sizing_cap: None,
+        constant_sizing: false,
     };
     run_engines_streams(&stream, 2, strategies, &owned, &assignment, cfg);
     recorders.iter().map(|seen| seen.borrow().clone()).collect()
@@ -329,7 +333,11 @@ fn intraday_strategy_closes_before_exact_session_boundary() {
         admission_day: None,
         ended_markets: Vec::new(),
         canon_replay: false,
+        challenge_windows: Vec::new(),
+        challenge_paths: 0,
         gross_cap: None,
+        sizing_cap: None,
+        constant_sizing: false,
     };
 
     let result = run_engines(&bars, vec![Box::new(IntradayOnce { bars_seen: 0 })], cfg);
@@ -358,7 +366,11 @@ fn risk_sizing_never_loses_more_than_its_budget() {
         admission_day: None,
         ended_markets: Vec::new(),
         canon_replay: false,
+        challenge_windows: Vec::new(),
+        challenge_paths: 0,
         gross_cap: None,
+        sizing_cap: None,
+        constant_sizing: false,
     };
 
     let result = run_engines(&bars, vec![Box::new(RiskSizedOnce { bars_seen: 0 })], cfg);
@@ -379,7 +391,11 @@ fn combined_strategies_share_one_balance_and_hold_separate_positions() {
         admission_day: None,
         ended_markets: Vec::new(),
         canon_replay: false,
+        challenge_windows: Vec::new(),
+        challenge_paths: 0,
         gross_cap: None,
+        sizing_cap: None,
+        constant_sizing: false,
     };
 
     let result = run_engines(
@@ -407,7 +423,11 @@ fn strategy_drawdown_limit_forces_an_account_level_exit() {
         admission_day: None,
         ended_markets: Vec::new(),
         canon_replay: false,
+        challenge_windows: Vec::new(),
+        challenge_paths: 0,
         gross_cap: None,
+        sizing_cap: None,
+        constant_sizing: false,
     };
 
     let result = run_engines(
@@ -491,6 +511,7 @@ fn financing_nights_are_counted_on_the_sleeve_s_own_clock() {
         ts: entry,
         quantity: 0.07,
         point_value: 0.127_411_582_732_163_02,
+        sizing: None,
     };
     let gross = net_pnl(&position, 25_100.0);
     let net = net_pnl_after_financing(&position, 25_100.0, exit, "HK50 Level Confluence");

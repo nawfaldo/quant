@@ -50,6 +50,11 @@ pub struct PreparedRun {
     /// only fill model; a market absent here fills the idealised way and says so
     /// in `fill_coverage`.
     pub(crate) fills: HashMap<String, Arc<MarketFills>>,
+    /// FundedNext live-rules runs: each series' 30-minute marks from
+    /// `THROTTLE_FROM` up to its first loaded bar, which seed every sleeve's
+    /// sizing throttle exactly as the live runtime seeds it
+    /// (`FamilyEngine::prime_throttle`). Empty otherwise.
+    pub(crate) prime_marks: HashMap<usize, Arc<Vec<(i64, f64)>>>,
 }
 
 pub async fn prepare(store: &ParquetStore, request: &RunRequest) -> Result<PreparedRun, ApiError> {
@@ -358,6 +363,32 @@ async fn prepare_strategies(
     if bars.is_empty() {
         return Err(ApiError::Data("no data in requested range".into()));
     }
+    let primes = book == crate::strategies::cfd::Book::FundedNext && !request.canon_replay && split;
+    let mut prime_marks = HashMap::new();
+    if primes {
+        use crate::strategies::fundednext::oct_21_2026::{THROTTLE_FROM, throttle_marks};
+        for (series, market) in symbols.iter().enumerate() {
+            let Some(first) = symbol_bars.get(series).and_then(|bars| bars.first()) else {
+                continue;
+            };
+            let first_day = first.ts.div_euclid(86_400);
+            let from_day = THROTTLE_FROM.div_euclid(86_400);
+            let marks = if first_day <= from_day {
+                Vec::new()
+            } else {
+                let mut older = load_live_ohlcv_history(
+                    store,
+                    market,
+                    &format_day(from_day),
+                    &format_day(first_day - 1),
+                )
+                .await?;
+                older.retain(|bar| bar.ts < first.ts);
+                throttle_marks(&older)
+            };
+            prime_marks.insert(series, Arc::new(marks));
+        }
+    }
     let start_day = parse_iso_days(&request.from_date)
         .ok_or_else(|| ApiError::BadRequest("invalid from date".into()))?;
     let balance = request.balance()?;
@@ -380,6 +411,12 @@ async fn prepare_strategies(
         let (lower, upper) = day_range(from, &request.to_date)?;
         // `load_ohlcv_bars` reaches 90 days behind `from` as well.
         let lower = lower.map(|value| value - 90 * 86_400 * NANOS_PER_SECOND);
+        // A primed throttle asks for quotes back to its anchor.
+        let lower = if primes {
+            Some(crate::strategies::fundednext::oct_21_2026::THROTTLE_FROM * NANOS_PER_SECOND)
+        } else {
+            lower
+        };
         if let Some(loaded) = MarketFills::load(store, market, book, shift, lower, upper)? {
             fills.insert(key, Arc::new(loaded));
         }
@@ -413,6 +450,7 @@ async fn prepare_strategies(
         symbol_bars,
         strategy_symbols,
         fills,
+        prime_marks,
         engine: EngineConfig {
             initial: balance,
             symbol,
@@ -420,6 +458,21 @@ async fn prepare_strategies(
             admission_day,
             ended_markets,
             canon_replay: request.canon_replay,
+            challenge_windows: if book == crate::strategies::cfd::Book::FundedNext && canonical_book {
+                match &request.challenge_windows {
+                    Some(windows) => windows
+                        .iter()
+                        .filter_map(|(lo, hi)| Some((parse_iso_days(lo)? * 86_400, parse_iso_days(hi)? * 86_400)))
+                        .collect(),
+                    None => match (parse_iso_days(&request.from_date), parse_iso_days(&request.to_date)) {
+                        (Some(lo), Some(hi)) => vec![(lo * 86_400, (hi + 1) * 86_400)],
+                        _ => Vec::new(),
+                    },
+                }
+            } else {
+                Vec::new()
+            },
+            challenge_paths: request.challenge_paths.unwrap_or(super::challenge::REPORT_PATHS),
             // The 2026-09-07 book's own cap, applied only when the run IS that
             // book. A partial selection is not the configuration the cap was
             // chosen for, and capping it would size a research run by a policy
@@ -439,6 +492,16 @@ async fn prepare_strategies(
                 })
                 .flatten()
                 .filter(|cap| *cap > 0.0),
+            sizing_cap: if book == crate::strategies::cfd::Book::FundedNext {
+                request
+                    .sizing_cap
+                    .or((!request.canon_replay)
+                        .then_some(crate::strategies::fundednext::oct_21_2026::INITIAL_BALANCE))
+                    .filter(|cap| *cap > 0.0)
+            } else {
+                None
+            },
+            constant_sizing: request.constant_sizing,
         },
     })
 }
@@ -581,11 +644,6 @@ pub(crate) async fn load_live_level_two_history(
 fn live_ohlcv_source(symbol: &str) -> (String, &'static str, i64) {
     match symbol {
         "xniusd" => ("xniusd_30m".into(), "tick_volume", 1_800),
-        // FUNDEDNEXT-ONLY MARKETS have no vendor table, so the cells were
-        // signalled off FundedNext's own minutes (`cfd_families.table_for`), and
-        // so are their live twins: the feed for these is the FundedNext terminal.
-        "xauusd" | "us2000" | "us30" | "cadjpy" | "nzdusd" | "euraud" | "usdchf" | "chfjpy"
-        | "gbpaud" => (format!("fundednext_{symbol}_1m"), "volume", 60),
         _ => (format!("{symbol}_1m"), "volume", 60),
     }
 }

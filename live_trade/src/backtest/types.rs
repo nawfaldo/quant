@@ -90,6 +90,9 @@ pub struct Trade {
     pub distance: f64,
     #[serde(skip_serializing)]
     pub vol_mult: f64,
+    /// `exit_points` at the close; NaN when the strategy does not report it.
+    #[serde(skip_serializing)]
+    pub points: f64,
 }
 
 impl Trade {
@@ -128,7 +131,7 @@ pub(crate) fn risk_lot_size(raw: f64) -> Option<f64> {
     (size >= LOT_STEP).then_some(size)
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub enum Action {
     Hold,
     Enter {
@@ -274,6 +277,14 @@ pub(crate) trait Strategy {
     fn entry_sizing(&self) -> Option<(f64, f64)> {
         None
     }
+    /// Seeds the sizing throttle from 30-minute marks before the warm-up
+    /// (`FamilyEngine::prime_throttle`). Nothing else has one.
+    fn prime_throttle(&mut self, _marks: &[(i64, f64)]) {}
+    /// Net points per unit of the position just closed, as the research logs
+    /// them, for re-pricing the trade (`backtest::challenge`).
+    fn exit_points(&self) -> Option<f64> {
+        None
+    }
     fn entry_stop_price(&self) -> Option<f64> {
         None
     }
@@ -340,6 +351,9 @@ mod tests {
             quantity: 0.5,
             entry_raw: 100.0,
             exit_raw: 101.0,
+            distance: f64::NAN,
+            vol_mult: f64::NAN,
+            points: f64::NAN,
         };
 
         let value = serde_json::to_value(trade).unwrap();

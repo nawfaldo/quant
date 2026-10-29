@@ -24,7 +24,7 @@ use std::collections::HashMap;
 use live_trade::backtest::{FUNDEDNEXT_MODEL_ID, RunRequest, run_combined};
 use live_trade::parquet_store::ParquetStore;
 use live_trade::strategies::cfd::Sleeve;
-use live_trade::strategies::fundednext::oct_18_2026::{BOOK, INITIAL_BALANCE};
+use live_trade::strategies::fundednext::oct_21_2026::{BOOK, INITIAL_BALANCE};
 use serde_json::{Value, json};
 
 const CANON: &str = "../sandbox/results/fundednext_canon_trades.json";

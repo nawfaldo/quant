@@ -124,7 +124,7 @@ def main():
     real = score(symbol, bar, jobs, lo, ef.IS_END)
 
     pretend(symbol)
-    for table in (ef.TICK_SPREAD_BP, ef.ENTRY_PRICE, ef.EXIT_PRICE):
+    for table in (ef.TICK_SPREAD_BP, ef.ENTRY_PRICE, ef.EXIT_PRICE, ef.FLATTEN_PRICE):
         table.pop(symbol, None)
     fx.release_minutes()
     ef.resolve(symbol, allow_stale=True, window=window)

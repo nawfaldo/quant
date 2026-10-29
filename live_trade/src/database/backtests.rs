@@ -490,6 +490,7 @@ fn trade_from_row(row: QueryResult) -> Result<Trade, ApiError> {
         exit_raw: row.try_get_by_index(8)?,
         distance: f64::NAN,
         vol_mult: f64::NAN,
+        points: f64::NAN,
     })
 }
 

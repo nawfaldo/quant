@@ -307,6 +307,7 @@ fn repriced_trade(native: &Trade, entry_mid: f64, exit_mid: f64) -> Trade {
         exit_raw: exit_mid,
         distance: native.distance,
         vol_mult: native.vol_mult,
+        points: native.points,
     }
 }
 
@@ -336,6 +337,9 @@ mod tests {
             quantity: 2.0,
             entry_raw: 100.0,
             exit_raw: raw_exit,
+            distance: f64::NAN,
+            vol_mult: f64::NAN,
+            points: f64::NAN,
         }
     }
 

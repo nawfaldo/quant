@@ -53,6 +53,46 @@ import pyarrow.parquet as pq
 
 PARQUET_DIR = Path(__file__).resolve().parent.parent / "data" / "parquet"
 
+
+import contextlib
+import time
+
+
+@contextlib.contextmanager
+def table_lock(table: str):
+    """One writer per table at a time, ACROSS PROCESSES.
+
+    The live FundedNext stream appends to today's shard every few seconds while
+    the feed daemon's daily import compacts the same table; a shard rewritten
+    between `compact` reading it and unlinking it lost those minutes for good.
+    A byte lock on `data/parquet/.<table>.lock` serialises the two."""
+    PARQUET_DIR.mkdir(parents=True, exist_ok=True)
+    fd = os.open(str(PARQUET_DIR / f".{table}.lock"), os.O_RDWR | os.O_CREAT)
+    try:
+        if os.name == "nt":
+            import msvcrt
+            while True:
+                os.lseek(fd, 0, 0)
+                try:
+                    msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+                    break
+                except OSError:
+                    time.sleep(0.05)
+            try:
+                yield
+            finally:
+                os.lseek(fd, 0, 0)
+                msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(fd, fcntl.LOCK_UN)
+    finally:
+        os.close(fd)
+
 #: Where importers keep vendor downloads, month caches and run reports.
 #:
 #: NOT THE STORE, AND NOT ANYWHERE INSIDE THE REPOSITORY. `PARQUET_DIR` is the
@@ -119,6 +159,11 @@ def table_files(table: str) -> list[Path]:
 
 
 def compact(table: str) -> int | None:
+    with table_lock(table):
+        return _compact(table)
+
+
+def _compact(table: str) -> int | None:
     """Fold `<table>/<day>.parquet` into one `<table>.parquet` and drop the dir.
 
     THE LAYOUT THIS MODULE DOCUMENTS IS THE TWO-PART ONE -- a bulk history file
@@ -704,6 +749,10 @@ class Sender:
 
     def _write_shard(self, path: Path, rows: list[tuple[int, dict]]) -> None:
         """Merge `rows` into the shard at `path` and swap it in atomically."""
+        with table_lock(path.parent.name):
+            self._write_shard_locked(path, rows)
+
+    def _write_shard_locked(self, path: Path, rows: list[tuple[int, dict]]) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         merged: list[tuple[int, dict]] = []
         if path.is_file():

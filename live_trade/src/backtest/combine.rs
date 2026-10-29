@@ -52,9 +52,13 @@ pub fn combine_realized(
         admission_day: None,
         ended_markets: Vec::new(),
         canon_replay: false,
+        challenge_windows: Vec::new(),
+        challenge_paths: 0,
         // Report-only, as with the quote rates below: this path re-reads stored
         // trades and opens nothing, so there is no exposure to cap.
         gross_cap: None,
+        sizing_cap: None,
+        constant_sizing: false,
     };
     let mut body = report(&trades, &cfg, first, last, equity, drawdowns.finish());
     body["instrument"] = Value::String(instrument);
@@ -151,6 +155,9 @@ mod tests {
             quantity: 1.0,
             entry_raw: 100.0,
             exit_raw: 100.0 + pnl,
+            distance: f64::NAN,
+            vol_mult: f64::NAN,
+            points: f64::NAN,
         }
     }
 

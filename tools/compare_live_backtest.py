@@ -53,7 +53,7 @@ ROOT = Path(__file__).resolve().parents[1]
 DB = ROOT / "live_trade" / "app.db"
 SLEEVES = {
     "exness": ROOT / "live_trade" / "src" / "strategies" / "exness" / "oct-12-2026" / "sleeves",
-    "fundednext": ROOT / "live_trade" / "src" / "strategies" / "fundednext" / "oct-13-2026" / "sleeves",
+    "fundednext": ROOT / "live_trade" / "src" / "strategies" / "fundednext" / "oct-21-2026" / "sleeves",
 }
 #: The account each book trades, found by server.
 SERVER = {"exness": "Exness%", "fundednext": "FundedNext%"}
@@ -148,6 +148,21 @@ def heartbeat_balance(db, account):
     return float(row[0]) if row and row[0] else 500.0
 
 
+def balance_at(db, account, registry, start_label):
+    """The account balance at `start_label` (NY 'YYYY-MM-DD HH:MM'): the last
+    heartbeat less the broker P&L of every trade of this book closed since.
+    The heartbeat table keeps only the newest row, so this is how far back it
+    can be read."""
+    now = heartbeat_balance(db, account)
+    since = db.execute(
+        "SELECT l.strategy_name, e.mt5pnl FROM live_trades l "
+        "JOIN mt5_execution_commands c ON c.trade_id=l.id AND c.action IN ('long','short') "
+        "JOIN account_trades e ON e.id=c.account_trade_id "
+        "WHERE l.engine_close_time>=?", (start_label,)).fetchall() if "account_trades" in {
+            r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")} else []
+    return now - sum(pnl or 0.0 for name, pnl in since if name in registry)
+
+
 def refresh_broker_tables(book, markets, first, last):
     keys = sorted({IMPORTER_KEY.get(m, m) for m in markets})
     print(f"refreshing {book} minute tables for {', '.join(keys)} ({first} .. {last}) ...", flush=True)
@@ -219,7 +234,22 @@ def main():
         "SELECT strategy, live_started_at FROM mt5_account_strategies WHERE active=1 "
         "AND account_id=?", (account,))
         if args.all or (started and started < ny(hi))}
-    balance = args.balance if args.balance is not None else heartbeat_balance(db, account)
+    # THE BACKTEST STARTS WHERE LIVE STARTED, NOT AT `first`. Every sleeve
+    # carries state from its activation on -- the admission shadow account, the
+    # one-trade-a-day guard, a position held overnight -- and a backtest reset
+    # at `first` would rebuild that state from nothing. The runtime stamps
+    # `live_started_at` at the start of its activation day, so a backtest from
+    # that day replays exactly what the runtime replays; only the trades from
+    # `first` on are compared.
+    started = [s for _, s in db.execute(
+        "SELECT strategy, live_started_at FROM mt5_account_strategies WHERE active=1 "
+        "AND account_id=? AND live_started_at>0", (account,))]
+    bt_first = first
+    if started and args.account == "fundednext":
+        activated = datetime.fromtimestamp(min(started) + 1, tz=timezone.utc).date().isoformat()
+        bt_first = min(first, activated)
+    balance = (args.balance if args.balance is not None
+               else balance_at(db, account, registry, f"{bt_first} 00:00"))
     db.close()
 
     ids = ({t["strategy"] for t in live} | {e["strategy"] for e in events} | active) & set(registry)
@@ -228,7 +258,8 @@ def main():
     markets = {registry[i]["market"] for i in ids}
     if not args.no_refresh:
         refresh_broker_tables(args.account, markets, first, last)
-    bt, coverage = backtest(ids, first, last, balance)
+    bt, coverage = backtest(ids, bt_first, last, balance)
+    bt = [t for t in bt if t["et"] >= ny(lo)]
     by_display = {v["display"]: k for k, v in registry.items()}
 
     # ---- match -----------------------------------------------------------
@@ -255,7 +286,7 @@ def main():
 
     # ---- report ----------------------------------------------------------
     print(f"\nLIVE vs BACKTEST   {args.account} account {account}   {first} .. {last} (New York)"
-          f"   backtest from ${balance:,.2f}")
+          f"   backtest from {bt_first} at ${balance:,.2f}")
     if coverage:
         print(f"backtest fills priced from the broker table: entries {coverage[0]}%, exits {coverage[1]}%"
               + ("" if float(coverage[0]) > 95 else "   <-- refresh the broker tables"))

@@ -538,9 +538,10 @@ def _point_size(symbol):
     snapshot = (ef.load_specs().get("symbols") or {}).get(symbol) or {}
     if snapshot.get("point"):
         return float(snapshot["point"])
-    import MetaTrader5 as mt5  # noqa: PLC0415
-
-    started = mt5.initialize()
+    # The broker's own terminal by path (`ef._mt5`): a bare `initialize()`
+    # launched the default -- Exness -- terminal during a FundedNext run.
+    mt5 = ef._mt5()
+    started = True
     try:
         info = mt5.symbol_info(ef.broker_symbol(symbol))
         if info is None:
@@ -560,6 +561,14 @@ def minute_table(symbol):
     # One definition, in `cfd_families`, because `resolve` refuses a symbol
     # this table does not cover and the two names must be the same string.
     return ef.broker_minute_table(symbol)
+
+
+def _closed_window(symbol):
+    """FundedNext's no-order NY minutes for `symbol`'s broker table, or None."""
+    table = minute_table(symbol)
+    if not table.startswith("fundednext_"):
+        return None
+    return ef.fundednext_closed(table[len("fundednext_"):-len("_1m")])
 
 
 def has_minutes(symbol):
@@ -594,6 +603,7 @@ def _read_minutes(symbol):
         close = block.column("close").to_numpy()
         raw = block.column("spread").to_numpy().astype("float64")
         good = (op > 0) & (close > 0) & (raw > 0)
+        closed = _closed_window(symbol)
         # Parsed inside Arrow for the reason `_read_quotes` gives, but NOT the
         # same cast. Two traps, both hit on 2026-08-31:
         #
@@ -606,6 +616,14 @@ def _read_minutes(symbol):
         #   zone offset". It must be `timestamp("us", tz="UTC")`.
         when = block.column("timestamp").cast(pa.timestamp("us", tz="UTC"))
         when = when.cast(pa.int64()).to_numpy(zero_copy_only=False) // 1_000_000
+        if closed is not None:
+            # A minute the broker quoted but takes no order in is no fill
+            # (`cfd_families.FUNDEDNEXT_CLOSED`).
+            start, end = closed
+            minute = (when // 60) % 1_440
+            shut = ((minute >= start) & (minute < end) if start < end
+                    else (minute >= start) | (minute < end))
+            good = good & ~shut
         fresh = good
         stamps.append(when[fresh])
         opens.append(op[fresh])
@@ -1348,15 +1366,7 @@ def slippage(path=OUT_PATH):
 
         py -m sandbox.research.fill_models.exness slippage
     """
-    try:
-        import MetaTrader5 as mt5  # noqa: PLC0415
-    except ImportError:
-        raise SystemExit("MetaTrader5 is not installed on this interpreter")
-
-    if not mt5.initialize():
-        print(f"MT5 initialization failed: {mt5.last_error()}",
-              file=sys.stderr)
-        raise SystemExit(1)
+    mt5 = ef._mt5()  # the broker's own terminal by path, never the default one
     try:
         deals = mt5.history_deals_get(
             datetime.now(tz=UTC) - timedelta(days=30), datetime.now(tz=UTC))

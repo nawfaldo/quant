@@ -19,7 +19,7 @@ use super::data::parse_iso_days;
 pub fn execute(prepared: &PreparedRun, request: &RunRequest) -> Result<RunResult, ApiError> {
     let engine = prepared.engine.clone();
     let strategy = build_strategy(&request.strategy, prepared)?;
-    Ok(run_engines(&prepared.bars, vec![strategy], engine))
+    Ok(run_engines(&prepared.bars, vec![Box::new(strategy) as Box<dyn Strategy>], engine))
 }
 
 /// Runs several strategies side by side against one shared account: they see
@@ -27,10 +27,40 @@ pub fn execute(prepared: &PreparedRun, request: &RunRequest) -> Result<RunResult
 /// independently, and their realized PnL lands in a single balance.
 pub fn execute_combined(prepared: &PreparedRun, names: &[String]) -> Result<RunResult, ApiError> {
     let engine = prepared.engine.clone();
+    let mut tables: std::collections::HashMap<usize, std::sync::Arc<std::collections::HashMap<i64, f64>>> =
+        std::collections::HashMap::new();
     let strategies = names
         .iter()
-        .map(|name| build_strategy(name, prepared))
-        .collect::<Result<Vec<_>, _>>()?;
+        .enumerate()
+        .map(|(index, name)| {
+            let mut strategy = build_strategy(name, prepared)?;
+            // FundedNext: the series' own throttle, as `replay` builds it from
+            // its 30-minute broker-quoted bars (canon replay from the canon
+            // throttle start).
+            if let Some(sleeve) = Sleeve::from_display(name).filter(|s| s.broker_hours())
+                && !prepared.symbol_bars.is_empty()
+            {
+                let source = prepared.strategy_symbols.get(index).copied().unwrap_or(0);
+                if engine.canon_replay {
+                    let table = tables.entry(source).or_insert_with(|| {
+                        let marks = super::challenge::series_marks(prepared, sleeve, source);
+                        std::sync::Arc::new(super::challenge::daily_multipliers(
+                            &marks,
+                            crate::strategies::fundednext::oct_21_2026::CANON_THROTTLE_FROM,
+                        ))
+                    });
+                    strategy.install_throttle(std::sync::Arc::clone(table));
+                } else if prepared.prime_marks.contains_key(&source) {
+                    // LIVE RULES: what the live sleeve's streaming throttle
+                    // folds, from the same fixed day it starts on.
+                    strategy.install_throttle(std::sync::Arc::new(
+                        super::challenge::sleeve_throttle(prepared, sleeve, source),
+                    ));
+                }
+            }
+            Ok(Box::new(strategy) as Box<dyn Strategy>)
+        })
+        .collect::<Result<Vec<_>, ApiError>>()?;
     if prepared.symbol_bars.len() > 1 {
         // ONE STREAM PER (MARKET, CANDLE WIDTH), NOT PER MARKET.
         //
@@ -229,7 +259,9 @@ pub fn execute_combined(prepared: &PreparedRun, names: &[String]) -> Result<RunR
             }
         }
         let apply_keys: Vec<i64> = keyed;
-        return Ok(run_engines_streams_at(
+        let windows = engine.challenge_windows.clone();
+        let paths = engine.challenge_paths;
+        let mut result = run_engines_streams_at(
             &stream,
             &apply_keys,
             series.len(),
@@ -237,7 +269,14 @@ pub fn execute_combined(prepared: &PreparedRun, names: &[String]) -> Result<RunR
             names,
             &assignment,
             engine,
-        ));
+        );
+        if !windows.is_empty() && paths > 0 {
+            let report = super::challenge::report(prepared, names, &result.trades, &windows, paths);
+            if let Some(body) = result.body.as_object_mut() {
+                body.insert("challenge".into(), report);
+            }
+        }
+        return Ok(result);
     }
     Ok(run_engines_named(&prepared.bars, strategies, names, engine))
 }
@@ -245,7 +284,7 @@ pub fn execute_combined(prepared: &PreparedRun, names: &[String]) -> Result<RunR
 /// Builds one sleeve of the 2026-09-07 Exness book, filled the way the account
 /// is filled: its market's broker minutes installed from the run's
 /// `PreparedRun::fills` (see `backtest::fills`).
-fn build_strategy(name: &str, prepared: &PreparedRun) -> Result<Box<dyn Strategy>, ApiError> {
+fn build_strategy(name: &str, prepared: &PreparedRun) -> Result<CfdSleeve, ApiError> {
     let sleeve = Sleeve::from_display(name)
         .ok_or_else(|| ApiError::BadRequest("unknown strategy".into()))?;
     let mut strategy = CfdSleeve::new(sleeve, LOT_STEP);
@@ -258,10 +297,15 @@ fn build_strategy(name: &str, prepared: &PreparedRun) -> Result<Box<dyn Strategy
             strategy.install_quotes(std::sync::Arc::clone(fills) as std::sync::Arc<dyn crate::strategies::cfd::BrokerQuotes>);
         }
     }
+    if sleeve.book() == crate::strategies::cfd::Book::FundedNext
+        && let Some(cap) = prepared.engine.sizing_cap
+    {
+        strategy.set_sizing_cap(cap);
+    }
     if let Some(mask) = entry_days_from_env()? {
         strategy.restrict_entry_days(mask);
     }
-    Ok(Box::new(strategy))
+    Ok(strategy)
 }
 
 /// `EXNESS_ENTRY_DAYS=mon,tue,wed,thu,fri`: a RESEARCH switch restricting new
@@ -322,10 +366,14 @@ fn overdue_instant(slot: &Slot, previous: i64, now: i64) -> Option<i64> {
         }
     };
     let delay = sleeve.candle_seconds() + GRACE;
-    let today = now.div_euclid(86_400) * 86_400;
-    [today - 86_400, today]
-        .into_iter()
-        .map(|day| day + end * 60 + delay)
+    // EVERY DAY THE GAP SPANS, from the one before `previous`, and the FIRST
+    // deadline in it -- the moment live's clock would have fired. Asking only
+    // `now`'s day and the one before put a Friday 17:29 close on SATURDAY when
+    // nothing printed between Friday 17:00 and Sunday's open (2025-07-04).
+    let first = previous.div_euclid(86_400) - 1;
+    let last = now.div_euclid(86_400);
+    (first..=last)
+        .map(|day| day * 86_400 + end * 60 + delay)
         .find(|fire| {
             *fire > previous && *fire <= now && !in_session(fire.rem_euclid(86_400) / 60)
         })
@@ -356,6 +404,10 @@ pub(crate) struct EngineConfig {
     pub(crate) ended_markets: Vec<String>,
     /// `RunRequest::canon_replay`.
     pub(crate) canon_replay: bool,
+    /// The challenge Monte Carlo's windows (epoch seconds, `[lo, hi)`) and its
+    /// paths a cell, for a FundedNext whole-book run; empty otherwise.
+    pub(crate) challenge_windows: Vec<(i64, i64)>,
+    pub(crate) challenge_paths: usize,
     /// Ceiling on the SIMULTANEOUS notional of everything open, in multiples of
     /// equity. `None` leaves a run uncapped, which is what every run other than
     /// the whole book gets.
@@ -368,6 +420,13 @@ pub(crate) struct EngineConfig {
     /// random-refusal control in two windows separately
     /// ([[gross-exposure-cap-beats-its-null]]).
     pub(crate) gross_cap: Option<f64>,
+    /// FundedNext: every sleeve sizes off `min(balance, cap)` -- the challenge
+    /// Monte Carlo's `daily_series(fixed=True)` and the live account
+    /// (`RunRequest::sizing_cap`). `None` compounds on the whole balance.
+    pub(crate) sizing_cap: Option<f64>,
+    /// RESEARCH ONLY: every sleeve is shown the INITIAL balance, never the
+    /// running one (`fundednext_live_replay` compares lots at a fixed balance).
+    pub(crate) constant_sizing: bool,
 }
 
 #[derive(Clone)]
@@ -687,6 +746,9 @@ pub(crate) fn run_engines_streams_at(
     for (bar_index, (symbol_index, bar)) in stream.iter().enumerate() {
         let symbol_index = *symbol_index;
         let bar = *bar;
+        // The bar this market printed BEFORE this one: what a clock-driven
+        // close that fires before this bar arrives is priced at.
+        let bar_before = last_bar[symbol_index];
         last_bar[symbol_index] = Some(bar);
         let day = bar.ts.div_euclid(86400);
         if day >= cfg.admission_day.unwrap_or(cfg.start_day).min(cfg.start_day) && !trading_started {
@@ -736,6 +798,7 @@ pub(crate) fn run_engines_streams_at(
                                 * schedule.gated_factor(&slot.name, key, equity, slot.funded)
                         }
                     }
+                    _ if cfg.constant_sizing => cfg.initial,
                     _ => equity,
                 };
                 // The balance this slot was SHOWN when it decided, kept so
@@ -794,11 +857,24 @@ pub(crate) fn run_engines_streams_at(
                 if slot.position.is_none() || !is_fundednext(&slot.name) {
                     continue;
                 }
-                let Some(fire) = overdue_instant(slot, previous - slot.frame, now - slot.frame)
-                else {
+                // ON THE CLOCK OF ARRIVAL: a bar stamped T is in hand at T + 60,
+                // so live's clock close fires first whenever its deadline falls
+                // inside that minute -- the last minute before a close missing
+                // from the vendor feed, then the strategy's own exit, is that
+                // case -- and it is priced at the bar before.
+                let Some(fire) = overdue_instant(
+                    slot,
+                    previous - slot.frame + 60,
+                    now - slot.frame + 60,
+                ) else {
                     continue;
                 };
-                let Some(mark) = last_bar[slot.symbol_index] else {
+                let mark = if slot.symbol_index == symbol_index {
+                    bar_before
+                } else {
+                    last_bar[slot.symbol_index]
+                };
+                let Some(mark) = mark else {
                     continue;
                 };
                 if let Some(old) = slot.position.take() {
@@ -913,7 +989,7 @@ pub(crate) fn run_engines_streams_at(
                             price,
                             quantity,
                             slot.shown_equity,
-                            equity,
+                            if cfg.constant_sizing { cfg.initial } else { equity },
                         ),
                     },
                     Action::EnterPosition {
@@ -929,7 +1005,7 @@ pub(crate) fn run_engines_streams_at(
                             price,
                             quantity,
                             slot.shown_equity,
-                            equity,
+                            if cfg.constant_sizing { cfg.initial } else { equity },
                         ),
                     },
                     other => other,
@@ -1087,14 +1163,16 @@ pub(crate) fn run_engines_streams_at(
                             equity += gain;
                             slot.realized += gain;
                             slot.closed_trades += 1;
-                            trades.push(to_trade(
+                            let mut closed = to_trade(
                                 partial,
                                 exit_timestamp,
                                 exit,
                                 execution_price,
                                 gain,
                                 &slot.name,
-                            ));
+                            );
+                            closed.points = slot.strategy.exit_points().unwrap_or(f64::NAN);
+                            trades.push(closed);
                             if let Some(closed) = trades.last() {
                                 slot.contribution_equity
                                     .push((closed.exit_timestamp, cfg.initial + slot.realized));
@@ -1455,5 +1533,6 @@ fn to_trade(
         exit_raw,
         distance: pos.sizing.map_or(f64::NAN, |sizing| sizing.0),
         vol_mult: pos.sizing.map_or(f64::NAN, |sizing| sizing.1),
+        points: f64::NAN,
     }
 }

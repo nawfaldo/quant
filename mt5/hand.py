@@ -41,11 +41,22 @@ ID_TRADE_LIST = 10328
 
 TERMINAL_CLASS = "MetaQuotes::MetaTrader::5.00"
 DIALOG_TIMEOUT = 5.0
-FILL_TIMEOUT = 8.0
+FILL_TIMEOUT = 20.0
 
 
 class HandError(RuntimeError):
     pass
+
+
+def _close_quietly(handle: int) -> None:
+    """WM_CLOSE to a window that may already be gone: a stale dialog or a chart
+    found a moment ago can be destroyed before the post lands, and PostMessage
+    then raises (1400, 'Invalid window handle') -- 13 FundedNext closes failed
+    on it 2026-10-21..23, each costing a 60s retry."""
+    try:
+        win32gui.PostMessage(handle, win32con.WM_CLOSE, 0, 0)
+    except win32gui.error:
+        pass
 
 
 class Hand:
@@ -162,7 +173,7 @@ class Hand:
         _, charts = self._charts()
         handle = charts.get(symbol.casefold())
         if handle:
-            win32gui.PostMessage(handle, win32con.WM_CLOSE, 0, 0)
+            _close_quietly(handle)
 
     def _menu_command(self, title: str) -> int:
         """Command id of the first top-level-menu item whose text starts with title."""
@@ -229,7 +240,7 @@ class Hand:
     def _place_on_active_chart(self, symbol, side, volume, comment, sl, tp):
         before = {p.ticket for p in self.positions()}
         for stale in self._dialogs("Order:"):
-            win32gui.PostMessage(stale.handle, win32con.WM_CLOSE, 0, 0)
+            _close_quietly(stale.handle)
         # A posted F9 is occasionally dropped right after a chart switch.
         for attempt in range(3):
             # The Tools > New Order command works while the terminal is
@@ -261,18 +272,25 @@ class Hand:
                 self._type(self._child(dlg, ID_COMMENT), comment)
             self._press(self._child(dlg, button))
         except Exception:
-            win32gui.PostMessage(dlg.handle, win32con.WM_CLOSE, 0, 0)
+            _close_quietly(dlg.handle)
             raise
-        deadline = time.time() + FILL_TIMEOUT
-        while time.time() < deadline:
-            new = [
-                p for p in self.positions()
-                if p.ticket not in before and p.symbol.casefold() == symbol.casefold()
-            ]
-            if new:
-                return new[0]
-            time.sleep(0.2)
-        raise HandError(f"no new {symbol} position appeared after the order")
+        try:
+            deadline = time.time() + FILL_TIMEOUT
+            while time.time() < deadline:
+                # By the order's own comment first: it names THIS order even when
+                # another position on the symbol opened meanwhile.
+                new = [
+                    p for p in self.positions()
+                    if (comment and str(getattr(p, "comment", "")) == comment)
+                    or (p.ticket not in before and p.symbol.casefold() == symbol.casefold())
+                ]
+                if new:
+                    return new[0]
+                time.sleep(0.2)
+            raise HandError(f"no new {symbol} position appeared after the order")
+        finally:
+            # The dialog stays on its "Done" page until dismissed.
+            _close_quietly(dlg.handle)
 
     def close(self, ticket: int) -> None:
         open_now = self.positions()
@@ -295,7 +313,7 @@ class Hand:
         # dialog that opens is the wanted ticket's.
         for row in range(len(open_now)):
             for stale in self._dialogs("Position:") + self._dialogs("Order:"):
-                win32gui.PostMessage(stale.handle, win32con.WM_CLOSE, 0, 0)
+                _close_quietly(stale.handle)
             lp = win32api.MAKELONG(300, 34 + 20 * row)
             for msg, wp in (
                 (win32con.WM_LBUTTONDOWN, win32con.MK_LBUTTON),
@@ -310,14 +328,17 @@ class Hand:
             except HandError:
                 continue
             if f"#{ticket} " in dlg.window_text():
-                self._press(self._child(dlg, ID_CLOSE))
-                deadline = time.time() + FILL_TIMEOUT
-                while time.time() < deadline:
-                    if all(p.ticket != ticket for p in self.positions()):
-                        return
-                    time.sleep(0.2)
-                raise HandError(f"position {ticket} still open after close")
-            win32gui.PostMessage(dlg.handle, win32con.WM_CLOSE, 0, 0)
+                try:
+                    self._press(self._child(dlg, ID_CLOSE))
+                    deadline = time.time() + FILL_TIMEOUT
+                    while time.time() < deadline:
+                        if all(p.ticket != ticket for p in self.positions()):
+                            return
+                        time.sleep(0.2)
+                    raise HandError(f"position {ticket} still open after close")
+                finally:
+                    _close_quietly(dlg.handle)
+            _close_quietly(dlg.handle)
         raise HandError(f"could not reach position {ticket} in the trade list")
 
 

@@ -2093,7 +2093,7 @@ impl BollingerBand {
 }
 
 // -------------------------------------------------------------------------- //
-// the FundedNext book's readings (`fundednext/oct-18-2026`)
+// the FundedNext book's readings (`fundednext/oct-21-2026`)
 // -------------------------------------------------------------------------- //
 
 /// `exness_indicators.sma`: ONE running sum, added to and then subtracted from,
@@ -2839,5 +2839,58 @@ impl VolOfVol {
         let mean = total / count;
         let variance = squares / count - mean * mean;
         (variance > 1e-18 && mean > 0.0).then(|| variance.sqrt() / mean)
+    }
+}
+
+/// `exness_indicators.amihud`: the mean |log return| per unit volume (x 1e6)
+/// over the `period` candles ending here, once at least `max(5, period / 2)`
+/// of them have a reading. Summed and un-summed in Python's order.
+pub(crate) struct Amihud {
+    period: usize,
+    ratios: VecDeque<Option<f64>>,
+    total: f64,
+    live: usize,
+    previous: Option<f64>,
+    pub(crate) value: Option<f64>,
+}
+
+impl Amihud {
+    pub(crate) fn new(period: usize) -> Self {
+        Self {
+            period,
+            ratios: VecDeque::new(),
+            total: 0.0,
+            live: 0,
+            previous: None,
+            value: None,
+        }
+    }
+
+    pub(crate) fn push(&mut self, candle: &Candle) {
+        let ratio = match self.previous {
+            Some(previous) if previous > 0.0 && candle.close > 0.0 && candle.volume > 0.0 => {
+                Some((candle.close / previous).ln().abs() / candle.volume * 1e6)
+            }
+            _ => None,
+        };
+        self.previous = Some(candle.close);
+        self.value = None;
+        if self.period < 5 {
+            return;
+        }
+        if let Some(ratio) = ratio {
+            self.total += ratio;
+            self.live += 1;
+        }
+        self.ratios.push_back(ratio);
+        if self.ratios.len() > self.period
+            && let Some(Some(gone)) = self.ratios.pop_front()
+        {
+            self.total -= gone;
+            self.live -= 1;
+        }
+        if self.live >= (self.period / 2).max(5) {
+            self.value = Some(self.total / self.live as f64);
+        }
     }
 }

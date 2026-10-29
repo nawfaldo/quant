@@ -72,6 +72,17 @@ def live_rows():
     return {strategy: (symbol, bool(active)) for strategy, symbol, active in rows}
 
 
+def exness_active():
+    """Whether any Exness-server account has an active strategy."""
+    db = sqlite3.connect(f"file:{DB}?mode=ro", uri=True, timeout=30)
+    found = db.execute(
+        "SELECT 1 FROM mt5_accounts a JOIN mt5_account_strategies s "
+        "ON s.account_id=a.id WHERE a.server LIKE 'Exness%' AND s.active=1 LIMIT 1"
+    ).fetchone()
+    db.close()
+    return found is not None
+
+
 def exness_account():
     """The Exness live account: the one Exness-server account with an active
     strategy. The FundedNext account runs alongside it (`go_live_fundednext.py`)
@@ -103,6 +114,13 @@ def main():
     parser.add_argument("--check", action="store_true",
                         help="report only; exit 1 if the account is not on the canon")
     args = parser.parse_args()
+
+    # EXNESS PAUSED: every Exness row inactive (the user's choice, 2026-10-21).
+    # Nothing to put on the canon; the stack runs the FundedNext account alone.
+    # Re-activating the account's rows brings this stage back.
+    if not args.check and not exness_active():
+        print("no Exness account has an active strategy -- Exness is paused, skipping")
+        return
 
     book_id, wanted = registry()
     if len(wanted) != EXPECTED:

@@ -436,10 +436,93 @@ def uses_hand() -> bool:
     return info is not None and "fundednext" in str(info.server).casefold()
 
 
+#: How long a hand order the window reported as failed is still looked for at
+#: the broker. Two FundedNext orders "failed" after 8s on 2026-10-14 and had
+#: both filled; live thought itself flat and they sat open over a weekend.
+HAND_RECOVER_SECONDS = 30.0
+
+
+def hand_recover_open(symbol: str, comment: str, wait: float = HAND_RECOVER_SECONDS) -> Any | None:
+    """The position a 'failed' hand order opened after all, found by its
+    `march:<id>` comment."""
+    deadline = time.time() + wait
+    while True:
+        for position in mt5.positions_get(symbol=symbol) or []:
+            if str(getattr(position, "comment", "")) == comment:
+                return position
+        if time.time() >= deadline:
+            return None
+        time.sleep(0.5)
+
+
+def hand_recover_close(position: int, wait: float = HAND_RECOVER_SECONDS) -> tuple[float, int] | None:
+    """The close a 'failed' hand close made after all: the ticket gone from
+    the open positions and an OUT deal recorded for it."""
+    deadline = time.time() + wait
+    while True:
+        still_open = any(int(p.ticket) == position for p in mt5.positions_get() or [])
+        if not still_open:
+            deals = mt5.history_deals_get(position=position) or []
+            closes = [d for d in deals if d.entry != mt5.DEAL_ENTRY_IN]
+            if closes:
+                last = max(closes, key=lambda d: d.time_msc)
+                return float(last.price), int(last.ticket)
+        if time.time() >= deadline:
+            return None
+        time.sleep(0.5)
+
+
+def position_pnl(position: int) -> float | None:
+    """The broker's whole P&L for one closed position: profit, commission,
+    swap and fee over every deal it has. A hand close carries no `march:`
+    comment on its OUT deal, so `recover_fill` cannot find it by comment."""
+    deals = mt5.history_deals_get(position=position)
+    if not deals:
+        return None
+    return sum(float(d.profit) + float(d.commission) + float(d.swap) + float(d.fee)
+               for d in deals)
+
+
+#: Attempts a hand order gets inside ONE command when the window plumbing
+#: itself fails (a Win32 error, not a broker answer): each rebuilds the hand
+#: from fresh window handles. Before, one `(1400, 'PostMessage', 'Invalid
+#: window handle.')` failed the command and the retry waited 60s for the next
+#: pass -- NZDUSD's close was 8 minutes late on 2026-10-22.
+HAND_WINDOW_ATTEMPTS = 3
+
+
 def hand_deal(
     symbol: str, order_type: int, volume: float, comment: str, position: int
 ) -> tuple[float, int]:
     """Same contract as send_deal, executed through the MT5 window."""
+    import win32gui
+
+    for attempt in range(1, HAND_WINDOW_ATTEMPTS + 1):
+        try:
+            return _hand_deal_once(symbol, order_type, volume, comment, position)
+        except win32gui.error as exc:
+            # Did the order land before the window call broke? Never send twice.
+            if position:
+                done = hand_recover_close(position, wait=2.0)
+                if done is not None:
+                    log(f"hand window error {exc} but position {position} is closed; recovered")
+                    return done
+            else:
+                done = hand_recover_open(symbol, comment, wait=2.0)
+                if done is not None:
+                    log(f"hand window error {exc} but {comment} is open as {done.ticket}; recovered")
+                    return float(done.price_open), int(done.ticket)
+            log(f"hand window error {exc} (attempt {attempt}/{HAND_WINDOW_ATTEMPTS}) "
+                f"{symbol} {'close ' + str(position) if position else comment}", error=True)
+            if attempt == HAND_WINDOW_ATTEMPTS:
+                raise BridgeError(f"hand failed: {exc}") from exc
+            time.sleep(0.5)
+    raise AssertionError("unreachable")
+
+
+def _hand_deal_once(
+    symbol: str, order_type: int, volume: float, comment: str, position: int
+) -> tuple[float, int]:
     from hand import Hand, HandError
 
     info = mt5.account_info()
@@ -460,7 +543,46 @@ def hand_deal(
         opened = hand.place(symbol, side, volume, comment)
         return float(opened.price_open), int(opened.ticket)
     except HandError as exc:
+        # THE WINDOW'S ANSWER IS NOT THE BROKER'S. Look for the result before
+        # calling it failed.
+        if position:
+            closed = hand_recover_close(position)
+            if closed is not None:
+                log(f"hand reported '{exc}' but position {position} is closed; recovered")
+                return closed
+        else:
+            opened = hand_recover_open(symbol, comment)
+            if opened is not None:
+                log(f"hand reported '{exc}' but {comment} is open as {opened.ticket}; recovered")
+                return float(opened.price_open), int(opened.ticket)
+        reason = journal_refusal(position, symbol) if position or symbol else None
+        if reason:
+            # The broker's own word, e.g. `[Market closed]` -- what the window
+            # cannot tell us and what a person needs to see the same day.
+            log(f"hand {('close ' + str(position)) if position else comment} refused by "
+                f"the broker: {reason}", error=True)
+            raise BridgeError(f"hand failed: {exc} -- broker: {reason}") from exc
         raise BridgeError(f"hand failed: {exc}") from exc
+
+
+def journal_refusal(position: int, symbol: str) -> str | None:
+    """The broker's reason for the newest FAILED request in today's MT5 journal
+    that names this close (`close #<ticket>`) or, for an entry, this symbol:
+    the bracketed tail of the line, e.g. `[Market closed]`. None when the
+    journal has nothing (or cannot be read)."""
+    info = mt5.terminal_info()
+    if info is None:
+        return None
+    path = Path(info.data_path) / "logs" / f"{datetime.now():%Y%m%d}.log"
+    try:
+        lines = path.read_text(encoding="utf-16", errors="replace").splitlines()
+    except OSError:
+        return None
+    needle = f"close #{position} " if position else f" {symbol} "
+    for line in reversed(lines[-400:]):
+        if "failed" in line and needle in line and "[" in line:
+            return line[line.rfind("["):].strip()
+    return None
 
 
 def close_position(
@@ -597,6 +719,7 @@ def execute_command(fields: list[str]) -> dict[str, Any]:
         if target_ticket > 0 and not matches:
             raise BridgeError(f"managed position ticket {target_ticket} is unavailable")
         remaining = requested_volume
+        closed_positions = []
         for position in matches:
             close_volume = (
                 float(position.volume)
@@ -606,6 +729,7 @@ def execute_command(fields: list[str]) -> dict[str, Any]:
             fill.close_price, fill.ticket = close_position(
                 position, close_volume, magic, deviation, comment
             )
+            closed_positions.append(position)
             fill.fill_time = int(time.time())
             remaining = max(0.0, remaining - close_volume)
             if target_ticket > 0:
@@ -613,6 +737,11 @@ def execute_command(fields: list[str]) -> dict[str, Any]:
 
     if action in ("close", "flat"):
         recorded = wait_for_fill(command_id, action, issued_at) if fill.ticket else None
+        if recorded is None and fill.ticket and uses_hand():
+            # The hand's OUT deal has no comment: price the close from the
+            # position's own deals instead.
+            pnl = sum(position_pnl(int(p.ticket)) or 0.0 for p in closed_positions)
+            fill.mt5pnl = pnl
         return result_payload(command_id, True, recorded or fill)
 
     tick = mt5.symbol_info_tick(symbol)

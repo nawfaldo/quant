@@ -1,3 +1,4 @@
+pub mod challenge;
 pub mod combine;
 pub mod data;
 mod drawdown;
@@ -7,6 +8,7 @@ pub mod fills;
 pub mod fx;
 pub mod monte_carlo;
 pub(crate) mod prepare;
+mod pyrandom;
 mod report;
 mod request;
 pub(crate) mod types;

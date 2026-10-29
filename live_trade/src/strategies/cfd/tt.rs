@@ -412,6 +412,14 @@ enum Kind {
         prev: Option<(f64, f64)>,
         frame: TrendFrame,
     },
+    /// `qp_rsi_extreme`.
+    RsiExtreme {
+        level: f64,
+        both: bool,
+        stop_atr: f64,
+        rsi: TtRsi,
+        prev: f64,
+    },
     /// `twp_asia_london_ny`.
     AsiaLondonNy {
         tight: f64,
@@ -555,7 +563,7 @@ enum Kind {
         rsi: TtRsi,
         mean: CumSma,
     },
-    // ---- the FundedNext book's creator families (`fundednext/oct-18-2026`) ----
+    // ---- the FundedNext book's creator families (`fundednext/oct-21-2026`) ----
     /// `lux_htf_stoch_bucket`.
     HtfStochBucket {
         stoch: TtStochastic,
@@ -1298,6 +1306,13 @@ impl TtState {
                 seen: 0,
                 prev: None,
                 frame: TrendFrame::new(ema),
+            },
+            Family::QpRsiExtreme { level, both, stop_atr } => Kind::RsiExtreme {
+                level,
+                both,
+                stop_atr,
+                rsi: TtRsi::new(14),
+                prev: f64::NAN,
             },
             Family::TwpAsiaLondonNy { tight, win } => Kind::AsiaLondonNy {
                 tight,
@@ -2713,6 +2728,25 @@ impl TtState {
                     }
                 }
                 *prev = Some((r, re));
+            }
+            Kind::RsiExtreme {
+                level,
+                both,
+                stop_atr,
+                rsi,
+                prev,
+            } => {
+                let r = rsi.push(c.close);
+                let before = *prev;
+                *prev = r;
+                let distance = *stop_atr * a;
+                if i >= 1 && before.is_finite() && valid(distance) {
+                    if before < *level && *level <= r {
+                        event = Some((Side::Long, distance));
+                    } else if *both && before > 100.0 - *level && 100.0 - *level >= r {
+                        event = Some((Side::Short, distance));
+                    }
+                }
             }
             Kind::WillrRebound { hh, ll, prev, frame } => {
                 let (h, l) = (hh.push(c.high), ll.push(c.low));

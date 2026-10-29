@@ -333,6 +333,10 @@ fn family_candles(family: Family, session_bars: usize) -> usize {
         }
         // Twenty Asia widths, one a day, behind the median of ten.
         Family::TwpAsiaLondonNy { .. } => 21 * session_bars + wilder_convergence(14),
+        // Yesterday's out-of-session range and floor pivots: daily state.
+        Family::Overnight { .. } | Family::FloorPivot { .. } => 0,
+        Family::Amihud { long, lookback, .. } => (long + 1).max(lookback + 1),
+        Family::QpRsiExtreme { .. } => wilder_convergence(14) + 1,
     }
 }
 

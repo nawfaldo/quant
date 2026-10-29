@@ -39,6 +39,13 @@ const ETHUSD_SYMBOL: &str = "ethusd";
 /// briefly still has something to align against rather than dropping the sleeve
 /// silent.
 const BENCHMARK_RING_MINUTES: usize = 240;
+/// The break, 17:00:00 New York: `flatten_before_rollover` closes every
+/// FundedNext session ending at the rollover `flatten_lead_seconds` before it
+/// -- 16:54:00 on FX (no order from 16:55), 16:58:00 on gold/ustec, 16:56:00 on
+/// us500 -- as late as the market takes an order.
+/// 16:59:00 was refused `[Market closed]` every day 2026-10-22..24 and on
+/// Friday the position sat over the weekend.
+const ROLLOVER_BREAK_SECOND: i64 = 17 * 60 * 60;
 
 /// A live stream is identified by both market and source.  NQ is the one
 /// market where that distinction is load-bearing: the OHLCV continuum is
@@ -51,6 +58,7 @@ enum LiveFeed {
     LevelTwo,
 }
 mod quotes;
+pub mod replay;
 mod routing;
 mod slot;
 
@@ -170,6 +178,7 @@ async fn run(state: AppState) -> Result<(), crate::error::ApiError> {
     }
     let mut market_histories = HashMap::new();
     let mut market_latest = HashMap::new();
+    let mut prime_marks: HashMap<&'static str, Arc<Vec<(i64, f64)>>> = HashMap::new();
     // Every market the book trades except NQ, which has its own level-two and
     // OHLCV histories loaded above.
     for symbol in ohlcv_markets() {
@@ -186,6 +195,31 @@ async fn run(state: AppState) -> Result<(), crate::error::ApiError> {
         tracing::info!(%symbol, %from, to = %market_to, "loading active-market warm-up");
         let mut history = load_live_ohlcv_history(&state.store, symbol, &from, &market_to).await?;
         normalize_history(&mut history, completed);
+        // THE THROTTLE'S OWN HISTORY, from its fixed start to the warm-up:
+        // reduced to 30-minute closes on load, so a year and more of minutes
+        // costs a few hundred kilobytes rather than staying resident.
+        if live_sleeves_on(symbol).any(|sleeve| sleeve.book() == crate::strategies::cfd::Book::FundedNext)
+            && let Some(first) = history.first()
+        {
+            use crate::strategies::fundednext::oct_21_2026::{THROTTLE_FROM, throttle_marks};
+            let first_day = first.ts.div_euclid(86_400);
+            let from_day = THROTTLE_FROM.div_euclid(86_400);
+            let marks = if first_day <= from_day {
+                Vec::new()
+            } else {
+                let mut older = load_live_ohlcv_history(
+                    &state.store,
+                    symbol,
+                    &crate::backtest::data::format_day(from_day),
+                    &crate::backtest::data::format_day(first_day - 1),
+                )
+                .await?;
+                older.retain(|bar| bar.ts < first.ts);
+                throttle_marks(&older)
+            };
+            tracing::info!(%symbol, marks = marks.len(), "loaded sizing-throttle history");
+            prime_marks.insert(symbol, Arc::new(marks));
+        }
         market_histories.insert(symbol, history);
         market_latest.insert(symbol, completed);
     }
@@ -237,6 +271,7 @@ async fn run(state: AppState) -> Result<(), crate::error::ApiError> {
         ohlcv_history,
         market_histories,
         market_latest,
+        prime_marks,
         benchmark_closes,
         benchmark_latest,
         warm_strategies: warmup.strategies,
@@ -276,6 +311,11 @@ async fn run(state: AppState) -> Result<(), crate::error::ApiError> {
         ((SYMBOL, LiveFeed::Ohlcv), Instant::now()),
     ]);
     let mut feed_watchdog_fired = HashSet::new();
+    // A FundedNext market's vendor minute waits for the broker's own minute
+    // (`tools/fundednext_stream_1m.py`), at most this long.
+    const BROKER_WAIT: Duration = Duration::from_secs(20);
+    let mut broker_wait: HashMap<&'static str, (i64, Instant)> = HashMap::new();
+    let mut stream_alarm = false;
     loop {
         market.tick().await;
         let mut ready_bars: Vec<(&'static str, LiveFeed, Bar)> = Vec::new();
@@ -285,6 +325,31 @@ async fn run(state: AppState) -> Result<(), crate::error::ApiError> {
         // reading it seven times would be seven times the syscalls for the same
         // boolean. See `feed_daemon_is_polling`.
         let daemon_polling = feed_daemon_is_polling(&state.store);
+        // THE BROKER'S CLOCK, for the FundedNext book's broker-hours and
+        // fills-only checks. A dead stream cannot be told from a closed
+        // market, so the checks stop trusting it (`quotes::set_stream_health`):
+        // exits keep running on every vendor candle and no entry is sent.
+        let broker_through = if runtime.needs_fundednext() {
+            let through = quotes::stream_through(&state.store);
+            quotes::set_stream_health(through.is_some(), runtime.store_now());
+            if through.is_none() != stream_alarm {
+                stream_alarm = through.is_none();
+                if stream_alarm {
+                    tracing::error!("FundedNext minute stream is stale; FundedNext entries refused until it is back");
+                    state.portfolio_status.set(
+                        "feed_stale",
+                        latest,
+                        runtime.slots.len(),
+                        "FundedNext minute stream stale (tools/run_fundednext_stream.bat); entries refused",
+                    );
+                } else {
+                    tracing::info!("FundedNext minute stream is current again");
+                }
+            }
+            through
+        } else {
+            None
+        };
         refresh_ticks = refresh_ticks.wrapping_add(1);
         if refresh_ticks.is_multiple_of(4) {
             match runtime.refresh_targets(latest).await {
@@ -365,6 +430,18 @@ async fn run(state: AppState) -> Result<(), crate::error::ApiError> {
                     completed_watermarks.insert((symbol, LiveFeed::Ohlcv), completed);
                     while market_latest < completed {
                         let minute = market_latest + market_step(symbol);
+                        if let Some(through) = broker_through
+                            && minute > through
+                            && live_sleeves_on(symbol).any(|sleeve| sleeve.broker_hours())
+                        {
+                            let since = broker_wait.entry(symbol).or_insert((minute, Instant::now()));
+                            if since.0 != minute {
+                                *since = (minute, Instant::now());
+                            }
+                            if since.1.elapsed() < BROKER_WAIT {
+                                break;
+                            }
+                        }
                         match load_live_ohlcv_minute(&state.store, symbol, minute).await {
                             Ok(Some(mut bar)) => {
                                 runtime.attach_benchmark(symbol, &mut bar);
@@ -438,7 +515,7 @@ async fn run(state: AppState) -> Result<(), crate::error::ApiError> {
                     "feed_stale",
                     latest,
                     runtime.slots.len(),
-                    format!("{symbol} OHLCV feed stopped; managed positions were flattened"),
+                    format!("{symbol} OHLCV feed stopped; managed positions were flattened (FundedNext: entries blocked, held)"),
                 );
             } else if !stale {
                 runtime
@@ -602,6 +679,7 @@ async fn run(state: AppState) -> Result<(), crate::error::ApiError> {
         // Runs every tick rather than on a bar, because the case it exists for
         // is the market that has stopped producing them.
         runtime.flatten_overdue_sessions().await;
+        runtime.flatten_before_rollover().await;
         latest = latest.max(level_two_latest).max(nq_ohlcv_latest);
         state.portfolio_status.set_blocked(runtime.blocked_names());
         if state.portfolio_status.snapshot().phase != "feed_stale" {
@@ -694,6 +772,8 @@ struct PortfolioRuntime {
     ohlcv_history: Vec<Bar>,
     market_histories: HashMap<&'static str, Vec<Bar>>,
     market_latest: HashMap<&'static str, i64>,
+    /// Each FundedNext market's sizing-throttle seed (`prime_throttle`).
+    prime_marks: HashMap<&'static str, Arc<Vec<(i64, f64)>>>,
     /// Recent `(minute, close)` of each BENCHMARK market, newest last.
     ///
     /// `ind.align` carries the last benchmark close at or before a bar onto that
@@ -834,9 +914,21 @@ impl PortfolioRuntime {
                 continue;
             }
             if target.live_started_at == 0 {
+                // A FUNDEDNEXT SLEEVE GOES LIVE AT THE START OF ITS DAY, so the
+                // replay resets its trading state (the admission shadow, the
+                // day guard) exactly where a backtest from that day resets it
+                // (`tools/compare_live_backtest.py` runs one). A signal earlier
+                // that day the account never sent is held as a ghost, as the
+                // backtest holds the trade.
+                let start = match sleeve_of(&target.strategy).map(|sleeve| sleeve.book()) {
+                    Some(crate::strategies::cfd::Book::FundedNext) => {
+                        latest.div_euclid(86_400) * 86_400 - 1
+                    }
+                    _ => latest,
+                };
                 target.live_started_at = self
                     .db
-                    .set_live_strategy_start(target.account_strategy_id, latest)
+                    .set_live_strategy_start(target.account_strategy_id, start)
                     .await?;
             }
             let market = strategy_symbol(&target.strategy);
@@ -859,7 +951,12 @@ impl PortfolioRuntime {
             } else {
                 &self.ohlcv_history
             };
-            match LiveSlot::warm(target, history, &self.db).await {
+            let prime = self
+                .prime_marks
+                .get(market)
+                .map(|marks| marks.as_slice())
+                .unwrap_or(&[]);
+            match LiveSlot::warm(target, history, prime, &self.db).await {
                 Ok(slot) => {
                     self.slots.insert(slot.target.account_strategy_id, slot);
                 }
@@ -933,6 +1030,12 @@ impl PortfolioRuntime {
                 .find(|(ts, _)| *ts <= bar.ts)
                 .map(|(_, close)| *close)
         });
+    }
+
+    fn needs_fundednext(&self) -> bool {
+        self.slots.values().any(|slot| {
+            sleeve_of(&slot.target.strategy).is_some_and(|sleeve| sleeve.broker_hours())
+        })
     }
 
     fn needs_market(&self, symbol: &str) -> bool {
@@ -1107,8 +1210,103 @@ impl PortfolioRuntime {
         }
     }
 
+    /// FUNDEDNEXT CLOSES BEFORE ITS 17:00 BREAK, ALL AT ONCE, ON THE CLOCK.
+    ///
+    /// FundedNext refuses every order from 17:00 New York to about 17:15 (FX)
+    /// or 18:00 (gold, indices) while its FX quotes keep printing. A session
+    /// that ends at the rollover used to flatten when its last candle CLOSED --
+    /// 17:00:05 -- and logged `[Market closed]` until 17:20 on 2026-10-21. So at
+    /// `flatten_lead_seconds` before the break (16:54 FX, 16:58 gold/ustec, 16:56 us500) every FundedNext slot whose session
+    /// ends at the rollover (16:59 New York) and still holds is closed in one
+    /// pass, needing no bar. The strategy's own flatten then lands on a slot
+    /// already closing and finds nothing to do. The backtest prices it at
+    /// that same minute (`cfd_families.flatten_lead_seconds`).
+    async fn flatten_before_rollover(&mut self) {
+        let Some(second) = self.ny_second_of_day() else {
+            return;
+        };
+        // The earliest any market flattens; each slot checks its own below.
+        if !(ROLLOVER_BREAK_SECOND - 360..ROLLOVER_BREAK_SECOND).contains(&second) {
+            return;
+        }
+        let mut due: std::collections::BTreeMap<String, Vec<i64>> = std::collections::BTreeMap::new();
+        for (id, slot) in &self.slots {
+            let fundednext = sleeve_of(&slot.target.strategy)
+                .is_some_and(|sleeve| sleeve.book() == crate::strategies::cfd::Book::FundedNext);
+            let lead = crate::strategies::cfd::flatten_lead_seconds(strategy_symbol(&slot.target.strategy));
+            if fundednext
+                && second >= ROLLOVER_BREAK_SECOND - lead
+                && !slot.positions.is_empty()
+                && !slot.strategy.holds_overnight()
+                && slot.strategy.session_end_minute() == Some(ROLLOVER_BREAK_SECOND as usize / 60 - 1)
+                && !slot.positions.keys().all(|key| slot.pending_exits.contains_key(key))
+            {
+                due.entry(strategy_symbol(&slot.target.strategy).to_string())
+                    .or_default()
+                    .push(*id);
+            }
+        }
+        for (market, ids) in due {
+            tracing::info!(market, "FundedNext: flattening before the 17:00 break");
+            self.forced_flatten(&market, None, "session_end_rollover", false, Some(&ids))
+                .await;
+        }
+    }
+
+    /// The feed watchdog's stop.
+    ///
+    /// A FUNDEDNEXT SLOT IS ONLY BLOCKED, NOT CLOSED. Its vendor feed paused
+    /// ~30s five times 2026-10-21..23 and each flatten cut a position the
+    /// backtest held (ustec ptl_orb +$69 -> +$14, xauusd qp_rsi +$74 -> +$10).
+    /// Blocked, it takes no entry until the feed advances again
+    /// (`clear_feed_blocks`); its own exits still go out, and a feed that stays
+    /// dead is still closed at the session end on the clock
+    /// (`flatten_overdue_sessions`, `flatten_before_rollover`) -- no FundedNext
+    /// sleeve holds overnight. Every other book is flattened as before.
     async fn emergency_flatten(&mut self, market: &str, feed: Option<LiveFeed>, reason: &str) {
-        self.forced_flatten(market, feed, reason, true, None).await;
+        let mut held = Vec::new();
+        let mut flatten = Vec::new();
+        for (id, slot) in &self.slots {
+            if strategy_symbol(&slot.target.strategy) != market
+                || (market == SYMBOL
+                    && feed.is_some_and(|wanted| strategy_feed(&slot.target.strategy) != wanted))
+            {
+                continue;
+            }
+            let fundednext = sleeve_of(&slot.target.strategy)
+                .is_some_and(|sleeve| sleeve.book() == crate::strategies::cfd::Book::FundedNext);
+            if fundednext {
+                held.push(*id);
+            } else {
+                flatten.push(*id);
+            }
+        }
+        let timestamp = self
+            .market_histories
+            .get(market)
+            .and_then(|history| history.last())
+            .map(|bar| format_ts(bar.ts + market_step(market)))
+            .unwrap_or_default();
+        for id in held {
+            let Some(slot) = self.slots.get_mut(&id) else {
+                continue;
+            };
+            if slot.blocked.is_none() {
+                slot.blocked = Some(BlockReason::Feed);
+            }
+            if slot.positions.is_empty() {
+                continue;
+            }
+            let (account_strategy_id, strategy) =
+                (slot.target.account_strategy_id, slot.target.strategy.clone());
+            tracing::warn!(%strategy, market, reason, "feed paused; entries blocked, position held");
+            self.db
+                .log_live_event(account_strategy_id, &strategy, "feed_paused", "", &timestamp, reason)
+                .await;
+        }
+        if !flatten.is_empty() {
+            self.forced_flatten(market, feed, reason, true, Some(&flatten)).await;
+        }
     }
 
     /// Hand back a sleeve the feed watchdog stopped, once its market is

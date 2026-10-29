@@ -21,7 +21,12 @@ pub(super) fn sleeve_of(strategy: &str) -> Option<Sleeve> {
 fn live_sleeves() -> impl Iterator<Item = Sleeve> {
     oct_12_2026::BOOK
         .into_iter()
-        .chain(crate::strategies::fundednext::oct_18_2026::BOOK)
+        .chain(crate::strategies::fundednext::oct_21_2026::BOOK)
+}
+
+/// The live sleeves trading `market`.
+pub(super) fn live_sleeves_on(market: &str) -> impl Iterator<Item = Sleeve> + '_ {
+    live_sleeves().filter(move |sleeve| sleeve.market() == market)
 }
 
 /// FundedNext's own name for a market's CFD (`fundednext_specs.json`
@@ -29,6 +34,7 @@ fn live_sleeves() -> impl Iterator<Item = Sleeve> {
 fn fundednext_symbol(market: &str) -> Option<&'static str> {
     Some(match market {
         "audusd" => "AUDUSD",
+        "eurjpy" => "EURJPY",
         "eurusd" => "EURUSD",
         "gbpusd" => "GBPUSD",
         "gbpjpy" => "GBPJPY",
@@ -488,7 +494,7 @@ impl WarmupPlan {
 
 pub fn supports(strategy: &str) -> bool {
     LIVE_STRATEGIES.contains(&strategy)
-        || crate::strategies::fundednext::oct_18_2026::BOOK
+        || crate::strategies::fundednext::oct_21_2026::BOOK
             .iter()
             .any(|sleeve| sleeve.id() == strategy)
 }
@@ -539,6 +545,11 @@ pub(super) fn build_strategy(strategy: &str) -> Option<Box<dyn Strategy>> {
     sleeve_of(strategy).map(|sleeve| {
         let mut strategy = CfdSleeve::new(sleeve, 0.01);
         strategy.enable_early_fills();
+        // The challenge account sizes off at most its own $6,000, as the
+        // challenge Monte Carlo the book was chosen on does.
+        if sleeve.book() == crate::strategies::cfd::Book::FundedNext {
+            strategy.set_sizing_cap(crate::strategies::fundednext::oct_21_2026::INITIAL_BALANCE);
+        }
         if sleeve.broker_hours()
             && let Some(table) = crate::backtest::fills::broker_minute_table(sleeve.market(), sleeve.book())
             && let Some(quotes) = super::quotes::for_table(&table)

@@ -12,6 +12,33 @@ use super::*;
 use crate::backtest::fills::{FillCoverage, MarketFills};
 use std::sync::Arc;
 
+/// `cfd_families.FLATTEN_LEAD_SECONDS`: a FundedNext session ending at the 17:00
+/// rollover is flattened this long before its last candle ends -- at 16:54:00 (FX), 16:58:00,
+/// on the clock, by `live::portfolio`'s `flatten_before_rollover` -- and never
+/// lands in FundedNext's daily break (FX refuses orders 17:00-~17:15;
+/// 2026-10-21 logged `[Market closed]` until 17:20, and 16:59:00 was refused
+/// every day 2026-10-22..24), as late as the market allows: FX takes no order
+/// from 16:55, so 16:54:00; gold and ustec trade to 17:00, so 16:58:00; us500 stops
+/// quoting at ~16:57 (16:56 on some Fridays), so 16:56:00
+/// (`flatten_lead_seconds`).. The backtest prices it at
+/// that minute plus the bridge queue.
+pub(crate) const FLATTEN_LEAD_SECONDS: i64 = 120;
+
+/// `cfd_families.flatten_lead_seconds`: `FLATTEN_LEAD_SECONDS`, or longer on a
+/// market that stops quoting before 16:59.
+pub(crate) fn flatten_lead_seconds(market: &str) -> i64 {
+    match market {
+        "us500" => 240,
+        "xauusd" | "xagusd" => FLATTEN_LEAD_SECONDS,
+        // FX takes no order from 16:55 (`backtest::fills::fundednext_closed`).
+        _ if market.len() == 6 && market.bytes().all(|b| b.is_ascii_alphabetic()) => 360,
+        _ => FLATTEN_LEAD_SECONDS,
+    }
+}
+
+/// The rollover close on the broker-day clock: 16:59 New York, shifted +7h.
+const ROLLOVER_CLOSE_MINUTE: i64 = 1_439;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Direction {
     /// Take the raw side the trigger produces.
@@ -486,7 +513,7 @@ pub(crate) enum Family {
         lo: f64,
         stop_atr: f64,
     },
-    // ---- the FundedNext book's `cfd_families` cells (`fundednext/oct-18-2026`) ----
+    // ---- the FundedNext book's `cfd_families` cells (`fundednext/oct-21-2026`) ----
     /// `skew`: the rolling skewness of `period` one-bar log returns past
     /// `threshold` (`positive`: above it, else below minus it), traded on a
     /// DECLARED side (`long`). A swing family run `SESSION_ONLY`; no `_late`.
@@ -681,6 +708,25 @@ pub(crate) enum Family {
         polarity: Polarity,
         gate_period: usize,
     },
+    /// `overnight` (`usoil_families_research`): a close beyond the range the
+    /// market printed OUTSIDE the session before today's.
+    Overnight {
+        buffer_atr: f64,
+    },
+    /// `amihud`: short-against-long illiquidity sets the state, the
+    /// `unit`-candle move sets the side.
+    Amihud {
+        short: usize,
+        long: usize,
+        ratio: f64,
+        illiquid: bool,
+        lookback: usize,
+    },
+    /// `floor_pivot`: yesterday's pivot (0), R1/S1 (1) or R2/S2 (2).
+    FloorPivot {
+        buffer_atr: f64,
+        level: u8,
+    },
     // ---- the 2026-10-18 book's TikTok cells (`tt`) ----
     AvFirstHourFib {
         entry: f64,
@@ -706,6 +752,11 @@ pub(crate) enum Family {
     TwpAsiaLondonNy {
         tight: f64,
         win: i64,
+    },
+    QpRsiExtreme {
+        level: f64,
+        both: bool,
+        stop_atr: f64,
     },
 }
 
@@ -754,6 +805,7 @@ impl Family {
                 | Self::TrOscillatorRebound { .. }
                 | Self::TrRvi { .. }
                 | Self::TwpAsiaLondonNy { .. }
+                | Self::QpRsiExtreme { .. }
         )
     }
 }
@@ -1177,6 +1229,11 @@ pub(crate) struct FamilyEngine {
     pub(crate) vol_of_vol: Option<VolOfVol>,
     /// The previous candle's close, for `key_reversal`.
     pub(crate) previous_close: Option<f64>,
+    /// `ctx["overnight"]`: per day, the high and low of the candles outside the
+    /// session (those at or after the close count toward the next day).
+    pub(crate) outside: Option<std::collections::BTreeMap<i64, (f64, f64)>>,
+    /// `ctx["amihud"]` at the two periods.
+    pub(crate) amihud: Option<(Amihud, Amihud)>,
 
     // ---- trading state ----
     /// How many in-session candles this engine has stepped, which is Python's
@@ -1201,6 +1258,18 @@ pub(crate) struct FamilyEngine {
     /// Live `CFD_BROKER_HOURS` (`BrokerQuotes`); `None` in every backtest,
     /// whose bars arrive already filtered.
     pub(crate) quotes: Option<Arc<dyn super::BrokerQuotes>>,
+    /// FundedNext: the sizing balance is `min(balance, cap)`, the challenge's
+    /// fixed $6,000 (`book_lots`' `sizing_cap`). Set by the live runtime and by
+    /// live-rules backtests; `None` compounds on the whole balance.
+    pub(crate) sizing_cap: Option<f64>,
+    /// Backtest only: the series' own `daily_multipliers` (day -> multiplier),
+    /// built from its 30-minute broker-quoted bars exactly as `replay` builds
+    /// `vol_mult`. Live folds the same bars itself.
+    pub(crate) throttle_table: Option<Arc<std::collections::HashMap<i64, f64>>>,
+    /// The multiplier of the fill being sized, read from `throttle_table`.
+    pub(crate) fill_mult: Option<f64>,
+    /// The points of the position closed last (`exit_points`).
+    pub(crate) exit_points: Option<f64>,
     /// The whole entry charge, bp of the fill, for the fill just emitted --
     /// `Some` only when the broker table priced its spread, so the engine keeps
     /// its constant whenever this sleeve fell back to it.
@@ -1214,6 +1283,15 @@ pub(crate) struct FamilyEngine {
     /// The `candles` index of a candle whose entry was filled early, so its own
     /// `on_candle` can skip what the ordinary path never saw that position do.
     pub(crate) early_filled_candle: Option<u64>,
+    /// LIVE `EXNESS_FILLS_ONLY`: a fill waiting for the broker's minute row at
+    /// its candle's open -- `(candle_ts, candle_open, entry_candle)`. See
+    /// `live_fill_gate`.
+    pub(crate) awaiting_fill: Option<(i64, f64, u64)>,
+    /// LIVE `CFD_BROKER_HOURS`: the source bars of the forming candle, whose
+    /// per-bar readings (`observe_source_bar`) wait for the candle to close --
+    /// a candle the broker turns out not to have quoted never reached the
+    /// backtest at all, so none of its minutes may count.
+    pub(crate) deferred_source: Vec<Bar>,
     /// A live entry already SENT at its signal, to be re-based onto the fill
     /// candle's real open when that candle's first minute arrives. See
     /// `send_at_signal`.
@@ -1340,6 +1418,8 @@ impl FamilyEngine {
             quantile: None,
             vol_of_vol: None,
             previous_close: None,
+            outside: None,
+            amihud: None,
             candles: 0,
             traded_day: None,
             pending: None,
@@ -1349,10 +1429,16 @@ impl FamilyEngine {
             fills: None,
             unfillable: None,
             quotes: None,
+            sizing_cap: None,
+            throttle_table: None,
+            fill_mult: None,
+            exit_points: None,
             entry_cost_bp: None,
             coverage: FillCoverage::default(),
             fill_early: false,
             early_filled_candle: None,
+            awaiting_fill: None,
+            deferred_source: Vec::new(),
             provisional: None,
             last_target_distance: None,
             entry_days: sleeve.entry_days(),
@@ -1407,6 +1493,10 @@ impl FamilyEngine {
         {
             return None;
         }
+        self.fill_mult = self
+            .throttle_table
+            .as_ref()
+            .map(|table| table.get(&day).copied().unwrap_or(1.0));
         let broker_entry = self
             .fills
             .as_ref()
@@ -1420,7 +1510,21 @@ impl FamilyEngine {
             let fillable = match (&self.fills, &self.unfillable) {
                 (Some(_), _) => broker_entry.is_some(),
                 (None, Some(gate)) => !gate.contains(&candle_ts),
-                (None, None) => true,
+                (None, None) => match self.live_fill_gate() {
+                    // LIVE: the backtest's own question, asked of the broker
+                    // minute table the streamer keeps. Not known yet: the
+                    // signal stays pending and the fill is retried on the
+                    // candle's next bars (`retry_awaiting_fill`).
+                    Some(quotes) => match quotes.fill_minute(candle_ts - self.spec.shift_hours * 3_600) {
+                        Some(answer) => answer,
+                        None => {
+                            self.pending = Some(pending);
+                            self.awaiting_fill = Some((candle_ts, candle_open, entry_candle));
+                            return None;
+                        }
+                    },
+                    None => true,
+                },
             };
             if !fillable {
                 return None;
@@ -1430,9 +1534,6 @@ impl FamilyEngine {
         // Stage one: does this trade exist at all? See `ADMISSION_BALANCE`.
         let shadow_lots = self.admission_lots(entry, pending.distance, pending.realized)?;
         // Stage two: how large is it against the shared balance?
-        if std::env::var("FN_SIZE_DBG").is_ok_and(|want| want == self.sleeve.python_key()) {
-            eprintln!("SIZEDBG {} ts {} equity {:?} mult {:?} distance {:?}", self.sleeve.python_key(), candle_ts, equity, self.volatility_multiplier.value(), pending.distance);
-        }
         let quantity = self.quantity(equity, entry, pending.distance)?;
         let broker_spread = self
             .fills
@@ -1477,7 +1578,7 @@ impl FamilyEngine {
                 Side::Short => entry + pending.distance,
             },
             distance: pending.distance,
-            mult: self.volatility_multiplier.value(),
+            mult: self.mult_now(),
             target: target.map(|distance| match pending.side {
                 Side::Long => entry + distance,
                 Side::Short => entry - distance,
@@ -1529,6 +1630,13 @@ impl FamilyEngine {
         equity: f64,
     ) -> Option<Action> {
         if !self.fill_early || self.position.is_some() || self.provisional.is_some() {
+            return None;
+        }
+        // A FILLS_ONLY sleeve cannot know at its signal whether the backtest
+        // fills: that is the broker's minute row at the fill candle's open,
+        // which does not exist yet. It goes out once that row is in
+        // (`fill_pending`, `retry_awaiting_fill`).
+        if self.live_fill_gate().is_some() {
             return None;
         }
         let pending = self.pending?;
@@ -1651,13 +1759,20 @@ impl FamilyEngine {
     /// target, session flatten, clock -- because every one of them is a market
     /// order the runtime sends once the candle has rolled. The idealised price
     /// survives only where the broker table does not reach.
-    fn exit_fill(&mut self, candle_ts: i64, candle_open: f64, idealised: f64) -> f64 {
+    ///
+    /// `early`: a FundedNext rollover session flattened before 17:00 on the clock
+    /// (`FLATTEN_LEAD_SECONDS`), priced at that minute instead --
+    /// `ef.backtest`'s `flatten_at`.
+    fn exit_fill(&mut self, candle_ts: i64, candle_open: f64, idealised: f64, early: bool) -> f64 {
         self.coverage.exits += 1;
-        match self
-            .fills
-            .as_ref()
-            .and_then(|fills| fills.exit_after(candle_ts, candle_open, self.bar_seconds))
-        {
+        let bar_seconds = self.bar_seconds;
+        match self.fills.as_ref().and_then(|fills| {
+            if early {
+                fills.flatten_after(candle_ts, candle_open, bar_seconds, flatten_lead_seconds(self.sleeve.market()))
+            } else {
+                fills.exit_after(candle_ts, candle_open, bar_seconds)
+            }
+        }) {
             Some(price) => {
                 self.coverage.exits_priced += 1;
                 price
@@ -1869,7 +1984,17 @@ impl FamilyEngine {
                 }
                 self.arm_gate(gate, gate_period);
             }
-            Family::DayOfWeek { .. } | Family::RegimeBreakout { .. } => {}
+            Family::DayOfWeek { .. } | Family::RegimeBreakout { .. } | Family::FloorPivot { .. } => {}
+            Family::Overnight { .. } => {
+                self.outside = Some(std::collections::BTreeMap::new());
+            }
+            Family::Amihud {
+                short, long, lookback, ..
+            } => {
+                self.amihud = Some((Amihud::new(short), Amihud::new(long)));
+                let _ = lookback;
+                self.closes = Some(CloseHistory::new());
+            }
             Family::KeyReversal { channel } => {
                 self.channel_high = Some(RollingExtreme::new(channel, true));
                 self.channel_low = Some(RollingExtreme::new(channel, false));
@@ -1949,7 +2074,8 @@ impl FamilyEngine {
             | Family::QttRsiEmaRetest { .. }
             | Family::TrOscillatorRebound { .. }
             | Family::TrRvi { .. }
-            | Family::TwpAsiaLondonNy { .. } => {
+            | Family::TwpAsiaLondonNy { .. }
+            | Family::QpRsiExtreme { .. } => {
                 self.tt = super::tt::TtState::new(self.params.family, self.bar_seconds / 60);
                 if let Some(tt) = &mut self.tt {
                     tt.set_shift(self.spec.shift_hours);
@@ -1987,7 +2113,7 @@ impl FamilyEngine {
         if self.canon_replay || self.sleeve.book() != Book::FundedNext {
             return None;
         }
-        crate::strategies::fundednext::oct_18_2026::contracts::last_print_minute(
+        crate::strategies::fundednext::oct_21_2026::contracts::last_print_minute(
             self.sleeve.market(),
             self.spec.shift_hours,
             self.spec.session.1,
@@ -2202,6 +2328,10 @@ impl FamilyEngine {
         if let Some(pivots) = &mut self.pivots {
             pivots.push(candle);
         }
+        if let Some((short, long)) = &mut self.amihud {
+            short.push(candle);
+            long.push(candle);
+        }
         if let Some(macd) = &mut self.macd {
             macd.push(candle.close);
         }
@@ -2292,8 +2422,15 @@ impl FamilyEngine {
             equity,
             entry,
             distance,
-            self.volatility_multiplier.value(),
+            self.mult_now(),
+            self.sizing_cap,
         )
+    }
+
+    /// The sizing multiplier: the backtest's table for this fill, else the
+    /// streaming throttle.
+    fn mult_now(&self) -> f64 {
+        self.fill_mult.unwrap_or_else(|| self.volatility_multiplier.value())
     }
 
     /// `cfd_families.quantity`: the STANDALONE rule, at `ADMISSION_BALANCE`.
@@ -2488,6 +2625,16 @@ impl FamilyEngine {
             }
             Family::Stochastic { threshold, .. } => self.stochastic_signal(minute, threshold),
             Family::DayOfWeek { weekday, long } => self.day_of_week(candle, weekday, long),
+            Family::Overnight { buffer_atr } => self.overnight(candle, minute, buffer_atr),
+            Family::Amihud {
+                ratio,
+                illiquid,
+                lookback,
+                ..
+            } => self.amihud_signal(candle, minute, ratio, illiquid, lookback),
+            Family::FloorPivot { buffer_atr, level } => {
+                self.floor_pivot(candle, minute, buffer_atr, level)
+            }
             Family::KeyReversal { .. } => self.key_reversal(candle, minute),
             Family::SwingBreak { .. } => self.swing_break(candle, minute),
             Family::Structure { continuation, .. } => self.structure(candle, minute, continuation),
@@ -2556,7 +2703,8 @@ impl FamilyEngine {
             | Family::QttRsiEmaRetest { .. }
             | Family::TrOscillatorRebound { .. }
             | Family::TrRvi { .. }
-            | Family::TwpAsiaLondonNy { .. } => None,
+            | Family::TwpAsiaLondonNy { .. }
+            | Family::QpRsiExtreme { .. } => None,
         }
     }
 
@@ -3752,6 +3900,76 @@ impl FamilyEngine {
     /// each pairwise comparison, so one violent bar contributes at most its
     /// share of the count -- measured at a 2.0% loss against a least-squares
     /// slope's 6.9% on the same contaminated window.
+    /// `overnight_signal`: its own cutoff check first, then the window.
+    pub(crate) fn overnight(&self, candle: &Candle, minute: i64, buffer_atr: f64) -> Option<Side> {
+        if self.late(minute) {
+            return None;
+        }
+        let (high, low) = *self.outside.as_ref()?.get(&self.day_of(candle.ts))?;
+        let atr = self.atr.value().filter(|atr| *atr > 0.0)?;
+        let raw = if candle.close > high + buffer_atr * atr {
+            Side::Long
+        } else if candle.close < low - buffer_atr * atr {
+            Side::Short
+        } else {
+            return None;
+        };
+        Some(self.params.direction.apply(raw))
+    }
+
+    /// `amihud_signal`.
+    pub(crate) fn amihud_signal(
+        &self,
+        candle: &Candle,
+        minute: i64,
+        ratio: f64,
+        illiquid: bool,
+        lookback: usize,
+    ) -> Option<Side> {
+        let (short, long) = self.amihud.as_ref()?;
+        let fast = short.value?;
+        let slow = long.value.filter(|slow| *slow > 0.0)?;
+        if self.late(minute) {
+            return None;
+        }
+        if (fast / slow >= ratio) != illiquid {
+            return None;
+        }
+        self.unit_move(candle, lookback)
+    }
+
+    /// `floor_pivot_signal`. The raw side is the fade; `follow` inverts it.
+    pub(crate) fn floor_pivot(&self, candle: &Candle, minute: i64, buffer_atr: f64, level: u8) -> Option<Side> {
+        let (pivot, r1, s1, r2, s2) = self.prior.pivots?;
+        let atr = self.atr.value().filter(|atr| *atr != 0.0 && !atr.is_nan())?;
+        if self.late(minute) {
+            return None;
+        }
+        let edge = buffer_atr * atr;
+        let raw = if level == 0 {
+            if candle.close > pivot + edge {
+                Side::Long
+            } else if candle.close < pivot - edge {
+                Side::Short
+            } else {
+                return None;
+            }
+        } else {
+            let (resistance, support) = if level == 1 { (r1, s1) } else { (r2, s2) };
+            if candle.high >= resistance - edge && candle.close < resistance {
+                Side::Short
+            } else if candle.low <= support + edge && candle.close > support {
+                Side::Long
+            } else {
+                return None;
+            }
+        };
+        Some(match self.params.direction {
+            Direction::Fade => raw,
+            Direction::Follow => Direction::Fade.apply(raw),
+        })
+    }
+
     /// `day_of_week_signal`: `es.weekday` of the candle's own (shifted) stamp.
     pub(crate) fn day_of_week(&self, candle: &Candle, weekday: i64, long: bool) -> Option<Side> {
         if (self.day_of(candle.ts) + 3).rem_euclid(7) != weekday {
@@ -4263,7 +4481,6 @@ impl FamilyEngine {
         // Inclusive readings first: at this point every one of them holds what
         // the Python array holds at this index. The channels deliberately do
         // not, and are pushed at the end.
-        let day_changed = self.session.day != Some(day);
         self.session.push(&candle, day);
         self.prior.push(&candle, day);
         self.push_inclusive(&candle, day);
@@ -4283,8 +4500,14 @@ impl FamilyEngine {
         // keys the throttle per MARKET on the context bars of the 30m cells, so
         // a 5m candle's close is not the day's close it uses; `update_all` feeds
         // those sleeves from the source bars instead (`fold_throttle`).
+        //
+        // THE DAY IS THE THROTTLE'S OWN (`vol_day`), not the session path's:
+        // the two agree on every candle that pushes, and only the throttle's
+        // survives `prime_throttle`, which runs before the first candle.
         if !self.throttle_from_source() && self.throttle_counts(candle.ts) {
-            self.volatility_multiplier.push(candle.close, day_changed);
+            let changed = self.vol_day != Some(day);
+            self.vol_day = Some(day);
+            self.volatility_multiplier.push(candle.close, changed);
         }
 
         let mut actions = Vec::new();
@@ -4294,6 +4517,7 @@ impl FamilyEngine {
         //    which is why it is an `else` in the Python rather than a step.
         if !filled_early && let Some(position) = &mut self.position {
             let mut price = None;
+            let mut early = false;
             // UNCONDITIONAL, because `family_hold` is "session" for all
             // twenty-two families this book selects. Python's `swing` branch
             // is `daily or (hold in ("swing", "overnight") and not
@@ -4320,6 +4544,13 @@ impl FamilyEngine {
             // until its own stop, target, trail or clock (`swing` in Python).
             if !self.sleeve.multiday() && (minute >= close_minute || last_of_day) {
                 price = Some(candle.open);
+                // A FundedNext session ending at the rollover, on its last
+                // candle by the clock: live closed it on the clock before 17:00.
+                early = self.sleeve.book() == Book::FundedNext
+                    && close_minute == ROLLOVER_CLOSE_MINUTE
+                    && last_of_day
+                    && minute < close_minute
+                    && minute + self.bar_seconds / 60 > close_minute;
             } else {
                 let stop = position.stop;
                 let breached = match position.side {
@@ -4362,8 +4593,19 @@ impl FamilyEngine {
             }
             match price {
                 Some(idealised) => {
-                    let price = self.exit_fill(candle.ts, candle.open, idealised);
+                    let price = self.exit_fill(candle.ts, candle.open, idealised, early);
                     let closed = self.position.take().expect("checked just above");
+                    // `backtest`'s own `points`: the gross move less `cost_price`,
+                    // in its operation order, for the challenge's edge cuts.
+                    let gross = match closed.side {
+                        Side::Long => price - closed.entry,
+                        Side::Short => closed.entry - price,
+                    };
+                    self.exit_points = Some(
+                        gross
+                            - (closed.entry * (closed.spread_bp + SLIPPAGE_BP) / 10_000.0
+                                + self.spec.commission_price(closed.entry)),
+                    );
                     self.settle_shadow(&closed, price);
                     actions.push(Action::Close {
                         price,
@@ -4520,9 +4762,16 @@ impl FamilyEngine {
     /// Canon replay of the FundedNext book: Python's replay marks, and so
     /// throttles, only on bars from `WARMUP_DAYS` before `LOG_START`
     /// (`fundednext_combined_strategies.load_state`), whatever the window.
+    ///
+    /// Every other FundedNext run -- live included -- starts it at the fixed
+    /// `THROTTLE_FROM` too, so a sleeve warmed from any day carries the same
+    /// multiplier (`prime_throttle` covers the days before its warm-up).
     fn throttle_counts(&self, ts: i64) -> bool {
-        !(self.canon_replay && self.sleeve.book() == Book::FundedNext)
-            || ts >= crate::strategies::fundednext::oct_18_2026::CANON_THROTTLE_FROM
+        use crate::strategies::fundednext::oct_21_2026::{CANON_THROTTLE_FROM, THROTTLE_FROM};
+        if self.sleeve.book() != Book::FundedNext {
+            return true;
+        }
+        ts >= if self.canon_replay { CANON_THROTTLE_FROM } else { THROTTLE_FROM }
     }
 
     fn throttle_from_source(&self) -> bool {
@@ -4541,6 +4790,139 @@ impl FamilyEngine {
         };
         let start = ts - self.spec.shift_hours * 3_600;
         quotes.quoted_real(start, start + width)
+    }
+
+    /// Whether per-bar readings wait for their candle's broker verdict: live
+    /// only (quotes, no fills table), and only under `CFD_BROKER_HOURS`.
+    fn defers_source(&self) -> bool {
+        self.sleeve.broker_hours() && self.quotes.is_some() && self.fills.is_none()
+    }
+
+    /// The readings every source bar feeds before its candle exists: the TT
+    /// family's source tables and the out-of-session ranges.
+    fn observe_source_bar(&mut self, bar: Bar) {
+        let width = self.bar_seconds;
+        let slot = (bar.ts + self.spec.shift_hours * 3_600).div_euclid(width);
+        if let Some(tt) = &mut self.tt {
+            tt.observe_source(bar.ts, bar.open, bar.high, bar.low);
+        }
+        if let Some(outside) = &mut self.outside {
+            // `anchors(full)`: by the CANDLE's start minute on the shifted clock.
+            let opening = slot * width;
+            let (open, close) = self.spec.session;
+            let minute = opening.rem_euclid(86_400) / 60;
+            let mut day = opening.div_euclid(86_400);
+            if minute >= close {
+                day += 1;
+            }
+            if minute < open || minute >= close {
+                let item = outside.entry(day).or_insert((bar.high, bar.low));
+                item.0 = item.0.max(bar.high);
+                item.1 = item.1.min(bar.low);
+                while outside.len() > 8 {
+                    outside.pop_first();
+                }
+            }
+        }
+    }
+
+    /// The candle opening at `candle_ts` has closed: its deferred source bars
+    /// count if the broker quoted it, and are dropped if not.
+    fn release_source(&mut self, candle_ts: i64, width: i64) {
+        if self.deferred_source.is_empty() {
+            return;
+        }
+        let shift = self.spec.shift_hours * 3_600;
+        let slot = candle_ts.div_euclid(width);
+        let quoted = self.candle_quoted(candle_ts, width);
+        let bars = std::mem::take(&mut self.deferred_source);
+        for bar in bars {
+            let own = (bar.ts + shift).div_euclid(width);
+            if own == slot {
+                if quoted {
+                    self.observe_source_bar(bar);
+                }
+            } else if own > slot {
+                self.deferred_source.push(bar);
+            }
+        }
+    }
+
+    /// The live broker-quote source a FILLS_ONLY sleeve gates its fills on:
+    /// only live (no fills table, no fixture gate) and only a sleeve sealed
+    /// under both `CFD_BROKER_HOURS` and `EXNESS_FILLS_ONLY`.
+    fn live_fill_gate(&self) -> Option<Arc<dyn super::BrokerQuotes>> {
+        if !self.sleeve.fills_only() || self.fills.is_some() || self.unfillable.is_some() {
+            return None;
+        }
+        self.quotes.as_ref().filter(|_| self.sleeve.broker_hours()).cloned()
+    }
+
+    /// A fill `fill_pending` deferred, asked again on a later bar of its own
+    /// candle (`slot`): sent the moment the broker row says yes, dropped (the
+    /// signal refused, as the backtest refuses it) the moment it says no.
+    fn retry_awaiting_fill(&mut self, slot: i64, equity: f64) -> Option<Action> {
+        let (candle_ts, candle_open, entry_candle) = self.awaiting_fill?;
+        if candle_ts.div_euclid(self.bar_seconds) != slot {
+            return None;
+        }
+        let quotes = self.live_fill_gate()?;
+        if quotes.fill_minute(candle_ts - self.spec.shift_hours * 3_600)? {
+            self.awaiting_fill = None;
+            let enter = self.fill_pending(candle_ts, candle_open, equity, entry_candle)?;
+            self.early_filled_candle = Some(entry_candle);
+            if self.action_timestamp.is_none() {
+                self.action_timestamp = Some(candle_ts - self.spec.shift_hours * 3_600);
+            }
+            Some(enter)
+        } else {
+            self.awaiting_fill = None;
+            self.pending = None;
+            None
+        }
+    }
+
+    /// The candle a deferred fill waited on has closed with the answer still
+    /// unknown -- the broker printed no row at its open. If the broker quoted
+    /// the candle at all, the backtest has it and refused the fill there; if
+    /// not, the backtest never saw the candle and carries the signal on.
+    fn resolve_awaiting_fill(&mut self, candle_ts: i64, width: i64) {
+        if self.awaiting_fill.is_some_and(|(ts, _, _)| ts == candle_ts) {
+            self.awaiting_fill = None;
+            if self.candle_quoted(candle_ts, width) {
+                self.pending = None;
+            }
+        }
+    }
+
+    /// Seeds the sizing throttle from `marks` -- the market's last close in
+    /// every 30-minute slot, `(bar_ts, close)`, from `THROTTLE_FROM` up to the
+    /// first warm-up bar -- exactly as stepping those bars would have folded
+    /// them. Only the throttle: no candle, indicator or position sees them.
+    ///
+    /// WHY. The throttle is a 20-day-half-life EWMA of daily returns, seeded at
+    /// its first day, so it never forgets where it started: a live server and
+    /// a backtest warmed from different days sized the same trade with
+    /// multipliers 1e-8 apart, which is a lot flip waiting to happen. Both now
+    /// start it at the same fixed day, whatever day they were started.
+    pub(crate) fn prime_throttle(&mut self, marks: &[(i64, f64)]) {
+        for &(bar_ts, close) in marks {
+            let ts = bar_ts + self.spec.shift_hours * 3_600;
+            let slot = ts.div_euclid(BAR_SECONDS) * BAR_SECONDS;
+            if !self.candle_quoted(slot, BAR_SECONDS) {
+                continue;
+            }
+            if !self.whole_day_throttle() && !self.in_session(self.minute_of(slot)) {
+                continue;
+            }
+            if !self.throttle_counts(ts) {
+                continue;
+            }
+            let day = self.day_of(ts);
+            let changed = self.vol_day != Some(day);
+            self.vol_day = Some(day);
+            self.volatility_multiplier.push(close, changed);
+        }
     }
 
     fn fold_throttle(&mut self, ts: i64, close: f64) {
@@ -4588,13 +4970,16 @@ impl Strategy for FamilyEngine {
             }
         }
         self.last_bar_ts = Some(ts);
-        if let Some(tt) = &mut self.tt {
-            tt.observe_source(bar.ts, bar.open, bar.high, bar.low);
+        let defer = self.defers_source();
+        if !defer {
+            self.observe_source_bar(bar);
         }
         let mut actions = Vec::new();
         if self.slot != Some(slot) {
             if let Some(candle) = self.building.take() {
                 let minute = self.minute_of(candle.ts);
+                self.resolve_awaiting_fill(candle.ts, width);
+                self.release_source(candle.ts, width);
                 if self.in_session(minute) && self.candle_quoted(candle.ts, width) {
                     // WHETHER THAT CANDLE WAS THE DAY'S LAST, ANSWERED BY THE
                     // SLOT THAT ENDED IT.
@@ -4632,6 +5017,9 @@ impl Strategy for FamilyEngine {
             // After the closed candle has been stepped on the day it belongs to,
             // before anything is filled on the new one.
             self.fold_throttle(ts, bar.close);
+            if defer {
+                self.deferred_source.push(bar);
+            }
             self.slot = Some(slot);
             self.building = Some(Candle {
                 ts: slot * width,
@@ -4673,8 +5061,18 @@ impl Strategy for FamilyEngine {
             candle.low = candle.low.min(bar.low);
             candle.close = bar.close;
             candle.volume += bar.volume;
+            if defer {
+                self.deferred_source.push(bar);
+            }
             self.fold_throttle(ts, bar.close);
+            if let Some(enter) = self.retry_awaiting_fill(slot, equity) {
+                actions.push(enter);
+            }
         } else {
+            // A straggler of a candle already closed: its verdict is in.
+            if defer && self.candle_quoted(slot * width, width) {
+                self.observe_source_bar(bar);
+            }
             self.fold_throttle(ts, bar.close);
         }
         // ACT WHEN THE CANDLE IS FINISHED, NOT WHEN THE NEXT ONE STARTS.
@@ -4734,6 +5132,8 @@ impl Strategy for FamilyEngine {
                 let candle = self.building.take().expect("checked just above");
                 let candle_ts = candle.ts;
                 let candle_close = candle.close;
+                self.resolve_awaiting_fill(candle_ts, width);
+                self.release_source(candle_ts, width);
                 if self.in_session(self.minute_of(candle_ts)) && self.candle_quoted(candle_ts, width) {
                     // THE FUNDEDNEXT BOOK READS THE SUCCESSOR, as Python does.
                     // Its markets stop printing before their configured close
@@ -4868,6 +5268,10 @@ impl Strategy for FamilyEngine {
         self.sleeve.multiday()
     }
 
+    fn exit_points(&self) -> Option<f64> {
+        self.exit_points
+    }
+
     fn entry_sizing(&self) -> Option<(f64, f64)> {
         self.position.as_ref().map(|position| (position.distance, position.mult))
     }
@@ -4901,6 +5305,7 @@ pub(crate) fn book_lots(
     entry: f64,
     distance: f64,
     mult: f64,
+    sizing_cap: Option<f64>,
 ) -> Option<f64> {
         let money = spec.multiplier;
         if money <= 0.0 || distance <= 0.0 || equity <= 0.0 || entry <= 0.0 {
@@ -4912,7 +5317,8 @@ pub(crate) fn book_lots(
         }
         // Uncapped: the canon run records an empty `sizing_equity_cap`, so a
         // sleeve compounds against the whole shared balance.
-        let sizing_equity = equity * sleeve.shown_equity();
+        // `sizing_cap`: `min(equity, cap)`, the challenge's fixed $6,000.
+        let sizing_equity = sizing_cap.map_or(equity, |cap| equity.min(cap)) * sleeve.shown_equity();
         let risk = sizing_equity * RISK_FRACTION * factor * mult;
         let raw = risk / (distance * money);
         let step = quantity_step.max(spec.volume_step);

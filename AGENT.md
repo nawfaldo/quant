@@ -75,6 +75,21 @@ leverage, ladder); to use it elsewhere, wrap each unit in
 `if twohost.claim(unit): ... twohost.finish(unit, result)` and `collect()` on the
 PC. The Mac's data tables must be current: push stale ones in `TWOHOST_PUSH`.
 
+**Rust binaries** share units the same way:
+
+    TWOHOST_TABLES="table names under data/parquet" \
+    bash tools/twohost_rust.sh <run id> <live_trade bin> <units file> [pc jobs] [mac jobs]
+
+One unit per line of the units file, each line the binary's arguments (e.g.
+`2024-01-02 2024-03-31` for `fundednext_live_replay`). It pushes `live_trade`'s
+source, builds the binary on the Mac (`~/quant/live_trade`, cargo in
+`~/.cargo/bin`), pushes every listed table whose files differ
+(`tools/twohost_sync_tables.py`), and runs `tools/twohost_rust_worker.py` on
+both hosts with the same mkdir claims. The PC side runs at idle priority; PC jobs
+0 leaves everything to the Mac (while the PC is in use). Each unit's stdout is
+`.twohost/<run>/results/<crc32 of the line>.txt`; the PC prints them all in order
+at the end. The Mac's disk is nearly full -- push only the tables a run reads.
+
 The market-data cache deliberately builds blobs on demand. Do not replace this
 with eager startup prefetching; constructing every timeframe and VWAP together
 has previously exhausted this machine's memory.

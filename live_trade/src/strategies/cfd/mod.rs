@@ -10,7 +10,7 @@
 //! its own dials. Two books exist:
 //!
 //!   `exness/oct-12-2026/`      the live Exness Pro book
-//!   `fundednext/oct-18-2026/`  the FundedNext book, backtest only
+//!   `fundednext/oct-21-2026/`  the FundedNext book, backtest only
 //!
 //! `Sleeve` is the one handle the engine and the backtest key on; every member
 //! of every book is a variant, and `Sleeve::book` says whose it is.
@@ -205,88 +205,58 @@ pub enum Sleeve {
     UsdjpySar30mBarlbOff,
     GbpusdQpRsi2Pullback30mOff,
     EthusdSbBollinger240mNat,
-    /// THE FUNDEDNEXT BOOK (`fundednext/oct-18-2026`): the 80 members
-    /// `fundednext_combined_strategies` sealed as 9e0e0b402357, in its order.
+    /// THE FUNDEDNEXT BOOK (`fundednext/oct-21-2026`): the 50 members
+    /// `fundednext_combined_strategies` sealed as f61f9b946b90, in its order.
+    FnUsdchfSkew1hAfternoon,
+    FnChfjpyOvernight5mNight,
+    FnXauusdObvDivergence5mLondonOpen,
     FnUstecConfluence15mTokyoOpen,
-    FnXauusdGatedSwing5mLondonOpen,
-    FnXauusdRvol5mTokyoOpen,
-    FnUs2000KeyReversal5mMorning,
-    FnUstecStructure30mAfternoon,
+    FnGbpaudCci1hMorning,
     FnUstecPtlOrbCandle30mOff,
     FnUs500DayOfWeek5mEvening,
-    FnUs500Aroon30mBarlb,
-    FnXauusdRegimeBreakout5mNyOpen,
-    FnCadjpyValueArea30mRth,
+    FnUs30Amihud30mNyOpen,
+    FnChfjpyStochastic15mEvening,
+    FnUsdcadXmaCross5mMorning,
+    FnXauusdFloorPivot15mMorning,
     FnGbpusdGatedFade30mMorning,
     FnUsdjpyTwoStage30mLondonOpen,
     FnAudjpyGatedDonchian1hMorning,
-    FnXauusdQuantileBreak5mEvening,
+    FnGbpjpyQuantileBreak5mNyMidday,
     FnUs500AvFirstHourFib30mAfternoon,
-    FnNzdusdTrap1hOffhour,
-    FnXauusdObvDivergence15mEvening,
-    FnEuraudDayOfWeek1hNight,
+    FnXauusdQuantileBreak15mEvening,
+    FnUs500TwoStage15mNyOpen,
+    FnFr40Efficiency1hMorning,
     FnUstecGatedOrb30mLondonOpen,
-    FnEuraudDayOfWeek15mAfternoon,
+    FnUs2000AdaptivePullback30mMorning,
     FnUs500XmaCross30mLondonOpen,
-    FnUs30VolOfVol15mLondon,
-    FnUsdchfSkew1hAfternoon,
+    FnXauusdQpRsiExtreme15mOffhour,
+    FnUs2000SwingBreak30mMorning,
+    FnXauusdXmaCross30mNyClose,
+    FnNzdusdTrap1hOffhour,
     FnUstecKendall5mLondonOpen,
+    FnGbpusdRegimeBreakout5mNyMidday,
     FnGbpjpyConfluence30mTokyo,
     FnEurusdStructure30mBarlbOff,
-    FnAudusdTrap30mMorning,
+    FnEurjpyRvol60mBarlb,
+    FnUstecFracdiff5mLondon,
     FnGbpjpyDayOfWeek30mBarlb,
     FnUsdjpyKalman30mNyOpen,
-    FnUs2000SwingBreak30mMorning,
     FnAudjpyDayOfWeek30mLondon,
+    FnUs500LinregTrend30mAfternoon,
     FnGbpjpyQuantileBreak30mAfternoon,
-    FnNzdusdTrap15mOffhour,
     FnUsdcadAdaptivePullback1hAfternoon,
     FnAudjpyEfficiency30mBarlb,
-    FnXauusdQttRsiEmaRetest5mOffhour,
-    FnXauusdCci30mEarlyMorning,
+    FnEuraudDayOfWeek5mAfternoon,
     FnEurusdAdaptivePullback15mMorning,
     FnEurjpyTrOscillatorRebound60m,
-    FnChfjpyStructure15mRth,
-    FnUsdcadSkew1hNight,
-    FnNzdusdCusum1hRth,
+    FnNzdusdTwoStage5mRth,
     FnEurjpyCusum1hEarlyMorning,
-    FnGbpaudStructure15mNyOpen,
-    FnHk50LevelConfluence30mNight,
-    FnGbpusdLinregTrend30mBarlbOff,
-    FnUs30LinregTrend30mLondonOpen,
+    FnChfjpyAdaptivePullback5mOffhour,
+    FnUsdchfFloorPivot15mMorning,
     FnUk100Confluence1hMorning,
-    FnXauusdBreakRetest30mNyClose,
     FnUk100ValueArea60mBarlb,
     FnGbpusdValueArea30mBarlbOff,
-    FnUs30BreakRetest5mAfternoon,
-    FnChfjpyEstimator30mOffhour,
-    FnGbpjpyXmaCross60mBarlbOff,
-    FnUs2000QuantileBreak15mAfternoon,
-    FnUsdjpyGatedOrb15mBarlb,
-    FnNzdusdRegimeBreakout15mLondon,
-    FnUs30LinregTrend30mEarlyMorning,
-    FnUsdchfTwoStage15mRth,
-    FnEuraudRoofing15mTokyoOpen,
-    FnUs500Trap5mTokyo,
-    FnUsdcadTrRvi60mOff,
-    FnUsdjpyVolatilityBreakout60mBarlb,
-    FnEurjpySwingBreak30mNyOpen,
-    FnFr40HalfLife1hMorning,
-    FnUs30AdaptivePullback30mAfternoon,
-    FnUstecTwpAsiaLondonNy15m,
-    FnGbpjpyMacdHist15mBarlbOff,
-    FnUsdchfTrap15mMorning,
-    FnGbpaudFailedBreak30mEarlyMorning,
-    FnFr40BnqIfvgModel30m,
-    FnEuraudMomentum30mMorning,
-    FnGbpaudObvDivergence1hMorning,
-    FnGbpjpyHalfLife30mNyOpen,
-    FnUs2000SwingBreak1hRth,
-    FnCadjpyKendall15mRth,
-    FnAudusdLuxalgoManipulation30mNyOpen,
-    FnUs500Efficiency30mNyOpen,
-    FnAudusdObvDivergence30mBarlbOff,
-    FnEurusdQuantileBreak15mBarlbOff,
+    FnCadjpyMomentum5mRth,
 }
 
 /// The sealed book a sleeve belongs to, and so the broker that prices it.
@@ -297,7 +267,7 @@ pub enum Sleeve {
 pub enum Book {
     /// `exness/oct-12-2026`, the live Exness Pro book.
     Exness,
-    /// `fundednext/oct-18-2026`, the FundedNext book. Backtest only.
+    /// `fundednext/oct-21-2026`, the FundedNext book. Backtest only.
     FundedNext,
 }
 
@@ -307,7 +277,7 @@ impl Book {
     pub fn risk_scale(self) -> f64 {
         match self {
             Self::Exness => crate::strategies::exness::oct_12_2026::CANON_RISK_SCALE,
-            Self::FundedNext => crate::strategies::fundednext::oct_18_2026::RISK_SCALE,
+            Self::FundedNext => crate::strategies::fundednext::oct_21_2026::RISK_SCALE,
         }
     }
 
@@ -317,7 +287,7 @@ impl Book {
     pub(crate) fn admission_balance(self) -> f64 {
         match self {
             Self::Exness => ADMISSION_BALANCE,
-            Self::FundedNext => crate::strategies::fundednext::oct_18_2026::INITIAL_BALANCE,
+            Self::FundedNext => crate::strategies::fundednext::oct_21_2026::INITIAL_BALANCE,
         }
     }
 }
@@ -359,7 +329,7 @@ impl Sleeve {
     fn every_registered() -> impl Iterator<Item = Self> {
         crate::strategies::exness::oct_12_2026::registry()
             .iter()
-            .chain(crate::strategies::fundednext::oct_18_2026::BOOK.iter())
+            .chain(crate::strategies::fundednext::oct_21_2026::BOOK.iter())
             .copied()
     }
 
@@ -586,6 +556,14 @@ pub(crate) struct Candle {
 /// vendor feed, so it asks the broker's own minute table as each candle closes.
 pub trait BrokerQuotes: Send + Sync {
     fn quoted_real(&self, start: i64, end: i64) -> bool;
+    /// `EXNESS_FILLS_ONLY`: whether an entry at the open of the candle opening
+    /// at `minute` (real New York seconds) has a broker price -- the backtest's
+    /// `MarketFills::entry`, which needs the broker's minute row there with a
+    /// positive open, close AND spread. `None` while live cannot tell yet (the
+    /// row has not landed); the backtest always knows.
+    fn fill_minute(&self, _minute: i64) -> Option<bool> {
+        Some(true)
+    }
 }
 
 mod contracts;
@@ -646,6 +624,16 @@ impl CfdSleeve {
     /// setting, see `FamilyEngine::enable_early_fills`.
     pub(crate) fn enable_early_fills(&mut self) {
         self.engine.enable_early_fills();
+    }
+
+    /// Backtest: the series' `daily_multipliers` table (`FamilyEngine::throttle_table`).
+    pub(crate) fn install_throttle(&mut self, table: std::sync::Arc<std::collections::HashMap<i64, f64>>) {
+        self.engine.throttle_table = Some(table);
+    }
+
+    /// FundedNext: size off `min(balance, cap)` (`FamilyEngine::sizing_cap`).
+    pub(crate) fn set_sizing_cap(&mut self, cap: f64) {
+        self.engine.sizing_cap = Some(cap);
     }
 
     /// Live `CFD_BROKER_HOURS`: see `BrokerQuotes`.
@@ -761,5 +749,15 @@ impl Strategy for CfdSleeve {
 
     fn entry_sizing(&self) -> Option<(f64, f64)> {
         self.engine.entry_sizing()
+    }
+
+    fn prime_throttle(&mut self, marks: &[(i64, f64)]) {
+        if self.sleeve.book() == Book::FundedNext {
+            self.engine.prime_throttle(marks);
+        }
+    }
+
+    fn exit_points(&self) -> Option<f64> {
+        self.engine.exit_points
     }
 }

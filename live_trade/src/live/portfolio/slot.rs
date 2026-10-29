@@ -159,6 +159,7 @@ impl LiveSlot {
     pub(super) async fn warm(
         target: LiveStrategyTarget,
         history: &[Bar],
+        prime: &[(i64, f64)],
         db: &Database,
     ) -> Result<Self, crate::error::ApiError> {
         // Refused rather than corrected. A row whose symbol does not name the
@@ -185,6 +186,9 @@ impl LiveSlot {
             blocked: None,
             ghosts: HashSet::new(),
         };
+        // The sizing throttle from its fixed start, as every backtest of the
+        // book seeds it (`FamilyEngine::prime_throttle`).
+        slot.strategy.prime_throttle(prime);
         slot.replay(history);
         let persisted = db
             .strategy_positions(slot.target.account_strategy_id)

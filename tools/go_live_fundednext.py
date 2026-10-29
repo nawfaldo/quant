@@ -1,4 +1,4 @@
-"""Put the FundedNext account on the FundedNext book (2026-10-18, seal 9e0e0b402357, 80 sleeves). Idempotent.
+"""Put the FundedNext account on the FundedNext book (2026-10-21, seal f61f9b946b90, 50 sleeves). Idempotent.
 
     py -3 tools/go_live_fundednext.py            # create/switch if needed
     py -3 tools/go_live_fundednext.py --check    # exit 1 if not on it, change nothing
@@ -26,8 +26,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 DB = ROOT / "live_trade" / "app.db"
-LOGIN = os.environ.get("FUNDEDNEXT_LOGIN", "35188708")   # the $6,000 challenge account
-SERVER = os.environ.get("FUNDEDNEXT_SERVER", "FundedNext-Server 3")
+LOGIN = os.environ.get("FUNDEDNEXT_LOGIN", "14351546")   # the $6,000 2-Step challenge (real, since 2026-10-26)
+SERVER = os.environ.get("FUNDEDNEXT_SERVER", "FundedNext-Server 2")
 NAME = "FundedNext"
 #: Sleeves written INACTIVE: their market has no live feed that matches the
 #: history they were backtested on (see `NOT_FED` in idk_market_live_data_feeds).

@@ -82,6 +82,46 @@ def claim(unit):
     raise RuntimeError(f"twohost: cannot reach {MAC} to claim {unit}: {r.stderr.strip()}")
 
 
+def push(paths):
+    """Copy files (absolute or repo-relative) to the same repo paths on the Mac,
+    plus the research code -- for a lead that starts its Mac side itself
+    (`start_mac`) instead of through `twohost_run.sh`."""
+    import glob
+    rel = {os.path.relpath(os.path.abspath(p), ROOT) for p in paths}
+    rel |= {os.path.relpath(p, ROOT) for p in
+            glob.glob(os.path.join(ROOT, "sandbox", "research", "*.py"))}
+    rel.add(os.path.join("sandbox", "__init__.py"))
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w") as tar:
+        for name in sorted(rel):
+            tar.add(os.path.join(ROOT, name), arcname=name.replace(os.sep, "/"))
+    r = subprocess.run(["ssh", "-o", "ConnectTimeout=15", MAC,
+                        f"cd ~/{MAC_ROOT} && tar xf -"], input=buffer.getvalue(),
+                       capture_output=True)
+    if r.returncode:
+        raise RuntimeError(f"twohost: push to {MAC} failed: {r.stderr.decode().strip()}")
+
+
+#: The Mac's worker count when the lead starts it (`start_mac`): every core.
+MAC_WORKERS = int(os.environ.get("TWOHOST_MAC_WORKERS", "8"))
+
+
+def start_mac(module, args, log):
+    """Start `python -m module args --workers MAC_WORKERS` on the Mac in the
+    background, in this run, logging to `.twohost/<run>/<log>` there."""
+    import shlex
+    env = " ".join(f"{k}={shlex.quote(v)}" for k, v in os.environ.items()
+                   if k.startswith(("CFD_", "EXNESS_", "FN_", "TWOHOST_")) and k != "FN_OUT_DIR")
+    cmd = (f"cd ~/{MAC_ROOT} && mkdir -p .twohost/{RUN} && (env {env} PYTHONIOENCODING=utf-8 "
+           f"nohup caffeinate -is .venv/bin/python -m {module} {' '.join(map(shlex.quote, args))} "
+           f"--workers {MAC_WORKERS} > .twohost/{RUN}/{log} 2>&1) > /dev/null 2>&1 < /dev/null &")
+    r = _ssh(cmd)
+    if r.returncode:
+        raise RuntimeError(f"twohost: cannot start the Mac side: {r.stderr.strip()}")
+    print(f"twohost {RUN}: Mac started ({MAC_WORKERS} workers) -> .twohost/{RUN}/{log}",
+          flush=True)
+
+
 def finish(unit, result):
     """Store `unit`'s result on this host and mark it done on the claim board."""
     os.makedirs(_local("results"), exist_ok=True)

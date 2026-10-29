@@ -8,7 +8,7 @@
 //! ```
 
 use live_trade::live::portfolio::required_symbol;
-use live_trade::strategies::fundednext::oct_18_2026::{BOOK, BOOK_ID, BOOK_NAME};
+use live_trade::strategies::fundednext::oct_21_2026::{BOOK, BOOK_ID, BOOK_NAME};
 
 fn main() -> anyhow::Result<()> {
     let mut rows = Vec::new();

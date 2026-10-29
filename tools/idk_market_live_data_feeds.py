@@ -143,9 +143,20 @@ DUKASCOPY = {
     # SEATED 2026-10-14 after `fr40_1m` / `hk50_1m` were re-imported from these
     # exact instruments (checked to the digit that day). The Hang Seng session
     # is 21:00-04:00 New York, which wraps.
-    # SEATED 2026-10-18 with the 80-sleeve FundedNext book (seal 9e0e0b402357),
+    # SEATED 2026-10-18 with the FundedNext book,
     # whose cells run in New York clock windows across the broker day.
     "audjpy": (_ins.INSTRUMENT_FX_CROSSES_AUD_JPY, "audjpy_1m", (1020, 1019)),
+    # SEATED 2026-10-21 with seal f61f9b946b90: every FundedNext cell signals
+    # on a Dukascopy table now, including these nine FundedNext-only markets.
+    "xauusd": (_ins.INSTRUMENT_FX_METALS_XAU_USD, "xauusd_1m", (1020, 1019)),
+    "us2000": (_ins.INSTRUMENT_IDX_AMERICA_USSC2000_IDX_USD, "us2000_1m", (1020, 1019)),
+    "us30": (_ins.INSTRUMENT_IDX_AMERICA_E_D_J_IND, "us30_1m", (1020, 1019)),
+    "cadjpy": (_ins.INSTRUMENT_FX_CROSSES_CAD_JPY, "cadjpy_1m", (1020, 1019)),
+    "nzdusd": (_ins.INSTRUMENT_FX_MAJORS_NZD_USD, "nzdusd_1m", (1020, 1019)),
+    "euraud": (_ins.INSTRUMENT_FX_CROSSES_EUR_AUD, "euraud_1m", (1020, 1019)),
+    "usdchf": (_ins.INSTRUMENT_FX_MAJORS_USD_CHF, "usdchf_1m", (1020, 1019)),
+    "chfjpy": (_ins.INSTRUMENT_FX_CROSSES_CHF_JPY, "chfjpy_1m", (1020, 1019)),
+    "gbpaud": (_ins.INSTRUMENT_FX_CROSSES_GBP_AUD, "gbpaud_1m", (1020, 1019)),
     "usdcad": (_ins.INSTRUMENT_FX_MAJORS_USD_CAD, "usdcad_1m", (1020, 1019)),
     "fr40": ("FRA.IDX/EUR", "fr40_1m", (1020, 1019)),
     "hk50": ("HKG.IDX/HKD", "hk50_1m", (1020, 1019)),
@@ -171,11 +182,6 @@ BINANCE = {"ethusd": ("ETHUSDT", "ethusd_1m"),
 
 #: Markets the canon has held that this script deliberately does not feed, so a
 #: reader looking for one finds the reason rather than an omission.
-#: FundedNext-only markets: no vendor table, signalled off FundedNext's own
-#: minutes, which `tools/fundednext_stream_1m.py` streams. Not this script's.
-BROKER_FED = {"xauusd", "us2000", "us30", "cadjpy", "nzdusd", "euraud", "usdchf",
-              "chfjpy", "gbpaud"}
-
 NOT_FED = {
     "nq": "barred as a symbol 2026-09-03; its level-two feed and nq_1m came "
           "over Bookmap and its own importers, never this script",
@@ -452,8 +458,7 @@ def canon_markets():
                 extra = json.loads(done.stdout).get("markets") or []
             except (OSError, ValueError, subprocess.SubprocessError):
                 return None
-            markets = list(markets) + [m for m in extra
-                                       if m not in NOT_FED and m not in BROKER_FED]
+            markets = list(markets) + [m for m in extra if m not in NOT_FED]
             break
     return payload.get("book_id", "?"), set(markets)
 
@@ -1159,6 +1164,12 @@ def refresh_broker_minutes(stop):
         # the importer). A market only one book trades is imported for it only.
         for broker, binary in (("exness", "exness_live_book"),
                                ("fundednext", "fundednext_live_book")):
+            # A PAUSED BROKER IS NOT REFRESHED: the import opens that broker's
+            # terminal, and with no active account on it (Exness since
+            # 2026-10) that put an unused Exness window up every morning.
+            if not broker_active(broker):
+                log(f"broker minute refresh SKIPPED for {broker}: no active account")
+                continue
             markets = registry_markets(binary)
             if not markets:
                 log(f"broker minute refresh SKIPPED for {broker}: no {binary} build")
@@ -1175,6 +1186,28 @@ def refresh_broker_minutes(stop):
                     + (f": {tail[0]}" if tail and done.returncode != 0 else ""))
             except (OSError, subprocess.SubprocessError) as error:
                 log(f"{broker} minute refresh FAILED: {type(error).__name__}: {error}")
+
+
+def broker_active(broker):
+    """Whether `live_trade/app.db` has an account on `broker`'s server with an
+    active strategy -- the same test the launcher and `mt5/bridge.py` use. An
+    unreadable database counts as active, so a refresh is never lost to it."""
+    import sqlite3  # noqa: PLC0415
+
+    prefix = {"exness": "Exness", "fundednext": "FundedNext"}[broker]
+    try:
+        connection = sqlite3.connect(
+            f"file:{WORKSPACE / 'live_trade' / 'app.db'}?mode=ro", uri=True)
+        try:
+            row = connection.execute(
+                "SELECT 1 FROM mt5_accounts a WHERE a.server LIKE ? AND EXISTS "
+                "(SELECT 1 FROM mt5_account_strategies s "
+                "WHERE s.account_id=a.id AND s.active=1)", (prefix + "%",)).fetchone()
+        finally:
+            connection.close()
+    except sqlite3.Error:
+        return True
+    return row is not None
 
 
 def registry_markets(binary):
@@ -1312,6 +1345,11 @@ def main():
     log("catching up each table from its last minute")
     rows, failed = parallel(catch_up, symbols, "catchup")
     log(f"caught up {rows:,} row(s)" + (f"; failed {failed}" if failed else ""))
+    # A FAILED CATCH-UP IS NOT TAILED until it succeeds. A tail writes the
+    # newest minutes, the next catch-up then starts from those, and the gap
+    # behind them becomes a permanent interior hole: on 2026-10-21 a refused
+    # start left every table missing 2026-10-16..21.
+    behind = set(failed)
 
     last_deep = time.monotonic()
     last_open = None
@@ -1330,9 +1368,15 @@ def main():
             # sixteen workers they all start at once anyway, but the order is
             # what makes "priority" true rather than decorative if the pool is
             # ever narrowed.
-            live = [s for s in symbols if is_open(s)]
+            if behind:
+                rows, failed = parallel(catch_up, sorted(behind), "catchup")
+                if rows or len(failed) < len(behind):
+                    log(f"caught up {rows:,} row(s) late; still behind: {failed or 'none'}")
+                behind = set(failed)
+
+            live = [s for s in symbols if is_open(s) and s not in behind]
             if tick % INACTIVE_EVERY_TICKS == 0:
-                due = live + [s for s in symbols if s not in live]
+                due = live + [s for s in symbols if s not in live and s not in behind]
             else:
                 due = live
             if live != last_open:

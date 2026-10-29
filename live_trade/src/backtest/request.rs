@@ -32,6 +32,23 @@ pub struct RunRequest {
     /// live rules every other run uses (scheduled last print, overdue close).
     #[serde(default)]
     pub canon_replay: bool,
+    /// FundedNext whole-book runs: the `[from, to)` ISO-day windows the
+    /// challenge Monte Carlo grid is reported over (`backtest::challenge`).
+    /// Omitted, the run's own window.
+    #[serde(default)]
+    pub challenge_windows: Option<Vec<(String, String)>>,
+    /// Paths per grid cell; omitted, `challenge::REPORT_PATHS`. Zero skips it.
+    #[serde(default)]
+    pub challenge_paths: Option<usize>,
+    /// FundedNext: size every sleeve off `min(balance, cap)`. Omitted, a
+    /// live-rules FundedNext run takes the challenge's own $6,000 (what the
+    /// account trades and the challenge Monte Carlo assumes) and canon replay
+    /// compounds uncapped, as Python's book replay does. 0 switches it off.
+    #[serde(default)]
+    pub sizing_cap: Option<f64>,
+    /// RESEARCH ONLY: show every sleeve the initial balance throughout.
+    #[serde(default)]
+    pub constant_sizing: bool,
 }
 impl RunRequest {
     pub fn balance(&self) -> Result<f64, ApiError> {

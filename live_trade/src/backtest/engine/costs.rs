@@ -367,7 +367,7 @@ pub fn model_book(model: &str) -> Option<Book> {
 /// The FundedNext model, described from the FundedNext book's own contracts.
 pub fn fundednext_cost_model() -> CostModel {
     let mut markets: Vec<MarketCost> = Vec::new();
-    for sleeve in crate::strategies::fundednext::oct_18_2026::BOOK {
+    for sleeve in crate::strategies::fundednext::oct_21_2026::BOOK {
         if markets.iter().any(|line| line.market == sleeve.market()) {
             continue;
         }

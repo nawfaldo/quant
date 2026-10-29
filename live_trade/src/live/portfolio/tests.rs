@@ -800,6 +800,7 @@ fn runtime_holding(strategy: &str, last_bar_minute: i64) -> PortfolioRuntime {
         ohlcv_history: Vec::new(),
         market_histories: HashMap::new(),
         market_latest: HashMap::new(),
+        prime_marks: HashMap::new(),
         benchmark_closes: HashMap::new(),
         benchmark_latest: HashMap::new(),
         warm_strategies: HashSet::new(),

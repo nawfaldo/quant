@@ -41,8 +41,8 @@ pub fn registered() -> Vec<StrategyDefinition> {
     // the `fundednext` model, never as sleeves, so none of it can become a live
     // row (`registered_sleeves` filters book entries out).
     let fundednext = StrategyDefinition {
-        id: fundednext::oct_18_2026::BOOK_ID,
-        name: fundednext::oct_18_2026::BOOK_NAME,
+        id: fundednext::oct_21_2026::BOOK_ID,
+        name: fundednext::oct_21_2026::BOOK_NAME,
         preferred_data: PreferredData::Ohlcv,
     };
     [book, fundednext]
@@ -111,8 +111,8 @@ pub fn is_book_run<'a>(strategies: impl Iterator<Item = &'a str>) -> bool {
 pub fn is_book_entry(name: &str) -> bool {
     name == oct_12_2026::BOOK_NAME
         || name == oct_12_2026::BOOK_ID
-        || name == fundednext::oct_18_2026::BOOK_NAME
-        || name == fundednext::oct_18_2026::BOOK_ID
+        || name == fundednext::oct_21_2026::BOOK_NAME
+        || name == fundednext::oct_21_2026::BOOK_ID
 }
 
 /// The registry entries that ARE sleeves, which is everything but the book.
@@ -143,7 +143,7 @@ pub fn warmup_calendar_days(strategy: &str) -> Option<i64> {
 pub fn book_markets(book: cfd::Book) -> Vec<&'static str> {
     let members: &[Sleeve] = match book {
         cfd::Book::Exness => oct_12_2026::registry(),
-        cfd::Book::FundedNext => &fundednext::oct_18_2026::BOOK,
+        cfd::Book::FundedNext => &fundednext::oct_21_2026::BOOK,
     };
     let mut markets: Vec<&'static str> = members.iter().map(|sleeve| sleeve.market()).collect();
     markets.sort_unstable();
@@ -205,7 +205,7 @@ mod tests {
         let mut expected = vec![
             // The BOOKS first, then the Exness sleeves.
             "exness_combined_07-09-2026",
-            "fundednext_combined_18-10-2026",
+            "fundednext_combined_21-10-2026",
         ];
         expected.extend(BOOK.into_iter().map(Sleeve::id));
         assert_eq!(ids, expected);

@@ -4,7 +4,7 @@ use crate::{
     error::ApiError,
     fx::{self, Repriced},
     state::AppState,
-    strategies::{exness::oct_12_2026, fundednext::oct_18_2026},
+    strategies::{exness::oct_12_2026, fundednext::oct_21_2026},
 };
 use actix_web::{HttpResponse, web};
 use serde_json::{Value, json};
@@ -94,12 +94,12 @@ fn book_request(request: &RunRequest) -> Option<CombineRequest> {
             oct_12_2026::BOOK.into_iter().map(|sleeve| sleeve.display()).collect(),
             request.model.clone(),
         )
-    } else if request.strategy == oct_18_2026::BOOK_NAME {
+    } else if request.strategy == oct_21_2026::BOOK_NAME {
         // The FundedNext book exists only under its own model, so picking it
         // names the model too; a request that named another one is refused
         // downstream rather than silently repriced.
         (
-            oct_18_2026::BOOK.into_iter().map(|sleeve| sleeve.display()).collect(),
+            oct_21_2026::BOOK.into_iter().map(|sleeve| sleeve.display()).collect(),
             request
                 .model
                 .clone()
@@ -122,8 +122,8 @@ fn book_request(request: &RunRequest) -> Option<CombineRequest> {
 
 /// The stored id of a whole-book run picked by its book name.
 fn book_id(request: &RunRequest) -> &'static str {
-    if request.strategy == oct_18_2026::BOOK_NAME {
-        oct_18_2026::BOOK_ID
+    if request.strategy == oct_21_2026::BOOK_NAME {
+        oct_21_2026::BOOK_ID
     } else {
         oct_12_2026::BOOK_ID
     }
@@ -315,6 +315,10 @@ impl CombineRequest {
             admission_from: None,
             data_end: None,
             canon_replay: false,
+            challenge_windows: None,
+            challenge_paths: None,
+            sizing_cap: None,
+            constant_sizing: false,
         })
     }
 }
@@ -345,8 +349,8 @@ fn combine_label(strategies: &[String]) -> String {
     if oct_12_2026::is_whole_book(strategies.iter().map(String::as_str)) {
         return oct_12_2026::BOOK_NAME.to_owned();
     }
-    if oct_18_2026::is_whole_book(strategies.iter().map(String::as_str)) {
-        return oct_18_2026::BOOK_NAME.to_owned();
+    if oct_21_2026::is_whole_book(strategies.iter().map(String::as_str)) {
+        return oct_21_2026::BOOK_NAME.to_owned();
     }
     strategies.join(" + ")
 }
@@ -356,8 +360,8 @@ fn combine_code(strategies: &[String]) -> Result<String, ApiError> {
     if oct_12_2026::is_whole_book(strategies.iter().map(String::as_str)) {
         return Ok(oct_12_2026::BOOK_ID.to_owned());
     }
-    if oct_18_2026::is_whole_book(strategies.iter().map(String::as_str)) {
-        return Ok(oct_18_2026::BOOK_ID.to_owned());
+    if oct_21_2026::is_whole_book(strategies.iter().map(String::as_str)) {
+        return Ok(oct_21_2026::BOOK_ID.to_owned());
     }
     Ok(strategies
         .iter()

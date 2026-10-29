@@ -292,11 +292,11 @@ impl Database {
                 {
                     let exness = crate::strategies::exness::oct_12_2026::book_of(&input.strategy);
                     if exness.is_empty()
-                        && crate::strategies::fundednext::oct_18_2026::BOOK
+                        && crate::strategies::fundednext::oct_21_2026::BOOK
                             .iter()
                             .any(|sleeve| sleeve.id() == input.strategy)
                     {
-                        crate::strategies::fundednext::oct_18_2026::BOOK_ID.into()
+                        crate::strategies::fundednext::oct_21_2026::BOOK_ID.into()
                     } else {
                         exness.into()
                     }

@@ -475,6 +475,9 @@ async fn saves_backtest_trades_and_montecarlo() {
         quantity: 1.0,
         entry_raw: 100.0,
         exit_raw: 101.0,
+        distance: f64::NAN,
+        vol_mult: f64::NAN,
+        points: f64::NAN,
     };
     let id = db
         .save_backtest("TEST", "exness_pro", &Value::Object(report), &[trade], None)

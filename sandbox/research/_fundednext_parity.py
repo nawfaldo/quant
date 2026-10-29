@@ -1,6 +1,6 @@
 """Writes the trade-for-trade fixtures the Rust FundedNext book is checked against.
 
-The Rust port lives in `live_trade/src/strategies/fundednext/oct-18-2026/`, the
+The Rust port lives in `live_trade/src/strategies/fundednext/oct-21-2026/`, the
 book `fundednext_combined_strategies` sealed as 9e0e0b402357 (80 sleeves at
 risk 0.03, each at its ladder leverage). Its `parity.rs` replays each fixture's
 bars through the streaming engine and asserts the SAME TRADES
@@ -49,7 +49,7 @@ RESULTS = os.path.join(HERE, "..", "results")
 SEAL = os.path.join(RESULTS, "fundednext_challenge_seal.json")
 POOL = os.path.join(RESULTS, "filtered", "leveraged_fundednext")
 FIXTURES = os.path.join(ROOT, "live_trade", "src", "strategies", "fundednext",
-                        "oct-18-2026", "fixtures")
+                        "oct-21-2026", "fixtures")
 CANON_OUT = os.path.join(RESULTS, "fundednext_canon_trades.json")
 
 FIX_WARM, FIX_FROM, FIX_TO = "2023-01-01", "2024-01-01", "2026-10-13"
