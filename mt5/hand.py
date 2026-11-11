@@ -29,6 +29,8 @@ import win32con
 import win32gui
 from pywinauto import Desktop
 
+from ipc_lock import mt5_hand_lock, mt5_ipc_lock
+
 # Control ids are fixed by the MT5 build; verified on FundedNext MT5 (2026-10).
 ID_VOLUME = 10333
 ID_STOP_LOSS = 10334
@@ -89,11 +91,14 @@ class Hand:
     def positions(self) -> list:
         if self._positions_fn is not None:
             return list(self._positions_fn())
-        self._attach()
-        try:
-            return list(mt5.positions_get() or [])
-        finally:
-            mt5.shutdown()
+        # Standalone (the web close): share the bridge's MT5 IPC mutex, since
+        # overlapping extension calls fail with "IPC send failed".
+        with mt5_ipc_lock():
+            self._attach()
+            try:
+                return list(mt5.positions_get() or [])
+            finally:
+                mt5.shutdown()
 
     # --- window plumbing ---------------------------------------------------
 
@@ -201,7 +206,19 @@ class Hand:
     def _new_chart_command(self, symbol: str) -> int:
         """Command id of File > New Chart > <group> > symbol."""
         user32 = ctypes.windll.user32
-        new_chart = user32.GetSubMenu(user32.GetSubMenu(win32gui.GetMenu(self.hwnd), 0), 0)
+        # A MAXIMIZED CHART PREPENDS ITS OWN SYSTEM MENU (Restore/Move/...) TO
+        # THE MENU BAR as an untitled bitmap item, so "position 0" stops being
+        # File. On 2026-11-02 that failed every FundedNext entry for 4 hours.
+        # File is the first top-level item that has a caption.
+        top = win32gui.GetMenu(self.hwnd)
+        file_menu = 0
+        for i in range(user32.GetMenuItemCount(top)):
+            text = ctypes.create_unicode_buffer(128)
+            user32.GetMenuStringW(top, i, text, 128, win32con.MF_BYPOSITION)
+            if text.value.replace("&", "").strip():
+                file_menu = user32.GetSubMenu(top, i)
+                break
+        new_chart = user32.GetSubMenu(file_menu, 0) if file_menu else 0
 
         def walk(menu):
             for i in range(user32.GetMenuItemCount(menu)):
@@ -226,6 +243,15 @@ class Hand:
 
     def place(self, symbol: str, side: str, volume: float, comment: str = "",
               sl: float = 0.0, tp: float = 0.0):
+        with mt5_hand_lock():
+            return self._place(symbol, side, volume, comment, sl, tp)
+
+    def close(self, ticket: int) -> None:
+        with mt5_hand_lock():
+            self._close(ticket)
+
+    def _place(self, symbol: str, side: str, volume: float, comment: str = "",
+               sl: float = 0.0, tp: float = 0.0):
         """Open a position. A chart the hand had to open is closed again after;
         a chart that was already open is left alone."""
         if side not in ("buy", "sell"):
@@ -292,7 +318,7 @@ class Hand:
             # The dialog stays on its "Done" page until dismissed.
             _close_quietly(dlg.handle)
 
-    def close(self, ticket: int) -> None:
+    def _close(self, ticket: int) -> None:
         open_now = self.positions()
         if all(p.ticket != ticket for p in open_now):
             raise HandError(f"position {ticket} is not open")

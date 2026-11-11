@@ -63,7 +63,8 @@
 	{#if corner}
 		<span class="absolute top-0 left-0 z-10 block h-2 w-2 border-t border-l border-white"></span>
 	{/if}
-	<div class="absolute top-3 left-3 z-10">
+	<!-- An open dropdown can spill into the chart below: lift this toolbar over that chart's pills. -->
+	<div class="absolute top-3 left-3 z-10 has-[[aria-expanded=true]]:z-40">
 		<ChartToolbar
 			source={chartEl}
 			{symbol}

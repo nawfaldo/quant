@@ -7,6 +7,7 @@ mod exposure;
 pub mod fills;
 pub mod fx;
 pub mod monte_carlo;
+pub mod news;
 pub(crate) mod prepare;
 mod pyrandom;
 mod report;
@@ -16,7 +17,7 @@ pub(crate) mod types;
 pub use combine::combine_realized;
 pub use data::{format_ts, iso_day};
 pub use engine::costs::{
-    CostModel, FUNDEDNEXT_MODEL_ID, MODEL_ID, cost_model, fundednext_cost_model, model_book,
+    CostModel, FUNDEDNEXT_MODEL_ID, MODEL_ID, THE5ERS_MODEL_ID, cost_model, fundednext_cost_model, model_book,
 };
 pub use engine::{RunResult, execute};
 pub use prepare::{PreparedRun, prepare, run, run_combined};

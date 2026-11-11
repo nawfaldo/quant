@@ -3,6 +3,7 @@
 	import LayoutIcon from '#lib/components/LayoutIcon.svelte';
 	import LiquidGlass from '#lib/components/LiquidGlass.svelte';
 	import AccountView from '#lib/components/AccountView.svelte';
+	import AgentPhone from '#lib/components/AgentPhone.svelte';
 	import cornerIcon from '#lib/icons/corner.png';
 	import cornerHoverIcon from '#lib/icons/corner-hover.png';
 	import ActiveAccounts from '#lib/components/ActiveAccounts.svelte';
@@ -12,6 +13,7 @@
 	import type { Position } from '#lib/server/positions.ts';
 	import { untrack } from 'svelte';
 	import { page } from '$app/state';
+	import { pushState } from '$app/navigation';
 	import { scale } from 'svelte/transition';
 	import type { PageProps } from './$types';
 
@@ -99,7 +101,14 @@
 		<!-- Display only for now: none of these buttons does anything yet. -->
 		<!-- Proportions from the design: text, arrow and grid are about 10, 11 and
 		     16px tall, 22px apart (16px gap + the arrow image's 6px margin). -->
-		<div class="absolute top-3 right-3 z-10 flex items-center gap-4">
+		<div class="absolute top-[15px] right-4 z-10 flex items-center gap-4">
+			<!-- Agent iPhone, sized to its neighbours (22px tall); opens the same phone as /account. -->
+			<div class="relative h-[22px] w-[14.1px]">
+				{#if !page.state.account}
+					<!-- the account overlay brings its own phone -->
+					<AgentPhone login={accounts[0]?.login ?? ""} phoneClass="fixed top-[30px] right-[38px]" iconClass="absolute inset-0" />
+				{/if}
+			</div>
 			<!-- Internet download speed, from a speed test every 5 minutes. -->
 			<span class="text-sm leading-none font-light text-white" title="Internet download speed">
 				{live?.mbps != null ? `${live.mbps.toFixed(live.mbps < 10 ? 1 : 0)} Mbps` : '— Mbps'}
@@ -139,15 +148,20 @@
 			<img src={cornerIcon} alt="" class="block h-8 w-8 group-hover:hidden" />
 			<img src={cornerHoverIcon} alt="" class="hidden h-[35px] w-[35px] group-hover:block" />
 		</button>
-		<div class="w-1/5 min-w-64">
+		<div class="w-1/5 min-w-56 shrink-0">
 			<ActiveAccounts {accounts} {positions} />
 		</div>
-		<div class="w-1/2 min-w-0">
+		<div class="max-w-[calc(50%+150px)] min-w-0 flex-1 pr-[140px] min-[1300px]:pr-0">
 			<OpenPositions {positions} />
 		</div>
 	</section>
 	{#if page.state.account}
 		<!-- Shallow-routed: the chart page stays mounted underneath, so nothing reloads. -->
-		<AccountView {accounts} close={() => history.back()} />
+		<AccountView
+			{accounts}
+			path={page.state.accountPath ?? '/account'}
+			nav={(p: string) => pushState(p, { account: true, accountPath: p })}
+			close={() => pushState('/', {})}
+		/>
 	{/if}
 </main>

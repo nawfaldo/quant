@@ -140,6 +140,7 @@ fn shown_equity(names: &[&str]) -> Vec<Vec<f64>> {
     }
     let owned: Vec<String> = names.iter().map(|name| (*name).to_string()).collect();
     let cfg = EngineConfig {
+        ban_admit: None,
         initial: 1_000.0,
         symbol: "nq".into(),
         start_day: 0,
@@ -327,6 +328,7 @@ fn intraday_strategy_closes_before_exact_session_boundary() {
         bar(86_400 + 600 * 60, 50.0),
     ];
     let cfg = EngineConfig {
+        ban_admit: None,
         initial: 100.0,
         symbol: "nq".into(),
         start_day: 0,
@@ -360,6 +362,7 @@ fn intraday_strategy_closes_before_exact_session_boundary() {
 fn risk_sizing_never_loses_more_than_its_budget() {
     let bars = [bar(600 * 60, 100.0), bar(601 * 60, 90.0)];
     let cfg = EngineConfig {
+        ban_admit: None,
         initial: 5_000.0,
         symbol: "nq".into(),
         start_day: 0,
@@ -385,6 +388,7 @@ fn risk_sizing_never_loses_more_than_its_budget() {
 fn combined_strategies_share_one_balance_and_hold_separate_positions() {
     let bars = [bar(600 * 60, 100.0), bar(601 * 60, 110.0)];
     let cfg = EngineConfig {
+        ban_admit: None,
         initial: 1_000.0,
         symbol: "nq".into(),
         start_day: 0,
@@ -417,6 +421,7 @@ fn combined_strategies_share_one_balance_and_hold_separate_positions() {
 fn strategy_drawdown_limit_forces_an_account_level_exit() {
     let bars = [bar(600 * 60, 100.0), bar(601 * 60, 50.0)];
     let cfg = EngineConfig {
+        ban_admit: None,
         initial: 1_000.0,
         symbol: "nq".into(),
         start_day: 0,

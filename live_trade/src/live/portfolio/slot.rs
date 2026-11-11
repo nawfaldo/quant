@@ -359,12 +359,33 @@ impl LiveSlot {
         }
     }
 
-    pub(super) async fn on_bar(&mut self, db: &Database, bar: Bar, entry_age: Option<i64>) {
+    pub(super) async fn on_bar(
+        &mut self,
+        db: &Database,
+        bar: Bar,
+        entry_age: Option<i64>,
+        mut ban: Option<&mut crate::strategies::the5ers::nov_08_2026::ban::View>,
+    ) {
         self.settle_pending_opens(db, bar).await;
-        self.retry_pending_exits(db, bar).await;
+        if !self.news_hold(bar.ts) {
+            self.retry_pending_exits(db, bar).await;
+        }
         let actions = self.strategy.update_all(bar, self.target.equity.max(0.0));
         for action in actions {
             let is_exit = is_exit(action);
+            // THE5ERS: no close inside a related news window. The exit is owed
+            // and sent by `retry_pending_exits` once the window has passed
+            // (`the5ers_combined_strategies._news_guard` defers it the same way).
+            if is_exit
+                && self.news_hold(bar.ts)
+                && exit_key(action).is_some_and(|key| !self.ghosts.contains(&key))
+            {
+                self.strategy.discard(action);
+                self.owe_exit(action);
+                self.log_event(db, "exit_deferred", "", bar, "the5ers news window; sent after it")
+                    .await;
+                continue;
+            }
             // A NEW ENTRY PROVES THE STRATEGY WAS FLAT, so any ghost on its key
             // is stale and must not swallow this position's exit later.
             if let Some(key) = entry_key(action) {
@@ -425,7 +446,35 @@ impl LiveSlot {
                 self.log_event(db, "entry_refused", "", bar, reason).await;
                 continue;
             }
-            if let Err(error) = self.execute(db, action, bar).await {
+            // THE5ERS BAN LAYER: account-wide limits (`ban.rs`). A refused entry
+            // is a ghost, as the Python book drops the trade.
+            let entry_side = match action {
+                Action::Enter { side, .. } | Action::EnterPosition { side, .. } => Some(side),
+                _ => None,
+            };
+            // Bar time, as the backtest decides: the fill candle's first minute
+            // is the trade's real entry stamp (`ban::comply`).
+            let now = bar.ts;
+            if let (Some(view), Some(side)) = (ban.as_deref(), entry_side)
+                && let Some(reason) = view.refuse(strategy_symbol(&self.target.strategy), side, now)
+            {
+                self.hold_as_ghost(action);
+                tracing::warn!(
+                    reason,
+                    account_strategy_id = self.target.account_strategy_id,
+                    strategy = self.target.strategy,
+                    "live entry refused by the The5ers ban layer"
+                );
+                self.log_event(db, "entry_refused", "", bar, reason).await;
+                continue;
+            }
+            let sent = self.execute(db, action, bar).await;
+            if sent.is_ok()
+                && let (Some(view), Some(side)) = (ban.as_deref_mut(), entry_side)
+            {
+                view.record(strategy_symbol(&self.target.strategy), side, now);
+            }
+            if let Err(error) = sent {
                 if is_exit {
                     self.strategy.discard(action);
                     // Owed, not abandoned. Only entries can block.
@@ -1073,6 +1122,21 @@ impl LiveSlot {
                 }
             }
         }
+    }
+
+    /// A The5ers slot inside a related red-folder window: no order goes out.
+    /// Judged at the order's execution as the backtest models it: the bar
+    /// closes at `bar_ts + 60`, the order goes out after the feed lag and queue.
+    pub(super) fn news_hold(&self, bar_ts: i64) -> bool {
+        sleeve_of(&self.target.strategy).is_some_and(|sleeve| {
+            sleeve.book() == crate::strategies::cfd::Book::The5ers
+                && crate::backtest::news::blocked(
+                    sleeve.market(),
+                    (bar_ts + 60) as f64
+                        + crate::backtest::fills::feed_lag_seconds(sleeve.market())
+                        + crate::backtest::fills::BRIDGE_QUEUE_SECONDS,
+                )
+        })
     }
 
     /// Keeps an entry live did not send as a ghost: the strategy stays in the

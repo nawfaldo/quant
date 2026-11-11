@@ -154,6 +154,7 @@ pub(crate) const fn spec(sleeve: super::Sleeve) -> &'static SleeveSpec {
     use super::Sleeve as S;
     use crate::strategies::exness::oct_12_2026::sleeves::*;
     use crate::strategies::fundednext::oct_21_2026::sleeves as fn_book;
+    use crate::strategies::the5ers::nov_08_2026::sleeves as t5_book;
     match sleeve {
         S::UsdjpyVolumeThrust => &usdjpy_volume_thrust::SPEC,
         S::AudusdZscore => &audusd_zscore::SPEC,
@@ -264,5 +265,37 @@ pub(crate) const fn spec(sleeve: super::Sleeve) -> &'static SleeveSpec {
         S::FnUk100ValueArea60mBarlb => &fn_book::uk100_value_area_60m_barlb::SPEC,
         S::FnGbpusdValueArea30mBarlbOff => &fn_book::gbpusd_value_area_30m_barlb_off::SPEC,
         S::FnCadjpyMomentum5mRth => &fn_book::cadjpy_momentum_5m_rth::SPEC,
+        S::T5SolusdConfluence15mOffhour => &t5_book::solusd_confluence_15m_offhour::SPEC,
+        S::T5ChfjpyGatedFade30mOffhour => &t5_book::chfjpy_gated_fade_30m_offhour::SPEC,
+        S::T5EurusdRvol30mRth => &t5_book::eurusd_rvol_30m_rth::SPEC,
+        S::T5GbpjpyDayOfWeek15mOffhour => &t5_book::gbpjpy_day_of_week_15m_offhour::SPEC,
+        S::T5UstecStructure30mAfternoon => &t5_book::ustec_structure_30m_afternoon::SPEC,
+        S::T5EtheurConfluence30mOffhour => &t5_book::etheur_confluence_30m_offhour::SPEC,
+        S::T5Us30TwoStage30mOffhour => &t5_book::us30_two_stage_30m_offhour::SPEC,
+        S::T5BtceurGatedOrb15mEarlyMorning => &t5_book::btceur_gated_orb_15m_early_morning::SPEC,
+        S::T5De40GatedFade30mMorning => &t5_book::de40_gated_fade_30m_morning::SPEC,
+        S::T5GbpusdValueArea30mBarlbOff => &t5_book::gbpusd_value_area_30m_barlb_off::SPEC,
+        S::T5Us30Stochastic30mMorning => &t5_book::us30_stochastic_30m_morning::SPEC,
+        S::T5Us500DayOfWeek5mEvening => &t5_book::us500_day_of_week_5m_evening::SPEC,
+        S::T5UstecSwingBreak5mNyOpen => &t5_book::ustec_swing_break_5m_ny_open::SPEC,
+        S::T5NzdusdStructure15mRth => &t5_book::nzdusd_structure_15m_rth::SPEC,
+        S::T5GbpusdRegimeBreakout5mNyMidday => &t5_book::gbpusd_regime_breakout_5m_ny_midday::SPEC,
+        S::T5NzdusdTrap30mOffhour => &t5_book::nzdusd_trap_30m_offhour::SPEC,
+        S::T5AudjpyGatedOrb15mNyOpen => &t5_book::audjpy_gated_orb_15m_ny_open::SPEC,
+        S::T5UsdjpyTwoStage30mLondonOpen => &t5_book::usdjpy_two_stage_30m_london_open::SPEC,
+        S::T5EurusdKalman30mRth => &t5_book::eurusd_kalman_30m_rth::SPEC,
+        S::T5UsdcadHalfLife15mOffhour => &t5_book::usdcad_half_life_15m_offhour::SPEC,
+        S::T5AudusdKendall15mMorning => &t5_book::audusd_kendall_15m_morning::SPEC,
+        S::T5EuraudGatedFade15mOffhour => &t5_book::euraud_gated_fade_15m_offhour::SPEC,
+        S::T5EuraudTrap5mTokyoOpen => &t5_book::euraud_trap_5m_tokyo_open::SPEC,
+        S::T5CadjpyMomentum5mRth => &t5_book::cadjpy_momentum_5m_rth::SPEC,
+        S::T5AudusdSwingBreak15mTokyoOpen => &t5_book::audusd_swing_break_15m_tokyo_open::SPEC,
+        S::T5UsdchfFloorPivot15mMorning => &t5_book::usdchf_floor_pivot_15m_morning::SPEC,
+        S::T5Uk100RegimeBreakout30mNyOpen => &t5_book::uk100_regime_breakout_30m_ny_open::SPEC,
+        S::T5Hk50Efficiency15mBarlb => &t5_book::hk50_efficiency_15m_barlb::SPEC,
+        S::T5Hk50DayOfWeek30mNyOpen => &t5_book::hk50_day_of_week_30m_ny_open::SPEC,
+        S::T5EurjpyGatedOrb30mBarlb => &t5_book::eurjpy_gated_orb_30m_barlb::SPEC,
+        S::T5Uk100Confluence1hMorning => &t5_book::uk100_confluence_1h_morning::SPEC,
+        S::T5AudjpyStructure30mBarlbOff => &t5_book::audjpy_structure_30m_barlb_off::SPEC,
     }
 }

@@ -323,6 +323,7 @@ export function liquidGlass(node: HTMLElement, options: LiquidGlassOptions) {
 	let hover = 0;
 	let hoverTarget = 0;
 	let lastFrame = 0;
+	let lastKey = ''; // on-screen box at the last draw
 	const schedule = () => {
 		if (!frame) frame = requestAnimationFrame(tick);
 	};
@@ -340,6 +341,11 @@ export function liquidGlass(node: HTMLElement, options: LiquidGlassOptions) {
 	if (node.parentElement) resize.observe(node.parentElement);
 	addEventListener('resize', invalidate);
 	addEventListener('scroll', invalidate, true);
+	// Transforms (e.g. a parent growing in from an icon) move/resize the element without a resize event:
+	// redraw when any animation or transition settles.
+	addEventListener('animationend', invalidate, true);
+	addEventListener('transitionend', invalidate, true);
+	addEventListener('liquidglass:refresh', invalidate); // see refreshGlass()
 
 	let watched: HTMLElement | undefined;
 	let poll: ReturnType<typeof setInterval> | undefined;
@@ -401,8 +407,18 @@ export function liquidGlass(node: HTMLElement, options: LiquidGlassOptions) {
 	function draw() {
 		const source = opts.source;
 		if (!source) return;
-		const rect = node.getBoundingClientRect();
-		if (rect.width === 0 || rect.height === 0) return;
+		// Work in the element's own layout size; `k` is any ancestor scale (e.g. a panel growing in from an
+		// icon), used only to find the backdrop on screen. While the element moves, keep redrawing every frame.
+		const screen = node.getBoundingClientRect();
+		const lw = node.offsetWidth, lh = node.offsetHeight;
+		if (!lw || !lh || screen.width === 0 || screen.height === 0) return;
+		const k = screen.width / lw;
+		const rect = { width: lw, height: lh };
+		const key = `${screen.left},${screen.top},${screen.width},${screen.height}`;
+		if (key !== lastKey) {
+			lastKey = key;
+			dirty = Math.max(dirty, 1);
+		}
 		const css = parseFloat(getComputedStyle(node).borderTopLeftRadius) || 0;
 		const dpr = window.devicePixelRatio || 1;
 		const blur = (opts.blur ?? 7) + hover * (opts.hoverBlur ?? 2);
@@ -419,16 +435,16 @@ export function liquidGlass(node: HTMLElement, options: LiquidGlassOptions) {
 			sharp.width = cw;
 			sharp.height = ch;
 		}
-		const ox = rect.left - margin;
-		const oy = rect.top - margin;
+		const ox = screen.left - margin * k;
+		const oy = screen.top - margin * k;
 		cctx.fillStyle = getComputedStyle(source).backgroundColor || '#000';
 		cctx.fillRect(0, 0, cw, ch);
 		for (const el of source.querySelectorAll<HTMLCanvasElement | HTMLImageElement>('canvas, img')) {
 			if (el instanceof HTMLCanvasElement && 'liquidGlass' in el.dataset) continue;
 			if (el instanceof HTMLImageElement && !el.complete) continue;
 			const b = el.getBoundingClientRect();
-			if (b.right < ox || b.bottom < oy || b.left > ox + cw / CAPTURE || b.top > oy + ch / CAPTURE) continue;
-			cctx.drawImage(el, (b.left - ox) * CAPTURE, (b.top - oy) * CAPTURE, b.width * CAPTURE, b.height * CAPTURE);
+			if (b.right < ox || b.bottom < oy || b.left > ox + (cw / CAPTURE) * k || b.top > oy + (ch / CAPTURE) * k) continue;
+			cctx.drawImage(el, ((b.left - ox) / k) * CAPTURE, ((b.top - oy) / k) * CAPTURE, (b.width / k) * CAPTURE, (b.height / k) * CAPTURE);
 		}
 
 		// Blur on the GPU: the full frosting, and the lighter blur seen through the rim.
@@ -491,9 +507,17 @@ export function liquidGlass(node: HTMLElement, options: LiquidGlassOptions) {
 			watch(undefined);
 			removeEventListener('resize', invalidate);
 			removeEventListener('scroll', invalidate, true);
+			removeEventListener('animationend', invalidate, true);
+			removeEventListener('transitionend', invalidate, true);
+			removeEventListener('liquidglass:refresh', invalidate);
 			node.removeEventListener('pointerenter', enter);
 			node.removeEventListener('pointerleave', leave);
 			canvas.remove();
 		}
 	};
+}
+
+/** Redraw every glass element, e.g. after a JS-driven (Web Animations) transition moved them. */
+export function refreshGlass() {
+	dispatchEvent(new Event('liquidglass:refresh'));
 }

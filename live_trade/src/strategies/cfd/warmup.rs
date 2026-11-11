@@ -39,7 +39,7 @@
 //! prints every calendar day while every other market in the book keeps
 //! exchange hours.
 
-use super::family::{Coil, Family, Gate, Params, Trend, VolMode};
+use super::family::{Coil, FadeTrigger, Family, Gate, Params, Trend, VolMode};
 use super::indicators::MaKind;
 use super::{DAILY_RANGE_DAYS, Sleeve, VOL_HALFLIFE, VOL_MIN_DAYS};
 
@@ -92,10 +92,21 @@ fn family_candles(family: Family, session_bars: usize) -> usize {
             rsi_period,
             ..
         } => zscore_period.max(wilder_convergence(rsi_period)),
+        Family::ConfluenceTrend {
+            rsi_period,
+            macd,
+            obv_channel,
+            span,
+            ..
+        } => wilder_convergence(rsi_period)
+            .max(ema_convergence(macd.1) + macd.2)
+            .max(300)
+            .max(obv_channel)
+            .max(span + 1),
         // The channel, plus the ring of past readings the trap walks back over.
         Family::Trap {
             window, channel, ..
-        } => channel + window,
+        } => channel.max(64) + window,
         // OBV is cumulative and its LEVEL is never read -- only extremes of it
         // are, and a different starting point shifts every extreme by the same
         // constant -- so the channel is the whole requirement.
@@ -126,7 +137,7 @@ fn family_candles(family: Family, session_bars: usize) -> usize {
         // already carries.
         Family::GatedOrb {
             gate, gate_period, ..
-        } => gate_candles(gate, gate_period),
+        } => gate_candles(gate, gate_period, session_bars),
         // `window + 1` matches `arm_family_state`: the arming scan and the range
         // scan together read one bar more than `window`.
         Family::TwoStage {
@@ -270,7 +281,7 @@ fn family_candles(family: Family, session_bars: usize) -> usize {
             gate,
             gate_period,
             ..
-        } => ema_convergence(slow).max(gate_candles(gate, gate_period)),
+        } => ema_convergence(slow).max(gate_candles(gate, gate_period, session_bars)),
         Family::Stochastic { period, smooth, .. } => period + smooth + 1,
         Family::LuxHtfStochBucket { htf_m, rsi_n, .. } => (17 * htf_m + 1)
             .max(wilder_convergence(rsi_n))
@@ -319,10 +330,20 @@ fn family_candles(family: Family, session_bars: usize) -> usize {
             gate,
             gate_period,
             ..
-        } => channel.max(gate_candles(gate, gate_period)),
+        } => channel.max(gate_candles(gate, gate_period, session_bars)),
         Family::GatedFade {
-            gate, gate_period, ..
-        } => gate_candles(gate, gate_period),
+            trigger,
+            gate,
+            gate_period,
+            ..
+        } => {
+            let trigger = match trigger {
+                FadeTrigger::VwapDev => 0,
+                FadeTrigger::Zscore(period) => period,
+                FadeTrigger::Keltner(period) => ema_convergence(period),
+            };
+            trigger.max(gate_candles(gate, gate_period, session_bars))
+        }
         Family::AvFirstHourFib { .. } | Family::PtlOrbCandle { .. } => wilder_convergence(14),
         Family::BnqIfvgModel { k, .. } => (2 * k + 20).max(wilder_convergence(14)),
         Family::QttRsiEmaRetest { .. } => ema_convergence(200)
@@ -341,8 +362,13 @@ fn family_candles(family: Family, session_bars: usize) -> usize {
 }
 
 /// Candles a gate's own state needs.
-fn gate_candles(gate: Gate, gate_period: usize) -> usize {
+fn gate_candles(gate: Gate, gate_period: usize, session_bars: usize) -> usize {
     match gate {
+        // `gate_period` is the unit: the 12/26/9-session histogram.
+        Gate::Macd => ema_convergence(26 * gate_period) + 9 * gate_period,
+        // Twenty sessions of the same clock minute.
+        Gate::Rvol => 21 * session_bars,
+        Gate::Adx => 2 * gate_period + wilder_convergence(gate_period),
         Gate::Rsi => wilder_convergence(gate_period),
         Gate::Vwap => 0,
         // A ratchet, path-dependent like the SAR.

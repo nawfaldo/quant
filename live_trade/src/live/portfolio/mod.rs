@@ -198,7 +198,7 @@ async fn run(state: AppState) -> Result<(), crate::error::ApiError> {
         // THE THROTTLE'S OWN HISTORY, from its fixed start to the warm-up:
         // reduced to 30-minute closes on load, so a year and more of minutes
         // costs a few hundred kilobytes rather than staying resident.
-        if live_sleeves_on(symbol).any(|sleeve| sleeve.book() == crate::strategies::cfd::Book::FundedNext)
+        if live_sleeves_on(symbol).any(|sleeve| sleeve.book().is_prop())
             && let Some(first) = history.first()
         {
             use crate::strategies::fundednext::oct_21_2026::{THROTTLE_FROM, throttle_marks};
@@ -274,6 +274,8 @@ async fn run(state: AppState) -> Result<(), crate::error::ApiError> {
         prime_marks,
         benchmark_closes,
         benchmark_latest,
+        the5ers_last_entry: HashMap::new(),
+        the5ers_recent: Vec::new(),
         warm_strategies: warmup.strategies,
     };
     if runtime.refresh_targets(latest).await? {
@@ -315,7 +317,7 @@ async fn run(state: AppState) -> Result<(), crate::error::ApiError> {
     // (`tools/fundednext_stream_1m.py`), at most this long.
     const BROKER_WAIT: Duration = Duration::from_secs(20);
     let mut broker_wait: HashMap<&'static str, (i64, Instant)> = HashMap::new();
-    let mut stream_alarm = false;
+    let mut stream_alarm: HashMap<quotes::Broker, bool> = HashMap::new();
     loop {
         market.tick().await;
         let mut ready_bars: Vec<(&'static str, LiveFeed, Bar)> = Vec::new();
@@ -329,27 +331,39 @@ async fn run(state: AppState) -> Result<(), crate::error::ApiError> {
         // fills-only checks. A dead stream cannot be told from a closed
         // market, so the checks stop trusting it (`quotes::set_stream_health`):
         // exits keep running on every vendor candle and no entry is sent.
-        let broker_through = if runtime.needs_fundednext() {
-            let through = quotes::stream_through(&state.store);
-            quotes::set_stream_health(through.is_some(), runtime.store_now());
-            if through.is_none() != stream_alarm {
-                stream_alarm = through.is_none();
-                if stream_alarm {
-                    tracing::error!("FundedNext minute stream is stale; FundedNext entries refused until it is back");
+        let mut broker_through: HashMap<quotes::Broker, Option<i64>> = HashMap::new();
+        for broker in [quotes::Broker::FundedNext, quotes::Broker::The5ers] {
+            if !runtime.needs_broker(broker) {
+                continue;
+            }
+            let through = quotes::stream_through(&state.store, broker);
+            quotes::set_stream_health(broker, through.is_some(), runtime.store_now());
+            let alarm = stream_alarm.entry(broker).or_insert(false);
+            if through.is_none() != *alarm {
+                *alarm = through.is_none();
+                let label = broker.name();
+                if *alarm {
+                    tracing::error!(broker = label, "broker minute stream is stale; its entries refused until it is back");
                     state.portfolio_status.set(
                         "feed_stale",
                         latest,
                         runtime.slots.len(),
-                        "FundedNext minute stream stale (tools/run_fundednext_stream.bat); entries refused",
+                        format!("{label} minute stream stale (tools/run_{label}_stream.bat); entries refused"),
                     );
                 } else {
-                    tracing::info!("FundedNext minute stream is current again");
+                    tracing::info!(broker = label, "broker minute stream is current again");
+                    let snapshot = state.portfolio_status.snapshot();
+                    if snapshot.phase == "feed_stale"
+                        && snapshot.detail.starts_with(&format!("{label} minute stream stale"))
+                    {
+                        state
+                            .portfolio_status
+                            .set("ready", latest, runtime.slots.len(), "");
+                    }
                 }
             }
-            through
-        } else {
-            None
-        };
+            broker_through.insert(broker, through);
+        }
         refresh_ticks = refresh_ticks.wrapping_add(1);
         if refresh_ticks.is_multiple_of(4) {
             match runtime.refresh_targets(latest).await {
@@ -430,9 +444,14 @@ async fn run(state: AppState) -> Result<(), crate::error::ApiError> {
                     completed_watermarks.insert((symbol, LiveFeed::Ohlcv), completed);
                     while market_latest < completed {
                         let minute = market_latest + market_step(symbol);
-                        if let Some(through) = broker_through
+                        // The oldest promise among the prop streams this
+                        // market's sleeves read.
+                        let through = live_sleeves_on(symbol)
+                            .filter(|sleeve| sleeve.broker_hours())
+                            .filter_map(|sleeve| broker_through.get(&quotes::Broker::of_book(sleeve.book())).copied().flatten())
+                            .min();
+                        if let Some(through) = through
                             && minute > through
-                            && live_sleeves_on(symbol).any(|sleeve| sleeve.broker_hours())
                         {
                             let since = broker_wait.entry(symbol).or_insert((minute, Instant::now()));
                             if since.0 != minute {
@@ -639,6 +658,7 @@ async fn run(state: AppState) -> Result<(), crate::error::ApiError> {
                 live_stream_rank(symbol, *feed),
             )
         });
+        let mut batch: Vec<(&'static str, LiveFeed, Bar, Option<i64>)> = Vec::new();
         for (symbol, feed, bar) in ready_bars {
             let source_latest = if symbol == SYMBOL && feed == LiveFeed::LevelTwo {
                 level_two_latest
@@ -672,7 +692,16 @@ async fn run(state: AppState) -> Result<(), crate::error::ApiError> {
                     Some(if current { 0 } else { i64::MAX })
                 }
             };
-            runtime.on_bar(symbol, feed, bar, entry_age).await;
+            match batch.last() {
+                Some((_, _, last, _)) if last.ts + market_step(batch[0].0) != bar.ts + market_step(symbol) => {
+                    runtime.on_batch(std::mem::take(&mut batch)).await;
+                }
+                _ => {}
+            }
+            batch.push((symbol, feed, bar, entry_age));
+        }
+        if !batch.is_empty() {
+            runtime.on_batch(batch).await;
         }
         // AFTER the bars, so a strategy that DID get its bar this tick has
         // already emitted its own exit and has nothing left for this to find.
@@ -784,6 +813,11 @@ struct PortfolioRuntime {
     /// reach back for.
     benchmark_closes: HashMap<&'static str, std::collections::VecDeque<(i64, f64)>>,
     benchmark_latest: HashMap<&'static str, i64>,
+    /// The5ers ban layer: each account's last entry sent (NY-wall seconds).
+    the5ers_last_entry: HashMap<i64, i64>,
+    /// The5ers ban layer: positions closed but still counted as held until the
+    /// stamp -- `(account, market, side, until, slot id, position key)`.
+    the5ers_recent: Vec<(i64, &'static str, Side, i64, i64, String)>,
     /// Strategy kinds covered by the startup history. Activating a strategy
     /// with a longer or different market requirement restarts the runtime so it
     /// can warm correctly instead of silently constructing it from an empty
@@ -921,9 +955,7 @@ impl PortfolioRuntime {
                 // that day the account never sent is held as a ghost, as the
                 // backtest holds the trade.
                 let start = match sleeve_of(&target.strategy).map(|sleeve| sleeve.book()) {
-                    Some(crate::strategies::cfd::Book::FundedNext) => {
-                        latest.div_euclid(86_400) * 86_400 - 1
-                    }
+                    Some(book) if book.is_prop() => latest.div_euclid(86_400) * 86_400 - 1,
                     _ => latest,
                 };
                 target.live_started_at = self
@@ -972,29 +1004,78 @@ impl PortfolioRuntime {
     /// was single-symbol and is a correctness bug the moment it is not: a BTC
     /// strategy stepped with an NQ bar would breakout off the wrong price and
     /// send a real order for it.
-    async fn on_bar(&mut self, symbol: &str, feed: LiveFeed, bar: Bar, entry_age: Option<i64>) {
-        if symbol == SYMBOL {
-            match feed {
-                LiveFeed::LevelTwo => self.level_two_history.push(bar),
-                LiveFeed::Ohlcv => self.ohlcv_history.push(bar),
+    /// One minute's bars across every market, stepped together: every
+    /// market's history first, then every slot in BOOK ORDER -- the order
+    /// Python's `comply` breaks a same-minute tie in, so the The5ers ban layer
+    /// picks the same entry the backtest does.
+    async fn on_batch(&mut self, batch: Vec<(&'static str, LiveFeed, Bar, Option<i64>)>) {
+        let mut stepped: Vec<(i64, Bar, Option<i64>)> = Vec::new();
+        for (symbol, feed, bar, entry_age) in batch {
+            if symbol == SYMBOL {
+                match feed {
+                    LiveFeed::LevelTwo => self.level_two_history.push(bar),
+                    LiveFeed::Ohlcv => self.ohlcv_history.push(bar),
+                }
+            } else if let Some(history) = self.market_histories.get_mut(symbol) {
+                history.push(bar);
             }
-        } else if let Some(history) = self.market_histories.get_mut(symbol) {
-            history.push(bar);
+            let mut ids: Vec<i64> = self
+                .slots
+                .values()
+                .filter(|slot| {
+                    strategy_symbol(&slot.target.strategy) == symbol
+                        && (symbol != SYMBOL || strategy_feed(&slot.target.strategy) == feed)
+                })
+                .map(|slot| slot.target.account_strategy_id)
+                .collect();
+            ids.sort_unstable();
+            stepped.extend(ids.into_iter().map(|id| (id, bar, entry_age)));
         }
-        let stepped: Vec<i64> = self
-            .slots
-            .values()
-            .filter(|slot| {
-                strategy_symbol(&slot.target.strategy) == symbol
-                    && (symbol != SYMBOL || strategy_feed(&slot.target.strategy) == feed)
-            })
-            .map(|slot| slot.target.account_strategy_id)
-            .collect();
-        for id in stepped {
+        // Stable: the older books keep their market order; The5ers sleeves go
+        // after them, in `BOOK` order.
+        let rank = |id: &i64| -> (u8, usize) {
+            let book = crate::strategies::the5ers::nov_08_2026::BOOK;
+            self.slots
+                .get(id)
+                .and_then(|slot| sleeve_of(&slot.target.strategy))
+                .and_then(|sleeve| book.iter().position(|member| *member == sleeve))
+                .map_or((0, 0), |index| (1, index))
+        };
+        stepped.sort_by_key(|(id, _, _)| rank(id));
+        for (id, bar, entry_age) in stepped {
+            // THE5ERS: the account's open positions and last entry, for the ban
+            // layer, rebuilt before every slot so a slot sees what the one
+            // before it sent on this same minute.
+            let ban = self.slots.get(&id).and_then(|slot| {
+                let book = sleeve_of(&slot.target.strategy)?.book();
+                (book == crate::strategies::cfd::Book::The5ers).then_some(slot.target.account_id)
+            });
+            let mut view = ban.map(|account| self.the5ers_view(account, bar.ts));
             let Some(slot) = self.slots.get_mut(&id) else {
                 continue;
             };
-            slot.on_bar(&self.db, bar, entry_age).await;
+            let pending_before: Vec<String> = slot.pending_exits.keys().cloned().collect();
+            let held: Vec<(String, Side)> = slot.positions.iter().map(|(k, p)| (k.clone(), p.side)).collect();
+            slot.on_bar(&self.db, bar, entry_age, view.as_mut()).await;
+            // A position the slot let go of on this bar is still HELD for the
+            // ban layer until 60 s after its exit candle ended
+            // (`comply`: open until `exit + bar + 60`; the candle ends at
+            // `bar.ts + 60` on the bar that closes it).
+            if let Some(account) = ban {
+                let market = strategy_symbol(&slot.target.strategy);
+                for (key, side) in held {
+                    // The exit went out on THIS bar: gone already, or newly owed.
+                    let sent = !pending_before.contains(&key)
+                        && (!slot.positions.contains_key(&key) || slot.pending_exits.contains_key(&key));
+                    if sent {
+                        self.the5ers_recent.retain(|recent| !(recent.4 == id && recent.5 == key));
+                        self.the5ers_recent.push((account, market, side, bar.ts + 120, id, key));
+                    }
+                }
+                if let Some(last) = view.and_then(|view| view.last_entry) {
+                    self.the5ers_last_entry.insert(account, last);
+                }
+            }
         }
     }
 
@@ -1032,10 +1113,41 @@ impl PortfolioRuntime {
         });
     }
 
-    fn needs_fundednext(&self) -> bool {
+    fn needs_broker(&self, broker: quotes::Broker) -> bool {
         self.slots.values().any(|slot| {
-            sleeve_of(&slot.target.strategy).is_some_and(|sleeve| sleeve.broker_hours())
+            sleeve_of(&slot.target.strategy)
+                .is_some_and(|sleeve| sleeve.broker_hours() && quotes::Broker::of_book(sleeve.book()) == broker)
         })
+    }
+
+    /// The ban layer's view of one The5ers account: every logical position its
+    /// slots hold (ghosts are not positions) and its last entry.
+    fn the5ers_view(&mut self, account: i64, now: i64) -> crate::strategies::the5ers::nov_08_2026::ban::View {
+        use crate::strategies::the5ers::nov_08_2026::ban::{Held, View};
+        self.the5ers_recent.retain(|recent| recent.3 > now);
+        let mut held: Vec<Held> = Vec::new();
+        for recent in &self.the5ers_recent {
+            if recent.0 == account
+                && !self
+                    .slots
+                    .get(&recent.4)
+                    .is_some_and(|slot| slot.positions.contains_key(&recent.5))
+            {
+                held.push(Held { market: recent.1, side: recent.2 });
+            }
+        }
+        for slot in self.slots.values() {
+            if slot.target.account_id != account {
+                continue;
+            }
+            let Some(sleeve) = sleeve_of(&slot.target.strategy) else {
+                continue;
+            };
+            for position in slot.positions.values() {
+                held.push(Held { market: sleeve.market(), side: position.side });
+            }
+        }
+        View { held, last_entry: self.the5ers_last_entry.get(&account).copied() }
     }
 
     fn needs_market(&self, symbol: &str) -> bool {
@@ -1225,16 +1337,18 @@ impl PortfolioRuntime {
         let Some(second) = self.ny_second_of_day() else {
             return;
         };
-        // The earliest any market flattens; each slot checks its own below.
-        if !(ROLLOVER_BREAK_SECOND - 360..ROLLOVER_BREAK_SECOND).contains(&second) {
+        // The earliest any market flattens (The5ers non-FX, 660 s before 17:00);
+        // each slot checks its own below.
+        if !(ROLLOVER_BREAK_SECOND - 660..ROLLOVER_BREAK_SECOND).contains(&second) {
             return;
         }
         let mut due: std::collections::BTreeMap<String, Vec<i64>> = std::collections::BTreeMap::new();
         for (id, slot) in &self.slots {
-            let fundednext = sleeve_of(&slot.target.strategy)
-                .is_some_and(|sleeve| sleeve.book() == crate::strategies::cfd::Book::FundedNext);
-            let lead = crate::strategies::cfd::flatten_lead_seconds(strategy_symbol(&slot.target.strategy));
-            if fundednext
+            let Some(book) = sleeve_of(&slot.target.strategy).map(|sleeve| sleeve.book()) else {
+                continue;
+            };
+            let lead = crate::strategies::cfd::flatten_lead_seconds(strategy_symbol(&slot.target.strategy), book);
+            if book.is_prop()
                 && second >= ROLLOVER_BREAK_SECOND - lead
                 && !slot.positions.is_empty()
                 && !slot.strategy.holds_overnight()
@@ -1247,7 +1361,7 @@ impl PortfolioRuntime {
             }
         }
         for (market, ids) in due {
-            tracing::info!(market, "FundedNext: flattening before the 17:00 break");
+            tracing::info!(market, "prop book: flattening before the daily break");
             self.forced_flatten(&market, None, "session_end_rollover", false, Some(&ids))
                 .await;
         }
@@ -1273,9 +1387,8 @@ impl PortfolioRuntime {
             {
                 continue;
             }
-            let fundednext = sleeve_of(&slot.target.strategy)
-                .is_some_and(|sleeve| sleeve.book() == crate::strategies::cfd::Book::FundedNext);
-            if fundednext {
+            let prop = sleeve_of(&slot.target.strategy).is_some_and(|sleeve| sleeve.book().is_prop());
+            if prop {
                 held.push(*id);
             } else {
                 flatten.push(*id);

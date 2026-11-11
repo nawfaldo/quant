@@ -58,6 +58,9 @@ REM TWO ACCOUNTS, TWO TERMINALS since 2026-10-14. A terminal holds one login, so
 REM the FundedNext account runs in its own installation.
 set "FN_TERMINAL=C:\Program Files\FundedNext MT5 Terminal\terminal64.exe"
 if not "%MT5_FN_TERMINAL%"=="" set "FN_TERMINAL=%MT5_FN_TERMINAL%"
+REM THE5ERS (2026-11-08): the High Stakes account in its own installation.
+set "T5_TERMINAL=C:\Program Files\Five Percent Online MetaTrader 5\terminal64.exe"
+if not "%MT5_T5_TERMINAL%"=="" set "T5_TERMINAL=%MT5_T5_TERMINAL%"
 if "%PORT%"=="" set "PORT=4000"
 
 cd /d "%WORKSPACE%"
@@ -74,8 +77,20 @@ REM trade that differs -- entry bar, side, fill, stop or exit -- stops the launc
 REM here, before anything can place an order on logic the sandbox never ran.
 call :say "0/4 parity gate: live strategies against their sandbox trade logs"
 pushd "%WORKSPACE%\live_trade"
-cargo test --lib -- oct_12_2026 oct_21_2026 strategies::cfd::
+REM COMPILE FIRST, SEPARATELY, SO A BROKEN BUILD CACHE HEALS ITSELF. A power cut
+REM or crash mid-build (2026-11-05 blackout) leaves half-written objects in
+REM target\, and the next build dies in link.exe with LNK2019/LNK2001
+REM "unresolved external symbol" -- no code changed, the cache is just corrupt.
+REM :cargo_heal retries after a crate clean, then a full clean; a real code
+REM error still fails, only slower. Test FAILURES are never retried.
+set "CARGO_PROFILE=debug"
+set "CARGO_ARGS=test --lib --no-run"
+call :cargo_heal
 set "PARITY=%ERRORLEVEL%"
+if not "%PARITY%"=="0" goto parity_done
+cargo test --lib -- oct_12_2026 oct_21_2026 nov_08_2026 strategies::cfd:: backtest::news
+set "PARITY=%ERRORLEVEL%"
+:parity_done
 popd
 if not "%PARITY%"=="0" (
   call :say "FAILED: the live book no longer reproduces the sandbox (cargo test exited %PARITY%)"
@@ -88,7 +103,9 @@ REM the feed daemon (stage 2) and the switch below both ask the built
 REM `exness_live_book` which markets and rows the book has.
 call :say "0/4 building the server and the book registry"
 pushd "%WORKSPACE%\live_trade"
-cargo build --release --bins
+set "CARGO_PROFILE=release"
+set "CARGO_ARGS=build --release --bins"
+call :cargo_heal
 set "BUILD=%ERRORLEVEL%"
 popd
 if not "%BUILD%"=="0" (
@@ -114,6 +131,16 @@ if errorlevel 1 (
   call :say "FAILED: the FundedNext account could not be put on its book"
   goto fail
 )
+REM THE THE5ERS ACCOUNT ON ITS OWN BOOK (32 sleeves, dial 0.1, ban layer).
+call :say "0/4 putting the The5ers account on the The5ers book"
+"%PYTHON%" "tools\go_live_the5ers.py"
+if errorlevel 1 (
+  call :say "FAILED: the The5ers account could not be put on its book"
+  goto fail
+)
+REM THE RED-FOLDER CALENDAR the The5ers ban layer reads: this week's events.
+"%PYTHON%" -m sandbox.research.the5ers_rules fetch-news
+if errorlevel 1 call :say "WARNING: could not fetch this week's Forex Factory calendar"
 REM ACCOUNT ID -> TERMINAL, read by bridge.py (stage 1's check and stage 4) from
 REM MT5_TERMINALS, so both resolve each account to its own installation.
 set "MT5_TERMINALS="
@@ -122,7 +149,7 @@ REM tokens are both quoted loses its outer quotes in cmd ("The filename,
 REM directory name, or volume label syntax is incorrect").
 set "TERMINAL_MAP=%WORKSPACE%\logs\mt5_terminals.txt"
 if exist "%TERMINAL_MAP%" del "%TERMINAL_MAP%"
-"%PYTHON%" "tools\live_terminals.py" "%TERMINAL%" "%FN_TERMINAL%" > "%TERMINAL_MAP%"
+"%PYTHON%" "tools\live_terminals.py" "%TERMINAL%" "%FN_TERMINAL%" "%T5_TERMINAL%" > "%TERMINAL_MAP%"
 if errorlevel 1 (
   call :say "FAILED: tools\live_terminals.py could not map the accounts"
   goto fail
@@ -161,6 +188,11 @@ if not errorlevel 1 (
   call :terminal "%FN_TERMINAL%"
   if errorlevel 1 goto fail
 )
+"%SystemRoot%\System32\findstr.exe" /L /I /C:"%T5_TERMINAL%" "%TERMINAL_MAP%" >nul
+if not errorlevel 1 (
+  call :terminal "%T5_TERMINAL%"
+  if errorlevel 1 goto fail
+)
 REM Generous: a cold terminal start includes the login and, on the first run
 REM after an update, a silent upgrade.
 "%PYTHON%" "tools\live_stack_ready.py" terminal --timeout 300
@@ -178,6 +210,13 @@ REM terminal, which stage 1 started. Its own supervisor, like the feeds.
 call "%WORKSPACE%\tools\run_fundednext_stream.bat"
 "%PYTHON%" "tools\live_stack_ready.py" fn_stream --timeout 300
 if errorlevel 1 goto fail
+REM The5ers' own minutes, live: same role for the The5ers book.
+"%SystemRoot%\System32\findstr.exe" /L /I /C:"%T5_TERMINAL%" "%TERMINAL_MAP%" >nul
+if not errorlevel 1 (
+  call "%WORKSPACE%\tools\run_the5ers_stream.bat"
+  "%PYTHON%" "tools\live_stack_ready.py" t5_stream --timeout 300
+  if errorlevel 1 goto fail
+)
 REM The catch-up runs before the first health write, and it is sized by how long
 REM the tables have been stale -- minutes after a weekend.
 "%PYTHON%" "tools\live_stack_ready.py" feeds --timeout 600
@@ -234,6 +273,30 @@ if errorlevel 1 (
 ) else (
   call :say "1/4 already running: %~1"
 )
+exit /b 0
+
+REM Runs `cargo %CARGO_ARGS%` in the current dir (live_trade). On failure:
+REM drop incremental state and this crate's objects for %CARGO_PROFILE% and
+REM retry; on a second failure, `cargo clean` everything and retry once more.
+:cargo_heal
+cargo %CARGO_ARGS%
+if not errorlevel 1 exit /b 0
+call :say "cargo %CARGO_ARGS% failed; clearing the %CARGO_PROFILE% build cache of live_trade (a power cut mid-build corrupts it) and rebuilding"
+if exist "target\%CARGO_PROFILE%\incremental" rmdir /s /q "target\%CARGO_PROFILE%\incremental"
+if "%CARGO_PROFILE%"=="release" (cargo clean -p live_trade --release) else (cargo clean -p live_trade)
+cargo %CARGO_ARGS%
+if not errorlevel 1 (
+  call :say "rebuilt cleanly after clearing the live_trade cache"
+  exit /b 0
+)
+call :say "still failing; full cargo clean and rebuild (several minutes)"
+cargo clean
+cargo %CARGO_ARGS%
+if errorlevel 1 (
+  call :say "still failing after a full clean: a real compile error, not a corrupt cache"
+  exit /b 1
+)
+call :say "rebuilt cleanly after a full clean"
 exit /b 0
 
 REM Echoed AND appended, because the console is what the operator watches and the

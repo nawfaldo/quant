@@ -569,16 +569,24 @@ pub(crate) fn sleeve_throttle(
         fills.is_none_or(|fills| fills.quoted(*bucket, 1_800))
             && (sleeve.broker_day() || sleeve.in_session(bucket - shift))
     });
-    daily_multipliers(&buckets, crate::strategies::fundednext::oct_21_2026::THROTTLE_FROM)
+    let day_shift = if sleeve.book() == crate::strategies::cfd::Book::The5ers { shift } else { 0 };
+    daily_multipliers_shifted(&buckets, crate::strategies::fundednext::oct_21_2026::THROTTLE_FROM, day_shift)
 }
 
 /// `exness_combined_strategies.daily_multipliers` over a series' 30-minute
 /// closes from `from` on: each day's multiplier from the days strictly before it.
 pub(crate) fn daily_multipliers(marks: &BTreeMap<i64, (f64, f64, f64)>, from: i64) -> HashMap<i64, f64> {
+    daily_multipliers_shifted(marks, from, 0)
+}
+
+/// `daily_multipliers` with days cut `day_shift` seconds earlier on the marks'
+/// clock: The5ers' series are marked shifted but its Python book buckets days
+/// on real New York (`FamilyEngine::vol_day_of`).
+pub(crate) fn daily_multipliers_shifted(marks: &BTreeMap<i64, (f64, f64, f64)>, from: i64, day_shift: i64) -> HashMap<i64, f64> {
     use crate::strategies::cfd::{VOL_HALFLIFE, VOL_MAX_MULTIPLIER, VOL_MIN_DAYS, VOL_TARGET};
     let mut by_day: BTreeMap<i64, f64> = BTreeMap::new();
-    for (&ts, &(close, _, _)) in marks.range(from..) {
-        by_day.insert(ts.div_euclid(DAY), close);
+    for (&ts, &(close, _, _)) in marks.range(from + day_shift..) {
+        by_day.insert((ts - day_shift).div_euclid(DAY), close);
     }
     let lam = 0.5f64.powf(1.0 / VOL_HALFLIFE);
     let (mut variance, mut seen, mut previous) = (0.0_f64, 0u32, None::<f64>);

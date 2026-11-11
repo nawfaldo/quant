@@ -15,8 +15,9 @@
 		bars,
 		live = [],
 		minutes = 1,
-		positions = []
-	}: { bars: Bar[]; live?: Bar[]; minutes?: number; positions?: OpenPosition[] } = $props();
+		positions = [],
+		fit = false
+	}: { bars: Bar[]; live?: Bar[]; minutes?: number; positions?: OpenPosition[]; fit?: boolean } = $props();
 
 	let container: HTMLDivElement;
 	let series = $state<ISeriesApi<'Candlestick'>>();
@@ -75,6 +76,8 @@
 		s.applyOptions({ priceFormat: { type: 'price', precision, minMove: 10 ** -precision } });
 		s.setData(bars.map((b) => ({ ...b, time: b.time as UTCTimestamp })));
 		last = bars.at(-1) && { ...bars.at(-1)! };
+		// Few candles (the equity chart): spread them across the width instead of bunching at the left.
+		if (fit) chart.timeScale().fitContent();
 		lines = new PositionLines();
 		s.attachPrimitive(lines);
 		drawnKey = '';

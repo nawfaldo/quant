@@ -30,7 +30,10 @@ const ARROW_GAP = 6; // between the candle and the arrow, px
 const ARROW = 9; // arrow length, px
 const PAST_LAST = 26; // how far the line runs past the newest candle, px
 
-const money = (v: number) => `${v < 0 ? '-' : '+'}$${Math.abs(v).toFixed(2)}`;
+const zero = (v: number) => Math.abs(v) < 0.005;
+const money = (v: number) => (zero(v) ? '+$0.00' : `${v < 0 ? '-' : '+'}$${Math.abs(v).toFixed(2)}`);
+// Same as the Open positions table: blue profit, red loss, white at zero (Tailwind blue-400 / red-400).
+const pnlColor = (v: number) => (zero(v) ? '#ffffff' : v > 0 ? '#60a5fa' : '#f87171');
 
 class Renderer implements IPrimitivePaneRenderer {
 	constructor(private source: PositionLines) {}
@@ -67,7 +70,7 @@ class Renderer implements IPrimitivePaneRenderer {
 				ctx.setLineDash([]);
 
 				// P&L at the end of the line.
-				ctx.fillStyle = TEXT;
+				ctx.fillStyle = pnlColor(p.pnl);
 				ctx.fillText(label, endX + 5, y);
 
 				// Arrow at the entry candle.

@@ -178,7 +178,12 @@ DUKASCOPY = {
 #: a cell that silently never fires.
 BINANCE = {"ethusd": ("ETHUSDT", "ethusd_1m"),
            # `btc:jump` joined the book 2026-09-30; `btc_1m` is Binance BTCUSDT.
-           "btc": ("BTCUSDT", "btc_1m")}
+           "btc": ("BTCUSDT", "btc_1m"),
+           # The The5ers book (2026-11-08) signals these on Binance, as its
+           # research backfilled them (`tools/binance_backfill_1m.py`).
+           "solusd": ("SOLUSDT", "solusd_1m"),
+           "btceur": ("BTCEUR", "btceur_1m"),
+           "etheur": ("ETHEUR", "etheur_1m")}
 
 #: Markets the canon has held that this script deliberately does not feed, so a
 #: reader looking for one finds the reason rather than an omission.
@@ -449,17 +454,18 @@ def canon_markets():
         return None
     # THE FUNDEDNEXT BOOK TOO, since 2026-10-14: its own registry, less the
     # markets `NOT_FED` holds back (their sleeves are inactive on the account).
-    for name in ("fundednext_live_book.exe", "fundednext_live_book"):
-        other = WORKSPACE / "live_trade" / "target" / "release" / name
-        if other.is_file():
-            try:
-                done = subprocess.run([str(other)], capture_output=True, text=True,
-                                      timeout=60, cwd=str(WORKSPACE))
-                extra = json.loads(done.stdout).get("markets") or []
-            except (OSError, ValueError, subprocess.SubprocessError):
-                return None
-            markets = list(markets) + [m for m in extra if m not in NOT_FED]
-            break
+    for book in ("fundednext_live_book", "the5ers_live_book"):
+        for name in (f"{book}.exe", book):
+            other = WORKSPACE / "live_trade" / "target" / "release" / name
+            if other.is_file():
+                try:
+                    done = subprocess.run([str(other)], capture_output=True, text=True,
+                                          timeout=60, cwd=str(WORKSPACE))
+                    extra = json.loads(done.stdout).get("markets") or []
+                except (OSError, ValueError, subprocess.SubprocessError):
+                    return None
+                markets = list(markets) + [m for m in extra if m not in NOT_FED]
+                break
     return payload.get("book_id", "?"), set(markets)
 
 
@@ -1158,12 +1164,24 @@ def refresh_broker_minutes(stop):
             continue
         done_day = now.date()
         first = (now.date() - timedelta(days=1)).isoformat()
+        # THE5ERS NEWS CALENDAR: this week's Forex Factory export, daily, so a
+        # stack left running into a new week still knows its red folders
+        # (`live_trade::backtest::news`, the The5ers ban layer).
+        if broker_active("the5ers"):
+            try:
+                done = subprocess.run(
+                    [python_exe(), "-m", "sandbox.research.the5ers_rules", "fetch-news"],
+                    cwd=str(WORKSPACE), capture_output=True, text=True, timeout=120)
+                log(f"the5ers news calendar: {((done.stdout or done.stderr).strip().splitlines() or ['?'])[-1]}")
+            except (OSError, subprocess.SubprocessError) as error:
+                log(f"the5ers news calendar fetch failed: {error}")
         # ONE IMPORT PER BROKER, each for its own book's markets: the backtest
         # of an Exness day prices fills off `exness_*`, a FundedNext day off
         # `fundednext_*` (the FundedNext terminal, NY+7 server clock handled by
         # the importer). A market only one book trades is imported for it only.
         for broker, binary in (("exness", "exness_live_book"),
-                               ("fundednext", "fundednext_live_book")):
+                               ("fundednext", "fundednext_live_book"),
+                               ("the5ers", "the5ers_live_book")):
             # A PAUSED BROKER IS NOT REFRESHED: the import opens that broker's
             # terminal, and with no active account on it (Exness since
             # 2026-10) that put an unused Exness window up every morning.
@@ -1194,7 +1212,7 @@ def broker_active(broker):
     unreadable database counts as active, so a refresh is never lost to it."""
     import sqlite3  # noqa: PLC0415
 
-    prefix = {"exness": "Exness", "fundednext": "FundedNext"}[broker]
+    prefix = {"exness": "Exness", "fundednext": "FundedNext", "the5ers": "FivePercent"}[broker]
     try:
         connection = sqlite3.connect(
             f"file:{WORKSPACE / 'live_trade' / 'app.db'}?mode=ro", uri=True)

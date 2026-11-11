@@ -26,7 +26,13 @@ pub(crate) const FLATTEN_LEAD_SECONDS: i64 = 120;
 
 /// `cfd_families.flatten_lead_seconds`: `FLATTEN_LEAD_SECONDS`, or longer on a
 /// market that stops quoting before 16:59.
-pub(crate) fn flatten_lead_seconds(market: &str) -> i64 {
+pub(crate) fn flatten_lead_seconds(market: &str, book: Book) -> i64 {
+    if book == Book::The5ers {
+        let fx = crate::backtest::fills::is_fx_pair(market);
+        // `cfd_families.THE5ERS_FLATTEN_LEAD_*`: FX stops taking orders at
+        // 16:55, everything else at 16:50.
+        return if fx { 360 } else { 660 };
+    }
     match market {
         "us500" => 240,
         "xauusd" | "xagusd" => FLATTEN_LEAD_SECONDS,
@@ -143,6 +149,16 @@ pub(crate) enum Family {
         votes: i32,
         zscore_period: usize,
         rsi_period: usize,
+    },
+    /// `confluence` over the `trend` pool: slow RSI at 50, the 12/26/9-session
+    /// MACD histogram's sign, the wide supertrend, OBV against its channel
+    /// middle, and the `span`-bar return -- all as a bias.
+    ConfluenceTrend {
+        votes: i32,
+        rsi_period: usize,
+        macd: (usize, usize, usize),
+        obv_channel: usize,
+        span: usize,
     },
     Trap {
         window: usize,
@@ -765,6 +781,10 @@ pub(crate) enum Family {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum FadeTrigger {
     VwapDev,
+    /// The close beyond 2 sigma of its `period`-bar mean.
+    Zscore(usize),
+    /// The close beyond 2 ATR of its `period`-bar EMA.
+    Keltner(usize),
 }
 
 impl Family {
@@ -897,6 +917,12 @@ pub(crate) enum Gate {
     Supertrend,
     /// OBV against the middle of its own `10 * unit` channel.
     Obv,
+    /// The sign of the 12/26/9-session MACD histogram (`gate_period` = unit).
+    Macd,
+    /// Relative volume >= 1.5, signed by this candle's body.
+    Rvol,
+    /// Wilder's ADX >= 20, signed by +DI against -DI (`gate_period` = period).
+    Adx,
 }
 
 /// `vol_regime`'s `regime` axis: which side of the ratio is the event.
@@ -949,6 +975,8 @@ pub(crate) enum BreakLevel {
     Pdr,
     /// The `4 * session` Donchian channel, read AS IT STOOD when it broke.
     Donchian,
+    /// The last confirmed swing high and low (`pivot_high[wing]`), as they stood.
+    Swing,
 }
 
 #[allow(dead_code, reason = "the unreached arm is what the reached one means")]
@@ -1067,6 +1095,9 @@ pub(crate) struct LevelHistory {
     pub(crate) width_min: Option<f64>,
     /// `ctx["span_min"][compress][index]`, inclusive of this bar.
     pub(crate) span_min: Option<f64>,
+    /// The last confirmed swing pivots at this bar (`BreakLevel::Swing`).
+    pub(crate) swing_top: Option<f64>,
+    pub(crate) swing_bottom: Option<f64>,
 }
 
 /// The streaming port of `cfd_families.backtest` for one sealed cell.
@@ -1221,6 +1252,7 @@ pub(crate) struct FamilyEngine {
     pub(crate) pivots: Option<SwingPivots>,
     /// `ctx["macd_line"]` / `ctx["macd_hist"]` at one setting.
     pub(crate) macd: Option<MacdHistogram>,
+    pub(crate) adx: Option<AdxDmi>,
     /// `ctx["parkinson"]` / `["garman_klass"]` / `["close_var"]`.
     pub(crate) estimators: Option<VarianceEstimators>,
     /// `ctx["quantile_high"]` / `["quantile_low"]` at one key.
@@ -1414,6 +1446,7 @@ impl FamilyEngine {
             stochastic: None,
             pivots: None,
             macd: None,
+            adx: None,
             estimators: None,
             quantile: None,
             vol_of_vol: None,
@@ -1493,10 +1526,11 @@ impl FamilyEngine {
         {
             return None;
         }
+        let vday = self.vol_day_of(candle_ts);
         self.fill_mult = self
             .throttle_table
             .as_ref()
-            .map(|table| table.get(&day).copied().unwrap_or(1.0));
+            .map(|table| table.get(&vday).copied().unwrap_or(1.0));
         let broker_entry = self
             .fills
             .as_ref()
@@ -1768,7 +1802,7 @@ impl FamilyEngine {
         let bar_seconds = self.bar_seconds;
         match self.fills.as_ref().and_then(|fills| {
             if early {
-                fills.flatten_after(candle_ts, candle_open, bar_seconds, flatten_lead_seconds(self.sleeve.market()))
+                fills.flatten_after(candle_ts, candle_open, bar_seconds, flatten_lead_seconds(self.sleeve.market(), self.sleeve.book()))
             } else {
                 fills.exit_after(candle_ts, candle_open, bar_seconds)
             }
@@ -1804,11 +1838,31 @@ impl FamilyEngine {
                 self.rsi = Some(WilderRsi::new(rsi_period));
             }
             Family::Trap {
-                channel, window, ..
+                channel,
+                window,
+                level,
             } => {
                 self.channel_high = Some(RollingExtreme::new(channel, true));
                 self.channel_low = Some(RollingExtreme::new(channel, false));
                 self.level_window = window;
+                if level == BreakLevel::Swing {
+                    // `_breakout_levels("swing")`: `p["wing"][1]`.
+                    self.pivots = Some(SwingPivots::new(3));
+                }
+            }
+            Family::ConfluenceTrend {
+                rsi_period,
+                macd,
+                obv_channel,
+                ..
+            } => {
+                self.rsi = Some(WilderRsi::new(rsi_period));
+                self.macd = Some(MacdHistogram::new(macd.0, macd.1, macd.2));
+                self.supertrend = Some(Supertrend::new(3.0));
+                self.obv = Some(OnBalanceVolume::new());
+                self.obv_high = Some(RollingExtreme::new(obv_channel, true));
+                self.obv_low = Some(RollingExtreme::new(obv_channel, false));
+                self.closes = Some(CloseHistory::new());
             }
             Family::ObvBreak { channel } => {
                 self.obv = Some(OnBalanceVolume::new());
@@ -2032,8 +2086,16 @@ impl FamilyEngine {
                 self.arm_gate(gate, gate_period);
             }
             Family::GatedFade {
-                gate, gate_period, ..
+                trigger,
+                gate,
+                gate_period,
+                ..
             } => {
+                match trigger {
+                    FadeTrigger::VwapDev => {}
+                    FadeTrigger::Zscore(period) => self.zscore = Some(MeanSigma::new(period)),
+                    FadeTrigger::Keltner(period) => self.reference_ema = Some(Ema::new(period)),
+                }
                 self.arm_gate(gate, gate_period);
             }
             Family::Stochastic {
@@ -2096,6 +2158,12 @@ impl FamilyEngine {
                 self.obv_high = Some(RollingExtreme::new(gate_period, true));
                 self.obv_low = Some(RollingExtreme::new(gate_period, false));
             }
+            Gate::Macd => {
+                let k = gate_period;
+                self.macd = Some(MacdHistogram::new(12 * k, 26 * k, 9 * k));
+            }
+            Gate::Rvol => self.relative_volume = Some(RelativeVolume::new()),
+            Gate::Adx => self.adx = Some(AdxDmi::new(gate_period)),
         }
     }
 
@@ -2110,7 +2178,7 @@ impl FamilyEngine {
     /// The scheduled last-print minute of the shifted day holding `ts`, for a
     /// FundedNext sleeve on live rules; `None` otherwise.
     fn last_print(&self, ts: i64) -> Option<i64> {
-        if self.canon_replay || self.sleeve.book() != Book::FundedNext {
+        if self.canon_replay || !self.sleeve.book().is_prop() {
             return None;
         }
         crate::strategies::fundednext::oct_21_2026::contracts::last_print_minute(
@@ -2335,6 +2403,9 @@ impl FamilyEngine {
         if let Some(macd) = &mut self.macd {
             macd.push(candle.close);
         }
+        if let Some(adx) = &mut self.adx {
+            adx.push(candle.high, candle.low, candle.close);
+        }
         if let Some(estimators) = &mut self.estimators {
             estimators.push(candle);
         }
@@ -2541,6 +2612,7 @@ impl FamilyEngine {
                 self.volatility_breakout(candle, minute, fraction)
             }
             Family::Confluence { votes, .. } => self.confluence(candle, minute, votes),
+            Family::ConfluenceTrend { votes, span, .. } => self.confluence_trend(candle, minute, votes, span),
             Family::Trap { window, level, .. } => self.trap(candle, minute, window, level),
             Family::ObvBreak { .. } => self.obv_break(candle, minute),
             Family::XmaCross { .. } => self.xma_cross(candle, minute),
@@ -3193,6 +3265,38 @@ impl FamilyEngine {
                     0
                 })
             }
+            Gate::Macd => {
+                let value = self.macd.as_ref()?.histogram?;
+                Some(if value > 0.0 {
+                    1
+                } else if value < 0.0 {
+                    -1
+                } else {
+                    0
+                })
+            }
+            Gate::Rvol => {
+                let value = self.relative_volume.as_ref()?.value()?;
+                if value < 1.5 {
+                    return Some(0);
+                }
+                let body = candle.close - candle.open;
+                Some(if body > 0.0 {
+                    1
+                } else if body < 0.0 {
+                    -1
+                } else {
+                    0
+                })
+            }
+            Gate::Adx => {
+                let adx = self.adx.as_ref()?;
+                let (strength, plus, minus) = (adx.adx?, adx.plus?, adx.minus?);
+                if strength < 20.0 {
+                    return Some(0);
+                }
+                Some(if plus > minus { 1 } else { -1 })
+            }
         }
     }
 
@@ -3367,6 +3471,7 @@ impl FamilyEngine {
                     None => (None, None),
                 },
                 BreakLevel::Donchian => (past.top, past.bottom),
+                BreakLevel::Swing => (past.swing_top, past.swing_bottom),
             };
             let (Some(top), Some(bottom)) = (top, bottom) else {
                 continue;
@@ -3612,6 +3717,47 @@ impl FamilyEngine {
         })
     }
 
+    /// `confluence_signal` over the `trend` pool.
+    pub(crate) fn confluence_trend(&self, candle: &Candle, minute: i64, votes: i32, span: usize) -> Option<Side> {
+        if self.late(minute) {
+            return None;
+        }
+        let higher_tf = self.closes.as_ref().and_then(|closes| {
+            let before = closes.back(span)?;
+            if before <= 0.0 {
+                return None;
+            }
+            let change = candle.close / before - 1.0;
+            Some(if change > 0.0 {
+                1
+            } else if change < 0.0 {
+                -1
+            } else {
+                0
+            })
+        });
+        let ballots = [
+            self.gate_opinion(candle, Gate::Rsi),
+            self.gate_opinion(candle, Gate::Macd),
+            self.gate_opinion(candle, Gate::Supertrend),
+            self.gate_opinion(candle, Gate::Obv),
+            higher_tf,
+        ];
+        let counted: Vec<i32> = ballots.into_iter().flatten().collect();
+        if counted.len() < 3 {
+            return None;
+        }
+        let net: i32 = counted.iter().sum();
+        if net.abs() < votes {
+            return None;
+        }
+        let raw = if net > 0 { Side::Long } else { Side::Short };
+        Some(match self.params.direction {
+            Direction::Follow => raw,
+            Direction::Fade => Direction::Fade.apply(raw),
+        })
+    }
+
     /// `fade_side("rsi_extreme")`: the side a mean-reversion rule would take.
     pub(crate) fn vote_rsi_extreme(&self) -> Option<i32> {
         let value = self.rsi.as_ref()?.value()?;
@@ -3724,6 +3870,7 @@ impl FamilyEngine {
                     Some((high, low)) => (Some(high), Some(low)),
                     None => (None, None),
                 },
+                BreakLevel::Swing => (past.swing_top, past.swing_bottom),
             };
             let (Some(top), Some(bottom)) = (top, bottom) else {
                 continue;
@@ -4251,6 +4398,23 @@ impl FamilyEngine {
                 -1 => Side::Short,
                 _ => return None,
             },
+            FadeTrigger::Zscore(_) => match self.vote_zscore(candle)? {
+                1 => Side::Long,
+                -1 => Side::Short,
+                _ => return None,
+            },
+            FadeTrigger::Keltner(_) => {
+                let atr = self.atr.value().filter(|atr| *atr > 0.0)?;
+                let reference = self.reference_ema.as_ref()?.value()?;
+                let distance = (candle.close - reference) / atr;
+                if distance > 2.0 {
+                    Side::Short
+                } else if distance < -2.0 {
+                    Side::Long
+                } else {
+                    return None;
+                }
+            }
         };
         if self.late(minute) {
             return None;
@@ -4505,8 +4669,9 @@ impl FamilyEngine {
         // the two agree on every candle that pushes, and only the throttle's
         // survives `prime_throttle`, which runs before the first candle.
         if !self.throttle_from_source() && self.throttle_counts(candle.ts) {
-            let changed = self.vol_day != Some(day);
-            self.vol_day = Some(day);
+            let vday = self.vol_day_of(candle.ts);
+            let changed = self.vol_day != Some(vday);
+            self.vol_day = Some(vday);
             self.volatility_multiplier.push(candle.close, changed);
         }
 
@@ -4546,7 +4711,7 @@ impl FamilyEngine {
                 price = Some(candle.open);
                 // A FundedNext session ending at the rollover, on its last
                 // candle by the clock: live closed it on the clock before 17:00.
-                early = self.sleeve.book() == Book::FundedNext
+                early = self.sleeve.book().is_prop()
                     && close_minute == ROLLOVER_CLOSE_MINUTE
                     && last_of_day
                     && minute < close_minute
@@ -4709,6 +4874,8 @@ impl FamilyEngine {
             width: self.current_width,
             width_min: self.current_width_min,
             span_min: self.current_span_min,
+            swing_top: self.pivots.as_ref().and_then(|p| p.high),
+            swing_bottom: self.pivots.as_ref().and_then(|p| p.low),
         };
         self.push_channels(&candle);
         if self.level_window > 0 {
@@ -4767,11 +4934,16 @@ impl FamilyEngine {
     /// `THROTTLE_FROM` too, so a sleeve warmed from any day carries the same
     /// multiplier (`prime_throttle` covers the days before its warm-up).
     fn throttle_counts(&self, ts: i64) -> bool {
-        use crate::strategies::fundednext::oct_21_2026::{CANON_THROTTLE_FROM, THROTTLE_FROM};
-        if self.sleeve.book() != Book::FundedNext {
+        // Both prop books start their throttle at their own fixed bar; the
+        // canon and live-rules starts are the same bar in each.
+        let Some(from) = self.sleeve.book().throttle_from() else {
             return true;
+        };
+        // The5ers' Python marks from `from` on REAL New York.
+        if self.sleeve.book() == Book::The5ers {
+            return ts - self.spec.shift_hours * 3_600 >= from;
         }
-        ts >= if self.canon_replay { CANON_THROTTLE_FROM } else { THROTTLE_FROM }
+        ts >= from
     }
 
     fn throttle_from_source(&self) -> bool {
@@ -4779,7 +4951,7 @@ impl FamilyEngine {
     }
 
     fn whole_day_throttle(&self) -> bool {
-        self.sleeve.book() == Book::FundedNext && self.sleeve.broker_day()
+        self.sleeve.book().is_prop() && self.sleeve.broker_day()
     }
 
     /// Live `CFD_BROKER_HOURS`: the candle opening at `ts` (shifted) survives
@@ -4918,10 +5090,22 @@ impl FamilyEngine {
             if !self.throttle_counts(ts) {
                 continue;
             }
-            let day = self.day_of(ts);
+            let day = self.vol_day_of(ts);
             let changed = self.vol_day != Some(day);
             self.vol_day = Some(day);
             self.volatility_multiplier.push(close, changed);
+        }
+    }
+
+    /// The day the sizing throttle buckets a (shifted) stamp into: the sleeve's
+    /// own clock day, as Python marked the older books -- except The5ers, whose
+    /// Python book marks every series on REAL New York
+    /// (`the5ers_combined_strategies.load_state`), so its days end at midnight NY.
+    pub(crate) fn vol_day_of(&self, ts: i64) -> i64 {
+        if self.sleeve.book() == Book::The5ers {
+            (ts - self.spec.shift_hours * 3_600).div_euclid(86_400)
+        } else {
+            self.day_of(ts)
         }
     }
 
@@ -4941,7 +5125,7 @@ impl FamilyEngine {
         if !self.throttle_counts(ts) {
             return;
         }
-        let day = self.day_of(ts);
+        let day = self.vol_day_of(ts);
         let changed = self.vol_day != Some(day);
         self.vol_day = Some(day);
         self.volatility_multiplier.push(close, changed);
@@ -5122,7 +5306,7 @@ impl Strategy for FamilyEngine {
             // printing in -- a Friday-17:00 minute alone in the broker day's
             // 00:00 slot -- would otherwise wait for Monday's first bar while
             // the rest of the book trades past it.
-            let last_known = self.sleeve.book() == Book::FundedNext
+            let last_known = self.sleeve.book().is_prop()
                 && self.next_bar.is_some_and(|next| {
                     next.is_none_or(|next| {
                         (next + self.spec.shift_hours * 3_600).div_euclid(width) != slot
@@ -5145,7 +5329,7 @@ impl Strategy for FamilyEngine {
                     // The Exness book keeps the clock, which its live runtime
                     // shares.
                     let arrival = match (self.sleeve.book(), self.next_bar) {
-                        (Book::FundedNext, Some(next)) => Some(next.is_none_or(|next| {
+                        (book, Some(next)) if book.is_prop() => Some(next.is_none_or(|next| {
                             let opening = (next + self.spec.shift_hours * 3_600).div_euclid(width) * width;
                             !self.in_session(self.minute_of(opening))
                                 || self.day_of(opening) != self.day_of(candle_ts)
@@ -5311,7 +5495,16 @@ pub(crate) fn book_lots(
         if money <= 0.0 || distance <= 0.0 || equity <= 0.0 || entry <= 0.0 {
             return None;
         }
-        let factor = sleeve.scale() * sleeve.book().risk_scale();
+        let the5ers = sleeve.book() == Book::The5ers;
+        let factor = if the5ers {
+            // `the5ers_combined_strategies._scale`: the ladder k cut so the
+            // dial alone never asks more than `MAX_TRADE_RISK` a trade.
+            use crate::strategies::the5ers::nov_08_2026::MAX_TRADE_RISK;
+            let dial = sleeve.book().risk_scale();
+            sleeve.scale().min(MAX_TRADE_RISK / (RISK_FRACTION * dial)) * dial
+        } else {
+            sleeve.scale() * sleeve.book().risk_scale()
+        };
         if factor <= 0.0 {
             return None;
         }
@@ -5360,8 +5553,18 @@ pub(crate) fn book_lots(
             })
             .filter(|lots| *lots > 0.0);
         }
-        let margin_per_lot =
-            entry * spec.contract_size * spec.fx_to_usd * MARGIN_FRACTION;
+        // The5ers' own leverage where it is tighter than the 4x ceiling: crypto
+        // is 1:2 (`the5ers_combined_strategies._size`, `ef.margin_fraction`).
+        let margin_fraction = if the5ers
+            && matches!(
+                sleeve.market(),
+                "btc" | "ethusd" | "ltcusd" | "solusd" | "xrpusd" | "dogeusd" | "btceur" | "etheur"
+            ) {
+            MARGIN_FRACTION.max(0.5)
+        } else {
+            MARGIN_FRACTION
+        };
+        let margin_per_lot = entry * spec.contract_size * spec.fx_to_usd * margin_fraction;
         let ceiling = if margin_per_lot > 0.0 {
             spec.volume_max.min(equity / margin_per_lot)
         } else {
@@ -5371,6 +5574,22 @@ pub(crate) fn book_lots(
         let mut lots = (raw.min(ceiling) / step + 1e-10).floor() * step;
         if FORCE_MINIMUM_LOT && raw > 0.0 && lots + 1e-10 < floor && ceiling + 1e-10 >= floor {
             lots = floor;
+        }
+        if the5ers && lots + 1e-10 >= floor && lots.is_finite() {
+            // The hard per-trade cap (`_size`): never more than MAX_TRADE_RISK of
+            // min(equity, $5,000) at the stop; the minimum lot only within 1.25x.
+            use crate::strategies::the5ers::nov_08_2026::{INITIAL_BALANCE, MAX_TRADE_RISK};
+            let cap = MAX_TRADE_RISK * equity.min(INITIAL_BALANCE);
+            if lots * money * distance > cap + 1e-9 {
+                let capped = (cap / (money * distance) / spec.volume_step + 1e-10).floor() * spec.volume_step;
+                lots = if capped + 1e-10 >= floor {
+                    (capped * 1e8).round() / 1e8
+                } else if floor * money * distance <= 1.25 * cap {
+                    floor
+                } else {
+                    0.0
+                };
+            }
         }
         (lots + 1e-10 >= floor && lots.is_finite()).then_some(lots)
     }

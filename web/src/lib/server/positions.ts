@@ -68,7 +68,8 @@ export function openPositions(): Position[] {
 		.all()
 		.map((r: Record<string, unknown>) => {
 			const stamp = Number(r.open_time);
-			const fundedNext = String(r.server).startsWith('FundedNext');
+			// The5ers (FivePercentOnline) runs on New York + 7 as well.
+			const fundedNext = String(r.server).startsWith('FundedNext') || String(r.server).startsWith('FivePercent');
 			const brokerChartTime = fundedNext ? stamp - FUNDEDNEXT_AHEAD_OF_NY : toChartTime(stamp);
 			// "2026-10-13 23:30", New York wall clock.
 			const entryTime = Date.parse(String(r.entry_time ?? '').replace(' ', 'T') + ':00Z') / 1000;

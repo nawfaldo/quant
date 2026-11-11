@@ -55,10 +55,11 @@ import sys
 if any(a == "--broker" or a.startswith("--broker=") for a in sys.argv[1:]):
     raise SystemExit("cfd_tt_families is priced on Exness Pro only; "
                      "drop --broker")
-#: `CFD_BROKER=fundednext` in the environment prices the same families at
-#: FundedNext instead; results then seal as `fundednext_tt_families_*`.
-if os.environ.get("CFD_BROKER", "exness") not in ("exness", "fundednext"):
-    raise SystemExit(f"cfd_tt_families prices exness or fundednext, not "
+#: `CFD_BROKER=fundednext` (or `the5ers`) in the environment prices the same
+#: families at that prop firm instead; results then seal as
+#: `fundednext_tt_families_*` / `the5ers_tt_families_*`.
+if os.environ.get("CFD_BROKER", "exness") not in ("exness", "fundednext", "the5ers"):
+    raise SystemExit(f"cfd_tt_families prices exness, fundednext or the5ers, not "
                      f"{os.environ['CFD_BROKER']}")
 os.environ["CFD_BROKER"] = os.environ.get("CFD_BROKER", "exness")
 #: Full power by default: every core (see `main`), and 2 GB kept back for the

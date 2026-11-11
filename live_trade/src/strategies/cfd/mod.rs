@@ -257,6 +257,40 @@ pub enum Sleeve {
     FnUk100ValueArea60mBarlb,
     FnGbpusdValueArea30mBarlbOff,
     FnCadjpyMomentum5mRth,
+    /// THE THE5ERS BOOK (`the5ers/nov-08-2026`): the 32 members of
+    /// `the5ers_live_book.json` (t5live-7ccde3bb0852), in its order.
+    T5SolusdConfluence15mOffhour,
+    T5ChfjpyGatedFade30mOffhour,
+    T5EurusdRvol30mRth,
+    T5GbpjpyDayOfWeek15mOffhour,
+    T5UstecStructure30mAfternoon,
+    T5EtheurConfluence30mOffhour,
+    T5Us30TwoStage30mOffhour,
+    T5BtceurGatedOrb15mEarlyMorning,
+    T5De40GatedFade30mMorning,
+    T5GbpusdValueArea30mBarlbOff,
+    T5Us30Stochastic30mMorning,
+    T5Us500DayOfWeek5mEvening,
+    T5UstecSwingBreak5mNyOpen,
+    T5NzdusdStructure15mRth,
+    T5GbpusdRegimeBreakout5mNyMidday,
+    T5NzdusdTrap30mOffhour,
+    T5AudjpyGatedOrb15mNyOpen,
+    T5UsdjpyTwoStage30mLondonOpen,
+    T5EurusdKalman30mRth,
+    T5UsdcadHalfLife15mOffhour,
+    T5AudusdKendall15mMorning,
+    T5EuraudGatedFade15mOffhour,
+    T5EuraudTrap5mTokyoOpen,
+    T5CadjpyMomentum5mRth,
+    T5AudusdSwingBreak15mTokyoOpen,
+    T5UsdchfFloorPivot15mMorning,
+    T5Uk100RegimeBreakout30mNyOpen,
+    T5Hk50Efficiency15mBarlb,
+    T5Hk50DayOfWeek30mNyOpen,
+    T5EurjpyGatedOrb30mBarlb,
+    T5Uk100Confluence1hMorning,
+    T5AudjpyStructure30mBarlbOff,
 }
 
 /// The sealed book a sleeve belongs to, and so the broker that prices it.
@@ -267,8 +301,10 @@ pub enum Sleeve {
 pub enum Book {
     /// `exness/oct-12-2026`, the live Exness Pro book.
     Exness,
-    /// `fundednext/oct-21-2026`, the FundedNext book. Backtest only.
+    /// `fundednext/oct-21-2026`, the FundedNext book.
     FundedNext,
+    /// `the5ers/nov-08-2026`, the The5ers High Stakes book.
+    The5ers,
 }
 
 impl Book {
@@ -278,6 +314,7 @@ impl Book {
         match self {
             Self::Exness => crate::strategies::exness::oct_12_2026::CANON_RISK_SCALE,
             Self::FundedNext => crate::strategies::fundednext::oct_21_2026::RISK_SCALE,
+            Self::The5ers => crate::strategies::the5ers::nov_08_2026::RISK_SCALE,
         }
     }
 
@@ -288,6 +325,41 @@ impl Book {
         match self {
             Self::Exness => ADMISSION_BALANCE,
             Self::FundedNext => crate::strategies::fundednext::oct_21_2026::INITIAL_BALANCE,
+            Self::The5ers => crate::strategies::the5ers::nov_08_2026::INITIAL_BALANCE,
+        }
+    }
+
+    /// A prop-firm book: the FundedNext search protocol and live rules (broker
+    /// hours, fills only, primed throttle, scheduled last print, rollover
+    /// flatten, sizing cap at the challenge balance) apply to it.
+    pub fn is_prop(self) -> bool {
+        matches!(self, Self::FundedNext | Self::The5ers)
+    }
+
+    /// The challenge balance a prop book sizes against at most.
+    pub fn initial_balance(self) -> Option<f64> {
+        match self {
+            Self::Exness => None,
+            Self::FundedNext => Some(crate::strategies::fundednext::oct_21_2026::INITIAL_BALANCE),
+            Self::The5ers => Some(crate::strategies::the5ers::nov_08_2026::INITIAL_BALANCE),
+        }
+    }
+
+    /// Where a prop book's sizing throttle starts (`THROTTLE_FROM`).
+    pub fn throttle_from(self) -> Option<i64> {
+        match self {
+            Self::Exness => None,
+            Self::FundedNext => Some(crate::strategies::fundednext::oct_21_2026::THROTTLE_FROM),
+            Self::The5ers => Some(crate::strategies::the5ers::nov_08_2026::THROTTLE_FROM),
+        }
+    }
+
+    /// The members of a book.
+    pub fn members(self) -> &'static [Sleeve] {
+        match self {
+            Self::Exness => crate::strategies::exness::oct_12_2026::registry(),
+            Self::FundedNext => &crate::strategies::fundednext::oct_21_2026::BOOK,
+            Self::The5ers => &crate::strategies::the5ers::nov_08_2026::BOOK,
         }
     }
 }
@@ -330,6 +402,7 @@ impl Sleeve {
         crate::strategies::exness::oct_12_2026::registry()
             .iter()
             .chain(crate::strategies::fundednext::oct_21_2026::BOOK.iter())
+            .chain(crate::strategies::the5ers::nov_08_2026::BOOK.iter())
             .copied()
     }
 
@@ -752,7 +825,7 @@ impl Strategy for CfdSleeve {
     }
 
     fn prime_throttle(&mut self, marks: &[(i64, f64)]) {
-        if self.sleeve.book() == Book::FundedNext {
+        if self.sleeve.book().is_prop() {
             self.engine.prime_throttle(marks);
         }
     }
