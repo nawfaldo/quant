@@ -16,8 +16,9 @@
 		live = [],
 		minutes = 1,
 		positions = [],
-		fit = false
-	}: { bars: Bar[]; live?: Bar[]; minutes?: number; positions?: OpenPosition[]; fit?: boolean } = $props();
+		fit = false,
+		transparent = false
+	}: { bars: Bar[]; live?: Bar[]; minutes?: number; positions?: OpenPosition[]; fit?: boolean; transparent?: boolean } = $props();
 
 	let container: HTMLDivElement;
 	let series = $state<ISeriesApi<'Candlestick'>>();
@@ -45,7 +46,7 @@
 	$effect(() => {
 		const chart = createChart(container, {
 			autoSize: true,
-			layout: { background: { color: '#121212' }, textColor: '#a3a3a3', attributionLogo: false },
+			layout: { background: { color: transparent ? 'transparent' : '#121212' }, textColor: '#a3a3a3', attributionLogo: false },
 			grid: { vertLines: { color: '#1f1f1f' }, horzLines: { color: '#1f1f1f' } },
 			timeScale: { timeVisible: true, borderVisible: false },
 			rightPriceScale: { borderVisible: false },

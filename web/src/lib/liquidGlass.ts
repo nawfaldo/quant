@@ -437,7 +437,14 @@ export function liquidGlass(node: HTMLElement, options: LiquidGlassOptions) {
 		}
 		const ox = screen.left - margin * k;
 		const oy = screen.top - margin * k;
-		cctx.fillStyle = getComputedStyle(source).backgroundColor || '#000';
+		// A transparent source (e.g. a chart on the page background) takes the nearest painted ancestor's colour.
+		let bgEl: Element | null = source, bg = '';
+		while (bgEl) {
+			bg = getComputedStyle(bgEl).backgroundColor;
+			if (bg && bg !== 'transparent' && !/rgba\([^)]*,\s*0\)$/.test(bg)) break;
+			bgEl = bgEl.parentElement;
+		}
+		cctx.fillStyle = bgEl ? bg : '#000';
 		cctx.fillRect(0, 0, cw, ch);
 		for (const el of source.querySelectorAll<HTMLCanvasElement | HTMLImageElement>('canvas, img')) {
 			if (el instanceof HTMLCanvasElement && 'liquidGlass' in el.dataset) continue;

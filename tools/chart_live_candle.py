@@ -18,8 +18,12 @@ the file once it is a little old and falls back to the stored bars.
     dukascopy   everything in `DUKASCOPY`, bid ticks every `DUKASCOPY_POLL_SECONDS`
 
 DUKASCOPY IS POLLED GENTLY because the trading feed daemon uses the same
-vendor from the same address, and Dukascopy throttles a busy client with 503s
-and then connect timeouts. A failing symbol backs off for `BACKOFF_SECONDS`.
+vendor from the same address, and Dukascopy throttles a busy client with 503s,
+connect timeouts and "Too Many Requests" (which the vendor library surfaces as a
+TypeError). On 2026-11-11/12 six charts at 3s each got the trading feed's
+catch-ups refused. So all Dukascopy symbols share ONE request budget (at most
+one request every `DUKASCOPY_MIN_GAP_SECONDS`), and any Dukascopy failure pauses
+every Dukascopy symbol for `DUKASCOPY_PAUSE_SECONDS`.
 
 Each Dukascopy instrument was checked 2026-10-14 against its stored table, to
 the digit, on the last three stored minutes. `aus200_1m` and `xngusd_1m` did
@@ -55,6 +59,8 @@ WATCH_STALE_SECONDS = 30  # the web app refreshes the file every few seconds
 BINANCE_URL = "https://data-api.binance.vision/api/v3/klines"
 BINANCE_POLL_SECONDS = 1.0
 DUKASCOPY_POLL_SECONDS = 3.0
+DUKASCOPY_MIN_GAP_SECONDS = 1.0  # across ALL Dukascopy symbols together (6 charts: each ~6 s)
+DUKASCOPY_PAUSE_SECONDS = 120.0  # every Dukascopy symbol, after any refusal
 BACKOFF_SECONDS = 30.0
 FETCH_TIMEOUT_SECONDS = 8.0
 LOOP_SECONDS = 0.25
@@ -74,6 +80,8 @@ DUKASCOPY = {
     "AUDJPY": "AUD/JPY", "AUDUSD": "AUD/USD", "EURJPY": "EUR/JPY",
     "EURUSD": "EUR/USD", "GBPJPY": "GBP/JPY", "GBPUSD": "GBP/USD",
     "USDCAD": "USD/CAD", "USDJPY": "USD/JPY",
+    # checked 2026-11-12 against the stored tables (same instruments as the feeds daemon)
+    "XAUUSD": "XAU/USD", "GBPAUD": "GBP/AUD",
     "DE40": "E_DAAX", "FR40": "FRA.IDX/EUR", "HK50": "HKG.IDX/HKD",
     "JP225": "JPN.IDX/JPY", "STOXX50": "EUS.IDX/EUR", "UK100": "E_Futsee-100",
     "US500": "E_SandP-500", "USTEC": "E_NQ-100",
@@ -107,10 +115,19 @@ def stored_seconds(instant: datetime) -> int:
     return int(instant.astimezone(NEW_YORK).replace(tzinfo=UTC).timestamp())
 
 
-def write_json(path: Path, payload: object) -> None:
+def write_json(path: Path, payload: object) -> bool:
+    """Replace `path` atomically. Windows refuses the replace while the web
+    server has the file open for reading (this crashed the script 2026-11-11),
+    so retry briefly and otherwise skip this write: the next poll writes again."""
     tmp = path.with_suffix(path.suffix + ".tmp")
     tmp.write_text(json.dumps(payload, separators=(",", ":")), encoding="utf-8")
-    os.replace(tmp, path)
+    for _ in range(10):
+        try:
+            os.replace(tmp, path)
+            return True
+        except PermissionError:
+            time.sleep(0.02)
+    return False
 
 
 def watched_symbols() -> set[str]:
@@ -162,6 +179,15 @@ def dukascopy_bars(instrument: str) -> list[dict]:
     return bars[-2:]
 
 
+# The shared Dukascopy budget: when the next Dukascopy request may go out.
+_dukascopy_next = 0.0
+
+
+def pause_dukascopy() -> None:
+    global _dukascopy_next
+    _dukascopy_next = time.monotonic() + DUKASCOPY_PAUSE_SECONDS
+
+
 class Feed:
     """One symbol's live file."""
 
@@ -176,6 +202,7 @@ class Feed:
             self.fetch = lambda: dukascopy_bars(instrument)
             self.every = DUKASCOPY_POLL_SECONDS
         self.symbol = symbol
+        self.dukascopy = symbol not in BINANCE
         self.path = LIVE_DIR / f"{table}.live.json"
         self.due = 0.0
         self.last = ""
@@ -184,15 +211,18 @@ class Feed:
         try:
             bars = self.fetch()
         except Exception as error:  # noqa: BLE001 - back off, then retry
-            log(f"{self.symbol}: fetch failed, retrying in {BACKOFF_SECONDS:.0f}s: {repr(error)[:160]}")
+            if self.dukascopy:
+                pause_dukascopy()
+                log(f"{self.symbol}: fetch failed, pausing ALL Dukascopy symbols {DUKASCOPY_PAUSE_SECONDS:.0f}s: {repr(error)[:160]}")
+            else:
+                log(f"{self.symbol}: fetch failed, retrying in {BACKOFF_SECONDS:.0f}s: {repr(error)[:160]}")
             self.due = time.monotonic() + BACKOFF_SECONDS
             return
         self.due = time.monotonic() + self.every
         if not bars:
             return  # market closed: nothing forming
         live = json.dumps(bars, separators=(",", ":"))
-        if live != self.last:
-            write_json(self.path, {"bars": bars})
+        if live != self.last and write_json(self.path, {"bars": bars}):
             self.last = live
 
 
@@ -221,10 +251,17 @@ def main() -> int:
         for symbol in feeds.keys() - wanted:
             del feeds[symbol]
             log(f"stopped publishing {symbol}")
-        now = time.monotonic()
-        for feed in feeds.values():
-            if now >= feed.due:
-                feed.poll()
+        global _dukascopy_next
+        # Most overdue first, so symbols share the Dukascopy budget in turn.
+        for feed in sorted(feeds.values(), key=lambda f: f.due):
+            now = time.monotonic()
+            if now < feed.due:
+                continue
+            if feed.dukascopy:
+                if now < _dukascopy_next:
+                    continue
+                _dukascopy_next = max(_dukascopy_next, now + DUKASCOPY_MIN_GAP_SECONDS)
+            feed.poll()
         stop.wait(LOOP_SECONDS)
     return 0
 

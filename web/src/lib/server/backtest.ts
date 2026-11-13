@@ -1,11 +1,12 @@
+import { repo } from './paths.ts';
 import { readFileSync, statSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 // Realised (closed-trade) backtest of a live book, from the canon replay the
 // research side writes: `py -m sandbox.research._fundednext_parity canon`
 // -> sandbox/results/fundednext_canon_trades.json (seal, risk, $6,000 start,
 // every settled trade per window). Only the FundedNext book has one today.
-const RESULTS = new URL('../../../../sandbox/results/', import.meta.url);
+const RESULTS = pathToFileURL(repo('sandbox', 'results') + '/');
 const FILES: Record<string, string> = { fundednext: 'fundednext_canon_trades.json', the5ers: 'the5ers_canon_trades.json' };
 
 type Trade = { s: string; e: number; x: number; pnl: number };
@@ -344,7 +345,7 @@ export function bookBacktestVariant(book: string | null, removed: string[], risk
 // (live_trade/src/strategies/<broker>/<date>/sleeves/*.rs), with its 2026 OOS stats from its
 // book's canon replay where one exists (FundedNext today; others show none).
 import { readdirSync } from 'node:fs';
-const STRATEGIES = new URL('../../../../live_trade/src/strategies/', import.meta.url);
+const STRATEGIES = pathToFileURL(repo('live_trade', 'src', 'strategies') + '/');
 type PoolEntry = { strategy: string; symbol: string; oos: SleeveStats | null };
 let poolCache: { at: number; value: PoolEntry[] } | null = null;
 

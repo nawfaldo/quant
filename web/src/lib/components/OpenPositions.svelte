@@ -34,9 +34,10 @@
 
 	// Columns: corner glyph, account, strategy (strategy-window@timeframe), symbol, direction, time, price, lot, PnL,
 	// close. Each text track is at most its compact width (the table is as wide as its contents)
-	// and shrinks to its minimum when the panel is narrower. 8px gaps.
+	// and shrinks to its minimum when the panel is narrower (strategy truncates first). Header and rows both
+	// reserve the scrollbar gutter so their columns stay aligned. 8px gaps.
 	const cols =
-		'grid grid-cols-[16px_minmax(64px,80px)_minmax(140px,200px)_minmax(52px,64px)_minmax(60px,72px)_minmax(36px,48px)_minmax(48px,72px)_minmax(24px,40px)_minmax(46px,64px)_16px] items-center gap-x-2';
+		'grid grid-cols-[16px_minmax(64px,80px)_minmax(96px,200px)_minmax(52px,64px)_minmax(64px,72px)_minmax(36px,48px)_minmax(64px,72px)_minmax(28px,40px)_minmax(52px,64px)_16px] items-center gap-x-2';
 </script>
 
 <div class="flex h-full flex-col px-4 pt-4 text-white">
@@ -54,7 +55,7 @@
 
 		<div class="flex min-h-0 flex-1 flex-col overflow-x-auto overflow-y-hidden [scrollbar-width:thin]">
 		{#if positions.length > 0}
-			<div class="{cols} w-full min-w-max border border-[#535353] bg-[#323232] py-2 text-sm font-medium text-white">
+			<div class="{cols} w-full overflow-hidden [scrollbar-gutter:stable] [scrollbar-width:thin] border border-[#535353] bg-[#323232] py-2 text-sm font-medium text-white">
 				<span></span>
 				<span>Account</span>
 				<span>Strategy</span>
@@ -72,7 +73,7 @@
 
 		<!-- Fills the rest of the panel and scrolls; the bottom padding lives inside the
 		     scroll area so the last row scrolls fully into view instead of being cut. -->
-		<ul class="min-h-0 min-w-max flex-1 overflow-y-auto pb-4">
+		<ul class="min-h-0 flex-1 overflow-y-auto [scrollbar-gutter:stable] [scrollbar-width:thin] px-px pb-4">
 			{#each positions as p (p.ticket)}
 				<li class="{cols} py-1.5 text-[13px] text-neutral-200">
 					<span class="flex w-4 justify-self-center">

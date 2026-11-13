@@ -1,3 +1,4 @@
+import { repo } from './paths.ts';
 // Read-only tools the agent (Qwen on llama-server) can call to answer questions about the project:
 // live account data from app.db, the repo's files, and the research notes. Nothing here writes.
 import { execFile } from 'node:child_process';
@@ -13,7 +14,7 @@ import { strategyName, strategyWindow, titleCase } from '#lib/strategyLabel.ts';
 
 const run = promisify(execFile);
 
-export const REPO = resolve(fileURLToPath(new URL('../../../../', import.meta.url)));
+export const REPO = resolve(repo());
 /** Research notes (one finding per file, MEMORY.md is the index). */
 export const NOTES = join(process.env.USERPROFILE ?? '', '.claude', 'projects', 'C--Users-JawirGaming66-quant', 'memory');
 

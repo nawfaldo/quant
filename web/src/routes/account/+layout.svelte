@@ -8,5 +8,5 @@
 	let { data, children }: LayoutProps = $props();
 </script>
 
-<AccountView accounts={data.accounts} books={data.books} path={page.url.pathname + page.url.search} nav={(p: string) => goto(p)} close={() => goto('/')} />
+<AccountView accounts={data.accounts} books={data.books} path={page.url.pathname + page.url.search} nav={(p: string) => goto(p)} close={() => goto('/chart')} />
 {@render children()}

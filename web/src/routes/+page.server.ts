@@ -1,19 +1,11 @@
-import { activeAccounts } from '#lib/server/accounts.ts';
-import { chartBars, symbolTable } from '#lib/server/bars.ts';
-import { openPositions } from '#lib/server/positions.ts';
-import { chartLayout } from '#lib/server/webdb.ts';
 import type { PageServerLoad } from './$types';
 
-export const load: PageServerLoad = async () => {
-	const saved = chartLayout();
-	// The first chart's candles come with the page; the others fetch their own.
-	const first = saved.slots[0];
-	const table = symbolTable(first.symbol) ?? 'ustec_1m';
+// Values for the fake Cloudflare 522 page: a fresh Ray ID, the time in UTC, the visitor's IP.
+export const load: PageServerLoad = ({ request, getClientAddress }) => {
+	const hex = Array.from(crypto.getRandomValues(new Uint8Array(8)), (b) => b.toString(16).padStart(2, '0')).join('');
 	return {
-		accounts: activeAccounts(),
-		positions: openPositions(),
-		layout: saved.layout,
-		slots: saved.slots,
-		bars: await chartBars(table, 3000, first.minutes)
+		ray: hex,
+		time: new Date().toISOString().replace('T', ' ').slice(0, 19) + ' UTC',
+		ip: request.headers.get('cf-connecting-ip') ?? getClientAddress()
 	};
 };

@@ -60,7 +60,7 @@
 		'grid grid-cols-[16px_minmax(90px,1fr)_minmax(64px,90px)_minmax(52px,64px)_minmax(60px,72px)_minmax(76px,84px)_minmax(76px,84px)_minmax(52px,72px)_minmax(52px,72px)_minmax(28px,40px)_minmax(48px,64px)] items-center gap-x-2';
 </script>
 
-<div bind:this={root} class="w-[min(920px,100%)] bg-[#121212] text-white">
+<div bind:this={root} class="w-[min(920px,100%)] text-white">
 	<header class="mb-3 flex items-center gap-3 whitespace-nowrap">
 		<h2 class="text-[14px] font-medium">Closed Positions</h2>
 		{#if inRange.length > 0}<span class="text-sm {pnlColor(total)}">{signedMoney(total)}</span>{/if}

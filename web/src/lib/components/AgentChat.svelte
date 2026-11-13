@@ -336,9 +336,9 @@
 
 
 {#snippet avatar(_name: string, size: string)}
-	<!-- The agent's picture; scaled up inside the circle so the photo's white corners never show. -->
-	<span class={['block shrink-0 overflow-hidden rounded-full bg-[#3b3b3d]', size]}>
-		<img src={agentPic} alt="" draggable="false" class="block size-full scale-[1.12] object-cover" />
+	<!-- The agent's picture (Mio Akiyama) in a rounded square. -->
+	<span class={['block shrink-0 overflow-hidden rounded-[34%] bg-[#3b3b3d]', size]}>
+		<img src={agentPic} alt="" draggable="false" class="block size-full object-cover" />
 	</span>
 {/snippet}
 

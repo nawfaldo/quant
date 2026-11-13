@@ -1,7 +1,8 @@
+import { repo } from './paths.ts';
 import { db } from './db.ts';
 import { accountEdits, blurredAccounts, type AccountEdits } from './webdb.ts';
 import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { bookBacktest, bookSleeveStats, sleeveKey, type SleeveStats } from './backtest.ts';
 
 export type Account = {
@@ -68,6 +69,23 @@ export function activeAccounts(): Account[] {
 		}));
 }
 
+// Only what moves tick to tick: the latest balance and equity per account in activeAccounts().
+export type AccountTick = { id: number; balance: number; equity: number | null };
+export function accountTicks(): AccountTick[] {
+	return db
+		.prepare(
+			`SELECT a.id, h.balance, h.equity FROM mt5_accounts a
+			 LEFT JOIN mt5_bridge_heartbeats h ON h.account_id = a.id
+			 WHERE EXISTS (SELECT 1 FROM mt5_account_strategies s WHERE s.account_id = a.id)`
+		)
+		.all()
+		.map((r: Record<string, unknown>) => ({
+			id: Number(r.id),
+			balance: Number(r.balance ?? 0),
+			equity: r.equity == null ? null : Number(r.equity)
+		}));
+}
+
 function activeStrategies(accountId: number, book: string | null) {
 	const stats = bookSleeveStats(book);
 	return db
@@ -79,7 +97,7 @@ function activeStrategies(accountId: number, book: string | null) {
 // The risk dial the live runtime applies to the book: Book::risk_scale in
 // live_trade/src/strategies/cfd/mod.rs names the const, e.g.
 // `Self::FundedNext => crate::strategies::fundednext::oct_21_2026::RISK_SCALE`.
-const STRATEGIES = new URL('../../../../live_trade/src/strategies/', import.meta.url);
+const STRATEGIES = pathToFileURL(repo('live_trade', 'src', 'strategies') + '/');
 function bookRisk(book: string | null): number | null {
 	if (!book) return null;
 	const lower = book.toLowerCase();

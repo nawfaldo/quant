@@ -1,3 +1,4 @@
+import { repo } from './paths.ts';
 import { DatabaseSync } from 'node:sqlite';
 import { symbolTable } from '#lib/server/bars.ts';
 import { mkdirSync } from 'node:fs';
@@ -5,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 
 // The web app's own database, for UI preferences. Separate from the live
 // server's app.db, which the web app only ever reads.
-const DIR = fileURLToPath(new URL('../../../data/', import.meta.url));
+const DIR = repo('web', 'data') + '/';
 mkdirSync(DIR, { recursive: true });
 
 export const webdb = new DatabaseSync(DIR + 'web.db');

@@ -1,3 +1,4 @@
+import { repo } from './paths.ts';
 import { mkdirSync, renameSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
@@ -5,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 // it publishes the live candle of every symbol listed here. Written whenever
 // the set changes and every 5 seconds as a heartbeat (the script ignores the
 // file once it is 30 seconds old, e.g. after the web server stops).
-const DIR = fileURLToPath(new URL('../../../../data/live/', import.meta.url));
+const DIR = repo('data', 'live') + '/';
 const PATH = DIR + 'watch.json';
 // Kept on globalThis so a dev-server hot reload reuses one registry and one
 // heartbeat instead of starting a second, empty one that overwrites the file.
