@@ -46,6 +46,7 @@ pub fn combine_realized(
         .collect::<Vec<_>>()
         .join(" + ");
     let cfg = EngineConfig {
+        ban_admit: None,
         initial,
         symbol: symbol.clone(),
         start_day: first.div_euclid(86400),

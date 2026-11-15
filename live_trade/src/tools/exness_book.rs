@@ -118,6 +118,7 @@ async fn main() -> anyhow::Result<()> {
     let model = match sleeves[0].book() {
         live_trade::strategies::cfd::Book::FundedNext => live_trade::backtest::FUNDEDNEXT_MODEL_ID,
         live_trade::strategies::cfd::Book::Exness => live_trade::backtest::MODEL_ID,
+        live_trade::strategies::cfd::Book::The5ers => live_trade::backtest::THE5ERS_MODEL_ID,
     };
     let request: RunRequest = serde_json::from_value(json!({
         "model": model,

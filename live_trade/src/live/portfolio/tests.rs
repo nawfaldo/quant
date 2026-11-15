@@ -803,6 +803,8 @@ fn runtime_holding(strategy: &str, last_bar_minute: i64) -> PortfolioRuntime {
         prime_marks: HashMap::new(),
         benchmark_closes: HashMap::new(),
         benchmark_latest: HashMap::new(),
+        the5ers_last_entry: HashMap::new(),
+        the5ers_recent: Vec::new(),
         warm_strategies: HashSet::new(),
     };
     let bar = bar_at_minute(last_bar_minute);
@@ -1190,7 +1192,7 @@ async fn an_entry_live_cannot_send_is_held_as_a_ghost_and_its_exit_is_silent() {
     slot.strategy = Box::new(Scripted(vec![vec![enter], vec![close]].into()));
     let db = Database::new("unused-in-this-test");
 
-    slot.on_bar(&db, bar_at_minute(600), Some(3_600)).await;
+    slot.on_bar(&db, bar_at_minute(600), Some(3_600), None).await;
     assert!(
         slot.ghosts.contains("primary"),
         "the refused entry is a ghost"
@@ -1200,7 +1202,7 @@ async fn an_entry_live_cannot_send_is_held_as_a_ghost_and_its_exit_is_silent() {
         "and the broker book holds nothing"
     );
 
-    slot.on_bar(&db, bar_at_minute(601), Some(0)).await;
+    slot.on_bar(&db, bar_at_minute(601), Some(0), None).await;
     assert!(slot.ghosts.is_empty(), "the strategy's exit ends the ghost");
     assert!(slot.positions.is_empty());
     assert!(

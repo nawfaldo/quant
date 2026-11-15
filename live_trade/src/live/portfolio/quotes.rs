@@ -33,6 +33,49 @@ pub(super) struct StoreQuotes {
     store: ParquetStore,
     table: String,
     state: Mutex<Index>,
+    /// Which broker stream keeps this table current (`fundednext` / `the5ers`).
+    broker: Broker,
+    /// The5ers: feed lag + queue, for the news window an entry would execute in.
+    lag: f64,
+}
+
+/// The prop firm a broker table belongs to.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+pub(super) enum Broker {
+    FundedNext,
+    The5ers,
+}
+
+impl Broker {
+    /// The stream a prop book's tables come from.
+    pub(super) fn of_book(book: crate::strategies::cfd::Book) -> Self {
+        if book == crate::strategies::cfd::Book::The5ers { Self::The5ers } else { Self::FundedNext }
+    }
+
+    fn of_table(table: &str) -> Self {
+        if table.starts_with("the5ers_") { Self::The5ers } else { Self::FundedNext }
+    }
+
+    pub(super) fn name(self) -> &'static str {
+        match self {
+            Self::FundedNext => "fundednext",
+            Self::The5ers => "the5ers",
+        }
+    }
+
+    fn untrusted(self) -> &'static AtomicI64 {
+        match self {
+            Self::FundedNext => &UNTRUSTED_FROM,
+            Self::The5ers => &UNTRUSTED_FROM_T5,
+        }
+    }
+
+    fn last(self) -> &'static AtomicI64 {
+        match self {
+            Self::FundedNext => &LAST_THROUGH,
+            Self::The5ers => &LAST_THROUGH_T5,
+        }
+    }
 }
 
 impl StoreQuotes {
@@ -65,7 +108,7 @@ impl StoreQuotes {
                     stamp,
                     open[index] > 0.0
                         && close[index] > 0.0
-                        && spread[index] > 0.0
+                        && (spread[index] > 0.0 || (self.broker == Broker::The5ers && spread[index] >= 0.0))
                         && crate::backtest::fills::broker_trades_at(&self.table, stamp),
                 ));
             }
@@ -113,7 +156,7 @@ impl StoreQuotes {
 
 impl BrokerQuotes for StoreQuotes {
     fn quoted_real(&self, start: i64, end: i64) -> bool {
-        if end > UNTRUSTED_FROM.load(Ordering::Relaxed) {
+        if end > self.broker.untrusted().load(Ordering::Relaxed) {
             return true;
         }
         let state = self.index_through(start, end);
@@ -133,7 +176,7 @@ impl BrokerQuotes for StoreQuotes {
     /// the broker never printed stays unknown; the candle's close settles it
     /// (`FamilyEngine::resolve_awaiting_fill`).
     fn fill_minute(&self, minute: i64) -> Option<bool> {
-        if minute + 60 > UNTRUSTED_FROM.load(Ordering::Relaxed) {
+        if minute + 60 > self.broker.untrusted().load(Ordering::Relaxed) {
             return Some(false);
         }
         let state = self.index_through(minute, minute + 60);
@@ -142,6 +185,14 @@ impl BrokerQuotes for StoreQuotes {
             return Some(false);
         }
         if state.priced.binary_search(&minute).is_ok() {
+            // The5ers' news rule: an entry executing within 2 min of a related
+            // red folder is no fill (`MarketFills::entry`).
+            if self.broker == Broker::The5ers {
+                let market = self.table.trim_start_matches("the5ers_").trim_end_matches("_1m");
+                if crate::backtest::news::blocked(market, minute as f64 + self.lag) {
+                    return Some(false);
+                }
+            }
             return Some(true);
         }
         if state.stamps.binary_search(&minute).is_ok() {
@@ -157,32 +208,35 @@ impl BrokerQuotes for StoreQuotes {
 /// everything the stream did write); one after it gets the safe answer: the
 /// candle counts, so exits and stops keep running, and no entry fills.
 static UNTRUSTED_FROM: AtomicI64 = AtomicI64::new(i64::MAX);
+static UNTRUSTED_FROM_T5: AtomicI64 = AtomicI64::new(i64::MAX);
 
-/// Called by the runtime every tick with whether the stream is alive.
-pub(super) fn set_stream_health(alive: bool, now: Option<i64>) {
+/// Called by the runtime every tick with whether `broker`'s stream is alive.
+pub(super) fn set_stream_health(broker: Broker, alive: bool, now: Option<i64>) {
+    let untrusted = broker.untrusted();
     if alive {
-        UNTRUSTED_FROM.store(i64::MAX, Ordering::Relaxed);
-    } else if UNTRUSTED_FROM.load(Ordering::Relaxed) == i64::MAX {
+        untrusted.store(i64::MAX, Ordering::Relaxed);
+    } else if untrusted.load(Ordering::Relaxed) == i64::MAX {
         // From the stream's last promise, or a few minutes back.
-        let from = last_through().unwrap_or_else(|| now.unwrap_or(i64::MAX).saturating_sub(300));
-        UNTRUSTED_FROM.store(from, Ordering::Relaxed);
+        let from = last_through(broker).unwrap_or_else(|| now.unwrap_or(i64::MAX).saturating_sub(300));
+        untrusted.store(from, Ordering::Relaxed);
     }
 }
 
 static LAST_THROUGH: AtomicI64 = AtomicI64::new(i64::MIN);
+static LAST_THROUGH_T5: AtomicI64 = AtomicI64::new(i64::MIN);
 
-fn last_through() -> Option<i64> {
-    let value = LAST_THROUGH.load(Ordering::Relaxed);
+fn last_through(broker: Broker) -> Option<i64> {
+    let value = broker.last().load(Ordering::Relaxed);
     (value != i64::MIN).then_some(value + 60)
 }
 
 /// How far the broker minutes are written (`data/fundednext_stream.json`,
 /// `tools/fundednext_stream_1m.py`), or `None` if the stream is not alive: no
 /// file, unreadable, or not rewritten for 30 seconds.
-pub(super) fn stream_through(store: &ParquetStore) -> Option<i64> {
-    let path = match std::env::var("FUNDEDNEXT_STREAM_FILE") {
-        Ok(value) => std::path::PathBuf::from(value),
-        Err(_) => store.root().parent()?.join("fundednext_stream.json"),
+pub(super) fn stream_through(store: &ParquetStore, broker: Broker) -> Option<i64> {
+    let path = match (broker, std::env::var("FUNDEDNEXT_STREAM_FILE")) {
+        (Broker::FundedNext, Ok(value)) => std::path::PathBuf::from(value),
+        _ => store.root().parent()?.join(format!("{}_stream.json", broker.name())),
     };
     let text = std::fs::read_to_string(path).ok()?;
     let body: serde_json::Value = serde_json::from_str(&text).ok()?;
@@ -195,7 +249,7 @@ pub(super) fn stream_through(store: &ParquetStore) -> Option<i64> {
     if now - wrote_at > 30 || wrote_at > now + 30 {
         return None;
     }
-    LAST_THROUGH.store(through, Ordering::Relaxed);
+    broker.last().store(through, Ordering::Relaxed);
     Some(through)
 }
 
@@ -204,11 +258,14 @@ static STORE: OnceLock<ParquetStore> = OnceLock::new();
 /// Called once by the runtime before any slot is built.
 pub(super) fn set_store(store: &ParquetStore) {
     let _ = STORE.set(store.clone());
+    if let Some(data) = store.root().parent() {
+        crate::backtest::news::init(data.join("ff_calendar"));
+    }
 }
 
 /// The shared index for `table`, or `None` before `set_store` (tests). It loads
 /// lazily, from the first question asked -- the oldest warm-up candle.
-pub(super) fn for_table(table: &str) -> Option<Arc<dyn BrokerQuotes>> {
+pub(super) fn for_table(table: &str, lag: f64) -> Option<Arc<dyn BrokerQuotes>> {
     static INDEX: OnceLock<Mutex<HashMap<String, Arc<StoreQuotes>>>> = OnceLock::new();
     let store = STORE.get()?;
     let mut index = INDEX.get_or_init(|| Mutex::new(HashMap::new())).lock().expect("index lock");
@@ -217,6 +274,8 @@ pub(super) fn for_table(table: &str) -> Option<Arc<dyn BrokerQuotes>> {
             store: store.clone(),
             table: table.to_owned(),
             state: Mutex::new(Index { stamps: Vec::new(), priced: Vec::new(), until: i64::MIN }),
+            broker: Broker::of_table(table),
+            lag,
         })
     }));
     Some(quotes as Arc<dyn BrokerQuotes>)

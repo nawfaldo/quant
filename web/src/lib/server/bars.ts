@@ -1,3 +1,4 @@
+import { repo } from './paths.ts';
 import { asyncBufferFromFile, parquetMetadataAsync, parquetReadObjects } from 'hyparquet';
 import { compressors } from 'hyparquet-compressors';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
@@ -6,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 
 // The Parquet market-data store. A table is `<table>.parquet` (bulk history),
 // a `<table>/` folder of daily shards written by a live collector, or both.
-const STORE = fileURLToPath(new URL('../../../../data/parquet/', import.meta.url));
+const STORE = repo('data', 'parquet') + '/';
 
 export type Bar = { time: number; open: number; high: number; low: number; close: number };
 
@@ -72,7 +73,7 @@ export async function lastBars(table: string, n: number): Promise<Bar[]> {
 
 // Written by tools/chart_live_candle.py while a chart shows the symbol: the
 // previous and the forming candle, from Dukascopy ticks or Binance.
-const LIVE = fileURLToPath(new URL('../../../../data/live/', import.meta.url));
+const LIVE = repo('data', 'live') + '/';
 const LIVE_STALE_MS = 20_000;
 
 function readLive(table: string): Bar[] {
@@ -118,11 +119,38 @@ export function aggregate(bars: Bar[], minutes: number): Bar[] {
 // The newest `n` candles of a timeframe: stored bars topped up with the live
 // script's, then merged. Reads at most 400k minutes (about 15 months), so the
 // longest timeframes may show fewer than `n`.
+//
+// The merged 1-minute history is cached per table and length, keyed on every file's mtime
+// except the newest shard (rewritten each minute): switching timeframe or symbol back then
+// costs only today's shard and the live file, not a re-merge of up to 400k minutes.
+const historyCache = new Map<string, { sig: string; bars: Bar[] }>();
+const HISTORY_CACHE_MAX = 16;
+
 export async function chartBars(table: string, n: number, minutes = 1): Promise<Bar[]> {
 	const need = Math.min(n * minutes, 400_000);
+	const bulk = join(STORE, `${table}.parquet`);
+	const dir = join(STORE, table);
+	const shards = existsSync(dir) ? readdirSync(dir).filter((f) => f.endsWith('.parquet')).sort() : [];
+	const newest = shards.at(-1);
+	const older = shards.slice(0, -1);
+	const sig = [existsSync(bulk) ? statSync(bulk).mtimeMs : 0, ...older.slice(-Math.ceil(need / 1440) - 1).map((f) => `${f}:${statSync(join(dir, f)).mtimeMs}`)].join('|');
+	const key = `${table}:${need}`;
+	let hist = historyCache.get(key);
+	if (!hist || hist.sig !== sig) {
+		const all = await lastBars(table, need);
+		// drop today's minutes: they are re-read fresh below on every call
+		const cut = newest ? Date.parse(newest.slice(0, 10) + 'T00:00:00Z') / 1000 : Infinity;
+		hist = { sig, bars: all.filter((b) => b.time < cut) };
+		historyCache.delete(key);
+		historyCache.set(key, hist);
+		while (historyCache.size > HISTORY_CACHE_MAX) historyCache.delete(historyCache.keys().next().value!);
+	}
 	const byTime = new Map<number, Bar>();
-	for (const bars of [await lastBars(table, need), readLive(table)]) bars.forEach((b) => byTime.set(b.time, b));
-	const minutesBars = [...byTime.values()].sort((a, b) => a.time - b.time).slice(-need);
+	if (newest) (await tailOfFile(join(dir, newest), 1440)).forEach((b) => byTime.set(b.time, b));
+	readLive(table).forEach((b) => byTime.set(b.time, b));
+	const first = hist.bars.at(-1)?.time ?? -Infinity;
+	const recent = [...byTime.values()].filter((b) => b.time > first).sort((a, b) => a.time - b.time);
+	const minutesBars = hist.bars.concat(recent).slice(-need);
 	return aggregate(minutesBars, minutes).slice(-n);
 }
 
@@ -141,7 +169,10 @@ const MARKETS = new Set(['USTEC', 'US500', 'USOIL', 'UK100', 'UKOIL', 'DE40', 'F
 
 // Symbols with Dukascopy or Binance 1-minute data in the store (an unprefixed
 // `<symbol>_1m` file or folder), upper case, sorted; markets only, no stocks.
+// Cached a few seconds: every live poll checks its symbols against this.
+let symbolsCache: { at: number; list: string[] } | undefined;
 export function listSymbols(): string[] {
+	if (symbolsCache && Date.now() - symbolsCache.at < 5000) return symbolsCache.list;
 	const byTable = Object.fromEntries(Object.entries(TABLE_NAME).map(([s, t]) => [t, s]));
 	const names = new Set<string>();
 	for (const entry of readdirSync(STORE)) {
@@ -150,7 +181,9 @@ export function listSymbols(): string[] {
 		const symbol = byTable[m[1]] ?? m[1].toUpperCase();
 		if (MARKETS.has(symbol) || PAIR.test(symbol)) names.add(symbol);
 	}
-	return [...names].sort();
+	const list = [...names].sort();
+	symbolsCache = { at: Date.now(), list };
+	return list;
 }
 
 // The store table for a symbol, or undefined if there is none.

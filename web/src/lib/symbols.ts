@@ -8,7 +8,13 @@ const ALIASES: [string, string][] = [
 	['SPX500', 'US500'],
 	['USOUSD', 'USOIL'],
 	['UKOUSD', 'UKOIL'],
-	['EUSTX50', 'STOXX50']
+	['EUSTX50', 'STOXX50'],
+	['NAS100', 'USTEC'], // The5ers from here down
+	['SP500', 'US500'],
+	['DAX40', 'DE40'],
+	['HSIHKD', 'HK50'],
+	['F40EUR', 'FR40'],
+	['ESXEUR', 'STOXX50']
 ];
 
 // The chart symbol a broker position belongs to, keeping any broker suffix.

@@ -106,7 +106,7 @@ pub(super) fn sleeve_spread_bp(name: &str) -> Option<f64> {
     let sleeve = Sleeve::from_display(name)?;
     match sleeve.book() {
         Book::Exness => market_spread_bp(sleeve.market()),
-        Book::FundedNext => Some(sleeve.contract_spread_bp() + crate::strategies::cfd::SLIPPAGE_BP),
+        Book::FundedNext | Book::The5ers => Some(sleeve.contract_spread_bp() + crate::strategies::cfd::SLIPPAGE_BP),
     }
 }
 
@@ -354,12 +354,16 @@ pub const MODEL_ID: &str = "exness_pro";
 /// FundedNext's spreads, commission and `fundednext_<broker>_1m` fills.
 pub const FUNDEDNEXT_MODEL_ID: &str = "fundednext";
 
+/// The id of the The5ers cost model: the The5ers book on `the5ers_<broker>_1m`.
+pub const THE5ERS_MODEL_ID: &str = "the5ers";
+
 /// The book a cost model prices. A run names a model and every strategy in it
 /// must belong to that model's book.
 pub fn model_book(model: &str) -> Option<Book> {
     match model {
         MODEL_ID => Some(Book::Exness),
         FUNDEDNEXT_MODEL_ID => Some(Book::FundedNext),
+        THE5ERS_MODEL_ID => Some(Book::The5ers),
         _ => None,
     }
 }

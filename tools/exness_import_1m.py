@@ -252,18 +252,149 @@ FUNDEDNEXT = {
     "us500": "SPX500",
 }
 
+THE5ERS_TERMINAL = Path(r"C:\Program Files\Five Percent Online MetaTrader 5\terminal64.exe")
+
+#: The research symbols The5ers (FivePercentOnline-Real) quotes, as it names
+#: them. Probed 2026-11-07 from `symbols_get` (64 symbols) on High Stakes
+#: 26823080: no NTH25 / SWI20 / US2000 / VIX, and its index names follow
+#: neither Exness nor FundedNext (NAS100, SP500, DAX40, F40EUR, ESXEUR,
+#: ASXAUD, HSIHKD). `jp225` is left out on purpose ([[no-jp225-anywhere]]).
+THE5ERS = {
+    "ustec": "NAS100", "us500": "SP500", "us30": "US30", "de40": "DAX40",
+    "fr40": "F40EUR", "stoxx50": "ESXEUR", "uk100": "UK100",
+    "aus200": "ASXAUD", "hk50": "HSIHKD",
+    "ukoil": "XBRUSD", "usoil": "XTIUSD",
+    "xauusd": "XAUUSD", "xagusd": "XAGUSD", "xptusd": "XPTUSD",
+    "xpdusd": "XPDUSD", "xaueur": "XAUEUR",
+    "audcad": "AUDCAD", "audchf": "AUDCHF", "audjpy": "AUDJPY",
+    "audnzd": "AUDNZD", "audusd": "AUDUSD", "cadchf": "CADCHF",
+    "cadjpy": "CADJPY", "chfjpy": "CHFJPY", "euraud": "EURAUD",
+    "eurcad": "EURCAD", "eurchf": "EURCHF", "eurgbp": "EURGBP",
+    "eurjpy": "EURJPY", "eurnzd": "EURNZD", "eurusd": "EURUSD",
+    "gbpaud": "GBPAUD", "gbpcad": "GBPCAD", "gbpchf": "GBPCHF",
+    "gbpjpy": "GBPJPY", "gbpnzd": "GBPNZD", "gbpusd": "GBPUSD",
+    "nzdcad": "NZDCAD", "nzdchf": "NZDCHF", "nzdjpy": "NZDJPY",
+    "nzdusd": "NZDUSD", "usdcad": "USDCAD", "usdchf": "USDCHF",
+    "usdjpy": "USDJPY",
+    #: Crypto, all `trade_mode` FULL (2026-11-07), quoted 7 days a week.
+    "btc": "BTCUSD", "ethusd": "ETHUSD", "ltcusd": "LTCUSD", "solusd": "SOLUSD",
+    "xrpusd": "XRPUSD", "dogeusd": "DOGUSD", "btceur": "BTCEUR", "etheur": "ETHEUR",
+}
+
+#: The5ers' server clock: New York + 7 (UTC+2 winter / UTC+3 summer), read
+#: 2026-11-07 off its own M1: FX quotes 00:05-23:54 server = 17:05-16:54 NY,
+#: metals / indices / oil 01:05-23:49 = 18:05-16:49 NY, the 17:00 NY break.
+#: `(first, end, hours, scope)` rows where the lead was NOT seven, in server
+#: time, like `FUNDEDNEXT_OFFSET_EXCEPTIONS`. CALIBRATED 2026-11-07 on
+#: EURUSD 2020-01..2026-11 against Dukascopy `eurusd_1m` (15m closes, best
+#: hour shift per ISO week): + 0 every week EXCEPT the US/EU daylight-saving
+#: gap weeks of 2020-2023, where the server kept EU time and sat at NY + 6
+#: (best shift +1h, mean |diff| 0.1-0.7 bp against 4-19 bp at 0). From 2024
+#: on every gap week reads 0 -- the server follows the US clock.
+#: SCOPED, re-checked per ISO week on SP500 / DAX40 / BTCUSD against
+#: Dukascopy us500 / de40 and Binance btc: through the 2022 MARCH gap only FX
+#: moved to NY + 6 -- indices and crypto stayed at NY + 7 (a blanket "all"
+#: row put them an hour off in 2020-W11..13, 2020-W44, 2021-W11, 2021-W44,
+#: 2022-W11). From the 2022 OCTOBER gap on, every symbol moved together.
+_T5_GAPS = ((2020, 3, 8, 3, 29, "fx"), (2020, 10, 25, 11, 1, "fx"),
+            (2021, 3, 14, 3, 28, "fx"), (2021, 10, 31, 11, 7, "fx"),
+            (2022, 3, 13, 3, 27, "fx"), (2022, 10, 30, 11, 6, "all"),
+            (2023, 3, 12, 3, 26, "all"), (2023, 10, 29, 11, 5, "all"))
+THE5ERS_OFFSET_EXCEPTIONS = tuple(
+    (datetime(y, m1, d1, tzinfo=timezone.utc), datetime(y, m2, d2, tzinfo=timezone.utc), 6, scope)
+    for y, m1, d1, m2, d2, scope in _T5_GAPS)
+
+#: Non-FX names among The5ers' six-letter symbols (metals, crypto, oil).
+_T5_NOT_FX = {"XAUUSD", "XAGUSD", "XPTUSD", "XPDUSD", "XAUEUR", "XAGEUR", "CUCUSD",
+              "BTCUSD", "ETHUSD", "LTCUSD", "SOLUSD", "XRPUSD", "DOGUSD", "BTCEUR",
+              "ETHEUR", "XBRUSD", "XTIUSD", "NGCUSD"}
+
+
+def is_fx_symbol(broker, clock):
+    """Whether the server clock's `fx`-scoped rows apply to `broker`. FundedNext
+    keeps its original 8-pair set (its rows are all `all` anyway); on The5ers
+    every six-letter currency pair is FX."""
+    if clock == "the5ers_ny_plus_7":
+        return len(broker) == 6 and broker.isalpha() and broker.upper() not in _T5_NOT_FX
+    return broker in FUNDEDNEXT_FX
+
+#: Broker symbols whose feed is stamped at a FIXED UTC offset, not the
+#: server's NY + 7. SOLUSD, found 2026-11-07: against Binance SOLUSDT (checked
+#: raw: 2025-01-15 19:30 UTC open 201.03 = `solusd_1m` 14:30 NY, but
+#: The5ers' 15:30 bar) it is right in every US-summer month and one hour late
+#: in every US-winter month 2024-2026 -- UTC + 3 all year. BTCUSD and ETHUSD
+#: follow the server clock. Checked per symbol by the search driver's clock
+#: gate before a symbol is used.
+#: Mapped per ISO week 2020-2026 (2026-11-07, broker vs Dukascopy / Binance,
+#: best 15m-close shift): F40EUR, ESXEUR, ASXAUD and BTCEUR are -1h in EVERY
+#: US-winter stretch and right every summer -- the same fixed UTC + 3 as
+#: SOLUSD. ETHEUR has BTCEUR's shape. Value: `[(start, until, hours), ...]`
+#: -- a server stamp in `[start, until)` (None = open) reads as UTC + `hours`;
+#: outside every range the symbol is on the server clock.
+#:
+#: EVERY fixed feed is back on the server clock in 2026-W45, the first week
+#: after the 2026-11-01 US switch (+1h under a fixed rule there, on all
+#: eleven), so The5ers normalised them then: the ranges end 2026-11-01 and
+#: live trading today sees the server clock. NAS100 was UTC + 3 only from
+#: 2020-W49 to the 2022 autumn switch (server clock before and after);
+#: XBRUSD to the 2023 autumn switch; XPTUSD's vendor table starts 2021-W44.
+_T5_NORMALISED = datetime(2026, 11, 1, tzinfo=timezone.utc)
+THE5ERS_FIXED_UTC_HOURS = {
+    **{name: [(None, _T5_NORMALISED, 3)] for name in (
+        "SOLUSD", "BTCEUR", "ETHEUR", "F40EUR", "ESXEUR", "ASXAUD", "HSIHKD",
+        # every crypto but BTCUSD / ETHUSD, and platinum (mapped 2026-11-07)
+        "LTCUSD", "XRPUSD", "DOGUSD", "XPTUSD")},
+    "NAS100": [(datetime(2020, 11, 30, tzinfo=timezone.utc),
+                datetime(2022, 10, 30, tzinfo=timezone.utc), 3)],
+    "XBRUSD": [(None, datetime(2023, 10, 29, tzinfo=timezone.utc), 3)],
+}
+
+#: Per-symbol server-clock rows, applied AFTER the general ones (the last
+#: matching row wins). UK100 moved to NY + 6 in the 2020-10, 2021-03 and
+#: 2021-10 gaps (where indices did not) and stayed at NY + 7 in the 2022-10
+#: gap (where everything else moved).
+THE5ERS_SYMBOL_EXCEPTIONS = (
+    (datetime(2020, 10, 25, tzinfo=timezone.utc), datetime(2020, 11, 1, tzinfo=timezone.utc), 6, "UK100"),
+    (datetime(2021, 3, 14, tzinfo=timezone.utc), datetime(2021, 3, 28, tzinfo=timezone.utc), 6, "UK100"),
+    (datetime(2021, 10, 31, tzinfo=timezone.utc), datetime(2021, 11, 7, tzinfo=timezone.utc), 6, "UK100"),
+    (datetime(2022, 10, 30, tzinfo=timezone.utc), datetime(2022, 11, 6, tzinfo=timezone.utc), 7, "UK100"),
+    # XAGUSD moved with FX (NY + 6) in the 2020-2022 gaps, as UK100 did
+    *((datetime(y, m1, d1, tzinfo=timezone.utc), datetime(y, m2, d2, tzinfo=timezone.utc), 6, "XAGUSD")
+      for y, m1, d1, m2, d2, scope in _T5_GAPS if scope == "fx"),
+    # XTIUSD stayed at NY + 7 in the 2023 March gap
+    (datetime(2023, 3, 12, tzinfo=timezone.utc), datetime(2023, 3, 26, tzinfo=timezone.utc), 7, "XTIUSD"),
+)
+
+
+def fixed_hours_at(rules, server_seconds):
+    """The fixed UTC offset in force at `server_seconds`, or None."""
+    for start, until, hours in rules or ():
+        if ((start is None or server_seconds >= start.timestamp())
+                and (until is None or server_seconds < until.timestamp())):
+            return hours
+    return None
+
 #: Everything that differs between brokers. `clock` says what the terminal's
 #: epoch is: `utc` is a true UTC instant (Exness), `ny_plus_7` is server time
-#: seven hours ahead of New York (FundedNext). Each broker gets its own IPC
-#: mutex: the lock exists for processes sharing ONE terminal, and a FundedNext
-#: import must never queue behind the live Exness bridge.
+#: seven hours ahead of New York (FundedNext), `the5ers_ny_plus_7` the same
+#: with The5ers' own exception table. Each broker gets its own IPC mutex: the
+#: lock exists for processes sharing ONE terminal, and a prop-firm import must
+#: never queue behind another terminal's bridge.
 BROKERS = {
     "exness": {"terminal": DEFAULT_TERMINAL, "symbols": CANON,
                "prefix": "exness_", "clock": "utc", "mutex": None},
     "fundednext": {"terminal": FUNDEDNEXT_TERMINAL, "symbols": FUNDEDNEXT,
                    "prefix": "fundednext_", "clock": "ny_plus_7",
                    "mutex": r"Local\QuantMetaTrader5IPC_fundednext"},
+    "the5ers": {"terminal": THE5ERS_TERMINAL, "symbols": THE5ERS,
+                "prefix": "the5ers_", "clock": "the5ers_ny_plus_7",
+                "mutex": r"Local\QuantMetaTrader5IPC_the5ers"},
 }
+
+#: Clock name -> the server-offset exception table it applies (general rows,
+#: then symbol-scoped rows, so a symbol row overrides).
+SERVER_CLOCKS = {"ny_plus_7": FUNDEDNEXT_OFFSET_EXCEPTIONS,
+                 "the5ers_ny_plus_7": THE5ERS_OFFSET_EXCEPTIONS + THE5ERS_SYMBOL_EXCEPTIONS}
 
 #: A year chunk is requested until two consecutive calls agree, because the
 #: first call only ASKS the server for that history and returns whatever is
@@ -299,28 +430,49 @@ def actual_to_stored_ns(actual_seconds, wall_clock):
     return int(local.replace(tzinfo=UTC).timestamp()) * 1_000_000_000
 
 
-def server_to_stored_ns(server_seconds, fx=True):
-    """FundedNext server stamp -> New York wall clock reinterpreted as UTC."""
+def _row_applies(scope, fx, symbol):
+    """`all`; `fx` (FX pairs only); `nonfx`; or one broker symbol's name."""
+    if scope == "all":
+        return True
+    if scope == "fx":
+        return fx
+    if scope == "nonfx":
+        return not fx
+    return symbol is not None and scope == symbol.upper()
+
+
+def server_to_stored_ns(server_seconds, fx=True, exceptions=FUNDEDNEXT_OFFSET_EXCEPTIONS,
+                        symbol=None):
+    """Prop-firm server stamp (NY + 7 unless `exceptions` say otherwise) ->
+    New York wall clock reinterpreted as UTC. FundedNext's table by default.
+    The last matching row wins, so symbol rows listed last override."""
     hours = FUNDEDNEXT_SERVER_AHEAD_OF_NY_HOURS
-    for first, end, lead, scope in FUNDEDNEXT_OFFSET_EXCEPTIONS:
-        if scope != "all" and (scope == "fx") != fx:
+    for first, end, lead, scope in exceptions:
+        if not _row_applies(scope, fx, symbol):
             continue
         if first.timestamp() <= server_seconds < end.timestamp():
             hours = lead
     return (server_seconds - hours * 3600) * 1_000_000_000
 
 
-def to_stored_ns(seconds, wall_clock, clock, fx=True):
-    if clock == "ny_plus_7":
-        return server_to_stored_ns(seconds, fx)
+def to_stored_ns(seconds, wall_clock, clock, fx=True, fixed_rules=None, symbol=None):
+    fixed = fixed_hours_at(fixed_rules, seconds)
+    if fixed is not None:      # a feed on a fixed UTC offset (`THE5ERS_FIXED_UTC_HOURS`)
+        return actual_to_stored_ns(seconds - fixed * 3600, wall_clock)
+    if clock in SERVER_CLOCKS:
+        return server_to_stored_ns(seconds, fx, SERVER_CLOCKS[clock], symbol)
     return actual_to_stored_ns(seconds, wall_clock)
 
 
-def to_actual_seconds(seconds, clock, fx=True):
+def to_actual_seconds(seconds, clock, fx=True, fixed_rules=None, symbol=None):
     """A terminal stamp as a true UTC instant, for comparing with the cutoff."""
-    if clock != "ny_plus_7":
+    fixed = fixed_hours_at(fixed_rules, seconds)
+    if fixed is not None:
+        return seconds - fixed * 3600
+    if clock not in SERVER_CLOCKS:
         return seconds
-    stored = datetime.fromtimestamp(server_to_stored_ns(seconds, fx) // 10**9, tz=UTC)
+    stored = datetime.fromtimestamp(
+        server_to_stored_ns(seconds, fx, SERVER_CLOCKS[clock], symbol) // 10**9, tz=UTC)
     return int(stored.replace(tzinfo=ZoneInfo("America/New_York")).timestamp())
 
 
@@ -370,6 +522,7 @@ def settled_rates(symbol, start, stop):
     lo, hi = int(start.timestamp()), int(stop.timestamp())
     previous = -1
     rows = []
+    answered = False
     for _ in range(SETTLE_ATTEMPTS):
         fetched = mt5.copy_rates_range(symbol, mt5.TIMEFRAME_M1, start, stop)
         # `None` IS AN ERROR AND WAS READ AS AN EMPTY MARKET. A refused call and
@@ -390,11 +543,19 @@ def settled_rates(symbol, start, stop):
             log(f"  {symbol} {start:%Y-%m}: {text} -- retrying")
             time.sleep(SETTLE_SECONDS)
             continue
+        answered = True
         rows = [row for row in fetched if lo <= int(row["time"]) < hi]
         if len(rows) == previous:
             return rows
         previous = len(rows)
         time.sleep(SETTLE_SECONDS)
+    # NEVER A SILENT HOLE. If the terminal did not answer once (IPC lost, the
+    # server refusing logins -- 2026-11-07 15:24, "Service is not available"),
+    # this month is unknown, not empty: stop the import rather than store a
+    # gap that reads as a quiet market.
+    if not answered:
+        raise RuntimeError(f"{symbol} {start:%Y-%m}: the terminal never answered "
+                           f"({SETTLE_ATTEMPTS} tries) -- import stopped, no hole written")
     return rows
 
 
@@ -406,6 +567,10 @@ class Writer:
         self.clock = clock
         self.sender = None
         self.written = 0
+        #: set per symbol by `import_symbol`: its fixed-offset rules
+        #: (`THE5ERS_FIXED_UTC_HOURS`) and its broker name (symbol-scoped rows)
+        self.fixed_rules = None
+        self.symbol = None
 
     def connect(self):
         if self.sender is None:
@@ -419,7 +584,8 @@ class Writer:
         try:
             for row in rows:
                 seconds = int(row["time"])
-                if to_actual_seconds(seconds, self.clock, fx) >= cutoff_seconds:
+                if to_actual_seconds(seconds, self.clock, fx, self.fixed_rules,
+                                     self.symbol) >= cutoff_seconds:
                     continue
                 sender.row(
                     table,
@@ -434,7 +600,8 @@ class Writer:
                         "real_volume": int(row["real_volume"]),
                     },
                     at=TimestampNanos(to_stored_ns(seconds, self.wall_clock,
-                                                   self.clock, fx)),
+                                                   self.clock, fx, self.fixed_rules,
+                                                   self.symbol)),
                 )
                 written += 1
             sender.flush()
@@ -470,6 +637,9 @@ def settled_span(table):
 
 def import_symbol(key, broker, writer, cutoff, first_year, table_prefix, start=None):
     table = safe_table(f"{table_prefix}{broker.lower()}_1m")
+    writer.fixed_rules = (THE5ERS_FIXED_UTC_HOURS.get(broker)
+                          if writer.clock == "the5ers_ny_plus_7" else None)
+    writer.symbol = broker
     if not mt5.symbol_select(broker, True):
         raise RuntimeError(f"cannot select {broker}: {mt5.last_error()}")
     ensure_table(table)
@@ -493,7 +663,7 @@ def import_symbol(key, broker, writer, cutoff, first_year, table_prefix, start=N
             rows = settled_rates(broker, edge, following)
             if rows:
                 written += writer.write(table, rows, cutoff_seconds,
-                                        broker in FUNDEDNEXT_FX)
+                                        is_fx_symbol(broker, writer.clock))
         if written == 0:
             empty_run += 1
             log(f"  {broker} {year}: no bars")

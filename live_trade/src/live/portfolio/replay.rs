@@ -44,6 +44,79 @@ pub async fn replay_fundednext(
     balance: f64,
     server_start: &str,
 ) -> Result<Vec<ReplayEvent>, crate::error::ApiError> {
+    replay_book(&crate::strategies::fundednext::oct_21_2026::BOOK, store, first, last, balance, server_start).await
+}
+
+/// `replay_fundednext` for the The5ers book, with the account-level ban layer
+/// applied as the runtime applies it (`ban_filter`).
+pub async fn replay_the5ers(
+    store: &ParquetStore,
+    first: &str,
+    last: &str,
+    balance: f64,
+    server_start: &str,
+) -> Result<Vec<ReplayEvent>, crate::error::ApiError> {
+    let events =
+        replay_book(&crate::strategies::the5ers::nov_08_2026::BOOK, store, first, last, balance, server_start).await?;
+    Ok(ban_filter(events))
+}
+
+/// The runtime's ban decisions over the sleeves' independent live events:
+/// minute by minute, slots in BOOK order (`Runtime::on_batch`); an entry the
+/// layer refuses is a ghost whose exit is swallowed (`LiveSlot`); a closed
+/// position stays held until `bar + 120` (`the5ers_recent`).
+fn ban_filter(events: Vec<ReplayEvent>) -> Vec<ReplayEvent> {
+    use crate::strategies::the5ers::nov_08_2026::{BOOK, ban::{Held, View}};
+    let member = |id: &str| BOOK.iter().position(|s| s.id() == id).unwrap_or(usize::MAX);
+    let mut order: Vec<usize> = (0..events.len()).collect();
+    order.sort_by_key(|&i| (events[i].bar_ts, member(&events[i].strategy), i));
+    let mut open: std::collections::HashMap<String, (&'static str, Side)> = std::collections::HashMap::new();
+    let mut ghosts: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut recent: Vec<(String, &'static str, Side, i64)> = Vec::new();
+    let mut last: Option<i64> = None;
+    let mut keep = vec![false; events.len()];
+    for i in order {
+        let event = &events[i];
+        let Some(sleeve) = Sleeve::from_id(&event.strategy) else { continue };
+        let now = event.bar_ts;
+        match event.kind {
+            "enter" => {
+                recent.retain(|r| r.3 > now);
+                let mut held: Vec<Held> = open.values().map(|(m, s)| Held { market: m, side: *s }).collect();
+                held.extend(recent.iter().map(|r| Held { market: r.1, side: r.2 }));
+                let view = View { held, last_entry: last };
+                let side = if event.long { Side::Long } else { Side::Short };
+                if view.refuse(sleeve.market(), side, now).is_some() {
+                    ghosts.insert(event.strategy.clone());
+                } else {
+                    open.insert(event.strategy.clone(), (sleeve.market(), side));
+                    last = Some(now);
+                    keep[i] = true;
+                }
+            }
+            _ => {
+                if ghosts.remove(&event.strategy) {
+                    continue;
+                }
+                if let Some((market, side)) = open.remove(&event.strategy) {
+                    recent.push((event.strategy.clone(), market, side, now + 120));
+                    keep[i] = true;
+                }
+            }
+        }
+    }
+    events.into_iter().zip(keep).filter_map(|(e, k)| k.then_some(e)).collect()
+}
+
+/// Every sleeve of `book` down the live path (`replay_fundednext`'s body).
+pub async fn replay_book(
+    book: &[Sleeve],
+    store: &ParquetStore,
+    first: &str,
+    last: &str,
+    balance: f64,
+    server_start: &str,
+) -> Result<Vec<ReplayEvent>, crate::error::ApiError> {
     let bad = |what: &str| crate::error::ApiError::BadRequest(format!("bad {what} date"));
     let first_day = parse_iso_days(first).ok_or_else(|| bad("first"))?;
     let last_day = parse_iso_days(last).ok_or_else(|| bad("last"))?;
@@ -52,7 +125,6 @@ pub async fn replay_fundednext(
     // `LiveSlot::replay`'s boundary: the first bar AFTER `live_started_at`.
     let live_started_at = first_day * 86_400 - 1;
     let end = (last_day + 1) * 86_400;
-    let book = crate::strategies::fundednext::oct_21_2026::BOOK;
     let mut markets: Vec<&'static str> = Vec::new();
     for sleeve in book.iter() {
         if !markets.contains(&sleeve.market()) {
@@ -100,9 +172,9 @@ pub async fn replay_fundednext(
             let mut strategy = if std::env::var("REPLAY_NO_EARLY").is_ok() {
                 // Diagnostic: the live sleeve without early fills.
                 let mut plain = crate::strategies::cfd::CfdSleeve::new(*sleeve, 0.01);
-                plain.set_sizing_cap(crate::strategies::fundednext::oct_21_2026::INITIAL_BALANCE);
+                plain.set_sizing_cap(sleeve.book().initial_balance().unwrap_or(f64::INFINITY));
                 if let Some(table) = crate::backtest::fills::broker_minute_table(sleeve.market(), sleeve.book())
-                    && let Some(quotes) = quotes::for_table(&table)
+                    && let Some(quotes) = quotes::for_table(&table, 1.6)
                 {
                     plain.install_quotes(quotes);
                 }
@@ -127,7 +199,7 @@ pub async fn replay_fundednext(
                 )?
                 .map(std::sync::Arc::new);
                 let mut b = crate::strategies::cfd::CfdSleeve::new(*sleeve, 0.01);
-                b.set_sizing_cap(crate::strategies::fundednext::oct_21_2026::INITIAL_BALANCE);
+                b.set_sizing_cap(sleeve.book().initial_balance().unwrap_or(f64::INFINITY));
                 if let Some(fills) = &fills {
                     b.install_fills(std::sync::Arc::clone(fills));
                     b.install_quotes(std::sync::Arc::clone(fills) as std::sync::Arc<dyn crate::strategies::cfd::BrokerQuotes>);

@@ -43,6 +43,7 @@ THE RULES (FundedNext, $6,000 account):
 """
 from __future__ import annotations
 
+import os
 import argparse
 import pickle
 import statistics
@@ -119,7 +120,12 @@ def worst_marks(state, book):
     its 1-minute extreme in the same instant. The bars' highs and lows are built
     from the 1-minute data, so a spike a 30m close never shows is in here; the
     true 1-minute equity lies between this and the close-marked one."""
-    key = id(state["bars_by"])
+    # keyed by CONTENT: an `id()` key was reused by a later state's dict
+    # (CPython recycles addresses) and served the previous quarter's extremes,
+    # leaving most marks "unmarked" -- dips too shallow (fixed 2026-11-01)
+    key = tuple(sorted((sym, len(bars), bars[0][ef.TS] if bars else 0,
+                        bars[-1][ef.TS] if bars else 0)
+                       for sym, bars in state["bars_by"].items()))
     if key not in _EXTREMES:
         _EXTREMES.clear()
         _EXTREMES[key] = {sym: {b[ef.TS]: (b[ef.H], b[ef.L]) for b in bars}
@@ -381,9 +387,16 @@ def _phase(days, rng, target):
     equity, used, traded, worst_day, deepest = ACCOUNT, 0, 0, 0.0, 0.0
     goal, floor = ACCOUNT + target, ACCOUNT - MAX_LOSS
     n = len(days)
+    # FN_MC_GUARD=1 (book variant `guard`, 2026-11-01): each day's P&L scaled
+    # by m = clip(room / starting room, 0.5, 1) -- risk shrinks near the
+    # max-loss line. Linear: ignores minimum-lot pinning (overstates it).
+    guard = os.environ.get("FN_MC_GUARD") == "1"
     while used < MC_MAX_DAYS:
         start = rng.randrange(0, n - MC_BLOCK_DAYS)
         for ret, dip, did, gap in days[start:start + MC_BLOCK_DAYS]:
+            if guard:
+                m = min(1.0, max(0.5, (equity - floor) / MAX_LOSS))
+                ret, dip, gap = ret * m, dip * m, gap * m
             used += 1
             low = equity * (1 + dip)
             ref = equity * (1 + gap)

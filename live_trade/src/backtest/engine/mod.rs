@@ -44,9 +44,15 @@ pub fn execute_combined(prepared: &PreparedRun, names: &[String]) -> Result<RunR
                 if engine.canon_replay {
                     let table = tables.entry(source).or_insert_with(|| {
                         let marks = super::challenge::series_marks(prepared, sleeve, source);
-                        std::sync::Arc::new(super::challenge::daily_multipliers(
+                        let day_shift = if sleeve.book() == crate::strategies::cfd::Book::The5ers {
+                            sleeve.shift_hours() * 3_600
+                        } else {
+                            0
+                        };
+                        std::sync::Arc::new(super::challenge::daily_multipliers_shifted(
                             &marks,
                             crate::strategies::fundednext::oct_21_2026::CANON_THROTTLE_FROM,
+                            day_shift,
                         ))
                     });
                     strategy.install_throttle(std::sync::Arc::clone(table));
@@ -192,7 +198,13 @@ pub fn execute_combined(prepared: &PreparedRun, names: &[String]) -> Result<RunR
             if market_rank[symbol].is_empty() || key < market_rank[symbol] {
                 market_rank[symbol] = key;
             }
-            market_shift[symbol] = sleeve.map_or(0, |sleeve| sleeve.shift_hours()) * 3_600;
+            // The5ers' Python book replays every sleeve on REAL New York
+            // (`the5ers_combined_strategies.load_state`), as live runs; only
+            // the older books order on the shifted clock.
+            market_shift[symbol] = sleeve
+                .filter(|sleeve| sleeve.book() != crate::strategies::cfd::Book::The5ers)
+                .map_or(0, |sleeve| sleeve.shift_hours())
+                * 3_600;
             // A stream is only lagged when EVERY sleeve on it aggregates. A
             // stream is keyed by `(market, source)`, so the four NQ sleeves sit
             // on four separate streams and the two that aggregate can be lagged
@@ -223,7 +235,7 @@ pub fn execute_combined(prepared: &PreparedRun, names: &[String]) -> Result<RunR
         let canon_fn = engine.canon_replay
             && names
                 .iter()
-                .all(|name| Sleeve::from_display(name).is_some_and(|s| s.book() == crate::strategies::cfd::Book::FundedNext));
+                .all(|name| Sleeve::from_display(name).is_some_and(|s| s.book().is_prop()));
         // The closing bars are MARKED in place (`depth_events`, which an OHLCV
         // bar never carries) rather than keyed in a side table: the merged
         // stream is tens of millions of minutes and a second copy does not fit.
@@ -297,7 +309,7 @@ fn build_strategy(name: &str, prepared: &PreparedRun) -> Result<CfdSleeve, ApiEr
             strategy.install_quotes(std::sync::Arc::clone(fills) as std::sync::Arc<dyn crate::strategies::cfd::BrokerQuotes>);
         }
     }
-    if sleeve.book() == crate::strategies::cfd::Book::FundedNext
+    if sleeve.book().is_prop()
         && let Some(cap) = prepared.engine.sizing_cap
     {
         strategy.set_sizing_cap(cap);
@@ -343,7 +355,7 @@ fn entry_days_from_env() -> Result<Option<u8>, ApiError> {
 
 fn is_fundednext(name: &str) -> bool {
     crate::strategies::cfd::Sleeve::from_display(name)
-        .is_some_and(|sleeve| sleeve.book() == crate::strategies::cfd::Book::FundedNext)
+        .is_some_and(|sleeve| sleeve.book().is_prop())
 }
 
 /// The instant in `(previous, now]` at which live's `session_overdue` would
@@ -387,6 +399,10 @@ fn data_ended(name: &str, cfg: &EngineConfig) -> bool {
 
 #[derive(Clone)]
 pub(crate) struct EngineConfig {
+    /// The5ers' ban layer: the `(sleeve display, real entry stamp)` trades
+    /// `ban::comply` keeps (`run_combined`'s first pass). An entry not in it is
+    /// a ghost, as Python drops the trade. `None` for every other book.
+    pub(crate) ban_admit: Option<std::sync::Arc<std::collections::HashSet<(String, i64)>>>,
     pub(crate) initial: f64,
     pub(crate) symbol: String,
     pub(crate) start_day: i64,
@@ -720,6 +736,7 @@ pub(crate) fn run_engines_streams_at(
     };
     let mut trades = Vec::new();
     let mut below_broker_minimum = std::collections::BTreeMap::<String, usize>::new();
+    let mut refused_by_ban = std::collections::BTreeMap::<String, usize>::new();
     let mut refused_by_gross_cap = std::collections::BTreeMap::<String, usize>::new();
     let mut equity = cfg.initial;
     let mut equity_peak = equity;
@@ -1041,6 +1058,13 @@ pub(crate) fn run_engines_streams_at(
                         quantity,
                     } => {
                         let execution_price = price;
+                        if let Some(admit) = cfg.ban_admit.as_ref()
+                            && slot.position.is_none()
+                            && !admit.contains(&(slot.name.clone(), fill_timestamp))
+                        {
+                            *refused_by_ban.entry(slot.name.clone()).or_default() += 1;
+                            continue;
+                        }
                         if !slot.position.as_ref().is_some_and(|p| p.side == side) {
                             if let Some(old) = slot.position.take() {
                                 exposed -= position_notional(&old);
@@ -1352,7 +1376,7 @@ pub(crate) fn run_engines_streams_at(
         if cfg.canon_replay
             && data_ended(&slot.name, &cfg)
             && crate::strategies::cfd::Sleeve::from_display(&slot.name)
-                .is_some_and(|sleeve| sleeve.book() == crate::strategies::cfd::Book::FundedNext)
+                .is_some_and(|sleeve| sleeve.book().is_prop())
         {
             slot.position = None;
         }
@@ -1421,6 +1445,7 @@ pub(crate) fn run_engines_streams_at(
     let last = stream.last().unwrap().1.ts;
     let mut body = report(&trades, &cfg, first, last, equity, drawdowns.finish());
     body["below_broker_minimum"] = serde_json::json!(below_broker_minimum);
+    body["refused_by_ban"] = serde_json::json!(refused_by_ban);
     // How much of the run the Exness fill model actually priced. A sleeve whose
     // entries fall outside the broker table's reach is on the idealised fill
     // there, and a total that hides that is kinder than the account.

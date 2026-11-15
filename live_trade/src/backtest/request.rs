@@ -64,7 +64,7 @@ impl RunRequest {
         let Some(value) = self.model.as_deref().map(str::trim).filter(|v| !v.is_empty()) else {
             return Ok(super::MODEL_ID);
         };
-        [super::MODEL_ID, super::FUNDEDNEXT_MODEL_ID]
+        [super::MODEL_ID, super::FUNDEDNEXT_MODEL_ID, super::THE5ERS_MODEL_ID]
             .into_iter()
             .find(|known| value.eq_ignore_ascii_case(known))
             .ok_or_else(|| {

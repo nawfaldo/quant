@@ -564,11 +564,16 @@ def minute_table(symbol):
 
 
 def _closed_window(symbol):
-    """FundedNext's no-order NY minutes for `symbol`'s broker table, or None."""
-    table = minute_table(symbol)
-    if not table.startswith("fundednext_"):
-        return None
-    return ef.fundednext_closed(table[len("fundednext_"):-len("_1m")])
+    """A prop firm's no-order NY minutes for `symbol`'s broker table, or None
+    (`cfd_families.broker_closed`: FundedNext and The5ers)."""
+    return ef.broker_closed(minute_table(symbol))
+
+
+def _spread_lift_points(symbol):
+    """Points added to the M1 `spread` column to reach the tick median --
+    The5ers stores the minute's MINIMUM (`BROKERS['the5ers']`); 0 elsewhere."""
+    lifts = ef.PROFILE.get("m1_spread_lift_points") or {}
+    return float(lifts.get(ef.broker_symbol(symbol).lower(), 0.0))
 
 
 def has_minutes(symbol):
@@ -595,6 +600,10 @@ def _read_minutes(symbol):
     if not files:
         return [], [], []
     point = _point_size(symbol)
+    lift = _spread_lift_points(symbol)
+    # A zero spread is a hole on Exness / FundedNext but a real bid == ask quote
+    # on The5ers' raw majors (`zero_spread_quotes`).
+    zero_ok = bool(ef.PROFILE.get("zero_spread_quotes"))
     stamps, opens, spreads = [], [], []
     for path in files:
         block = pq.read_table(str(path),
@@ -602,7 +611,8 @@ def _read_minutes(symbol):
         op = block.column("open").to_numpy()
         close = block.column("close").to_numpy()
         raw = block.column("spread").to_numpy().astype("float64")
-        good = (op > 0) & (close > 0) & (raw > 0)
+        good = (op > 0) & (close > 0) & ((raw >= 0) if zero_ok else (raw > 0))
+        raw = raw + lift
         closed = _closed_window(symbol)
         # Parsed inside Arrow for the reason `_read_quotes` gives, but NOT the
         # same cast. Two traps, both hit on 2026-08-31:

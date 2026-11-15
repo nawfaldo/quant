@@ -37,6 +37,9 @@ RUN = os.environ.get("TWOHOST_RUN", "")
 MAC = os.environ.get("TWOHOST_MAC", "mac")              # ssh alias of the Mac
 MAC_ROOT = os.environ.get("TWOHOST_MAC_ROOT", "quant")  # repo dir on the Mac, from ~
 IS_MAC = sys.platform == "darwin"
+#: TWOHOST_LOCAL=1 (2026-11-08, the Mac went off the network mid-run): the
+#: claim board lives on THIS host, so a lone PC can finish a run alone.
+LOCAL = os.environ.get("TWOHOST_LOCAL") == "1"
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
@@ -57,14 +60,21 @@ def _remote(*parts):
     return "/".join([MAC_ROOT, ".twohost", RUN, *parts])
 
 
-def _ssh(cmd):
-    return subprocess.run(["ssh", "-o", "ConnectTimeout=15", MAC, cmd],
-                          capture_output=True, text=True)
+def _ssh(cmd, timeout=120):
+    # 2026-11-07: a claim ssh hung 10+ min from a hidden (no-console) worker and
+    # froze the replay -- no stdin, and a hard timeout that callers retry.
+    try:
+        return subprocess.run(["ssh", "-o", "ConnectTimeout=15", "-o", "ServerAliveInterval=15",
+                               "-o", "ServerAliveCountMax=2", MAC, cmd],
+                              capture_output=True, text=True, stdin=subprocess.DEVNULL,
+                              timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return subprocess.CompletedProcess(["ssh"], 255, "", f"ssh timed out after {timeout}s")
 
 
 def claim(unit):
     """True if this host now owns `unit` (and it is not done yet)."""
-    if IS_MAC:
+    if IS_MAC or LOCAL:
         claims = _local("claims")
         os.makedirs(claims, exist_ok=True)
         try:
@@ -129,7 +139,7 @@ def finish(unit, result):
     with open(tmp, "wb") as handle:
         pickle.dump(result, handle, protocol=5)
     os.replace(tmp, _local("results", unit + ".pkl"))
-    if IS_MAC:
+    if IS_MAC or LOCAL:
         open(os.path.join(_local("claims", unit), "done"), "w").close()
     else:
         _ssh(f"touch {_remote('claims', unit, 'done')}")

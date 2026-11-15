@@ -1,6 +1,7 @@
 pub mod cfd;
 pub mod exness;
 pub mod fundednext;
+pub mod the5ers;
 
 use exness::PreferredData;
 use cfd::Sleeve;
@@ -45,7 +46,12 @@ pub fn registered() -> Vec<StrategyDefinition> {
         name: fundednext::oct_21_2026::BOOK_NAME,
         preferred_data: PreferredData::Ohlcv,
     };
-    [book, fundednext]
+    let the5ers = StrategyDefinition {
+        id: the5ers::nov_08_2026::BOOK_ID,
+        name: the5ers::nov_08_2026::BOOK_NAME,
+        preferred_data: PreferredData::Ohlcv,
+    };
+    [book, fundednext, the5ers]
         .into_iter()
         .chain(
             oct_12_2026::registry()
@@ -113,6 +119,8 @@ pub fn is_book_entry(name: &str) -> bool {
         || name == oct_12_2026::BOOK_ID
         || name == fundednext::oct_21_2026::BOOK_NAME
         || name == fundednext::oct_21_2026::BOOK_ID
+        || name == the5ers::nov_08_2026::BOOK_NAME
+        || name == the5ers::nov_08_2026::BOOK_ID
 }
 
 /// The registry entries that ARE sleeves, which is everything but the book.
@@ -144,6 +152,7 @@ pub fn book_markets(book: cfd::Book) -> Vec<&'static str> {
     let members: &[Sleeve] = match book {
         cfd::Book::Exness => oct_12_2026::registry(),
         cfd::Book::FundedNext => &fundednext::oct_21_2026::BOOK,
+        cfd::Book::The5ers => &the5ers::nov_08_2026::BOOK,
     };
     let mut markets: Vec<&'static str> = members.iter().map(|sleeve| sleeve.market()).collect();
     markets.sort_unstable();
@@ -199,13 +208,14 @@ mod tests {
     fn the_registry_is_the_book_then_its_sleeves() {
         assert_eq!(registered_sleeves().len(), BOOK.len());
         // The book itself rides alongside its sleeves.
-        assert_eq!(registered().len(), BOOK.len() + 2);
+        assert_eq!(registered().len(), BOOK.len() + 3);
         let strategies = registered();
         let ids: Vec<&str> = strategies.iter().map(|entry| entry.id).collect();
         let mut expected = vec![
             // The BOOKS first, then the Exness sleeves.
             "exness_combined_07-09-2026",
             "fundednext_combined_21-10-2026",
+            "the5ers_combined_08-11-2026",
         ];
         expected.extend(BOOK.into_iter().map(Sleeve::id));
         assert_eq!(ids, expected);

@@ -497,7 +497,65 @@ BROKERS = {
                       "crypto 0.04%, stocks 0.004% of notional (help centre, "
                       "unmeasured), indices 0",
     },
+    #: The5ers High Stakes, FivePercentOnline-Real (account 26823080, $5K step 1,
+    #: 1:100), probed 2026-11-07. See THE5ERS below for what each field rests on.
+    "the5ers": {
+        "account": "The5ers High Stakes 26823080 (FivePercentOnline-Real)",
+        "terminal": r"C:\Program Files\Five Percent Online MetaTrader 5\terminal64.exe",
+        "spec_path": os.path.join(RESULTS, "the5ers_specs.json"),
+        "table_prefix": "the5ers_",
+        "tick_clock": "ny_plus_7",
+        #: UNMEASURED -- no trade on the account yet. Forex $4 per lot round
+        #: turn (Propvator / cTrader listing, consistent across sources);
+        #: indices 0; metals 0.0008% of notional (cTrader listing; other
+        #: reviews say 0.0001-0.002%). Oil and crypto are "percentage based"
+        #: with no published figure, so oil is ASSUMED to pay the metals rate.
+        #: Replace with `deals` off the first closed trades.
+        "commission": {"forex": ("usd_per_lot", 4.0),
+                       "commodity": ("notional_pct", 0.0008),
+                       "crypto": ("notional_pct", 0.04)},
+        "cost_model": "spread + commission once per trade: forex $4/lot round "
+                      "turn, metals/oil 0.0008% of notional, indices 0 "
+                      "(published figures, unmeasured)",
+        #: EURUSD / GBPUSD / USDJPY quote bid == ask most of the day (ticks
+        #: 2026-11-06 08:00-12:00 NY: p10/median/p90 all 0.0 points), so a
+        #: zero in the M1 `spread` column is a real quote here, not a hole.
+        "zero_spread_quotes": True,
+        #: Effective leverage per asset class, MEASURED 2026-11-07 with
+        #: `order_calc_margin` on 0.01 lot: FX 1:100 (EURUSD $11.14 on $1,114),
+        #: metals 1:25 (XAUUSD $162.68 on $4,067), indices ~1:25 (NAS100,
+        #: SP500, US30, DAX40, UK100, F40EUR, ESXEUR, ASXAUD, HSIHKD), oil 1:5
+        #: (XTIUSD $18.18 on $90.89). All looser than the 4x self-imposed cap.
+        #: Keyed by asset class, or by study symbol where one differs from its
+        #: class (the oils are `commodity` but 1:5).
+        #: Crypto 1:2, all eight MEASURED 2026-11-07 with `order_check` on the
+        #: minimum lot (server-accepted, retcode 0): BTCUSD $379 on $758,
+        #: ETHUSD $11.21, SOLUSD $44.97, LTCUSD $26.18, XRPUSD $0.58 -- each
+        #: half the notional.
+        "leverage": {"forex": 100, "commodity": 25, "index": 25,
+                     "ukoil": 5, "usoil": 5, "crypto": 2},
+        #: The M1 `spread` column is the MINUTE'S MINIMUM tick spread on this
+        #: server (tick-min minus M1 = 0 on all 12 symbols checked), not the
+        #: median as on Exness ([[exness-1m-spread-column-is-the-tick-median]]).
+        #: Points added to it to reach the tick median: median over every
+        #: minute of 2026-11-02..06 (server) of tick-median minus M1, all 44
+        #: research symbols; absent symbols measured 0.
+        #: `fill_models.the5ers.measure_m1_spread_lift` re-reads it.
+        "m1_spread_lift_points": {"cadjpy": 1.0, "dax40": 1.0, "eurjpy": 1.0,
+                                  "eurnzd": 1.0, "gbpjpy": 1.0, "nas100": 1.0,
+                                  "xagusd": 2.0, "xaueur": 1.0, "xauusd": 1.0,
+                                  "xbrusd": 1.0, "xpdusd": 60.0, "xptusd": 23.0,
+                                  "xtiusd": 1.0,
+                                  # crypto, same week, same method
+                                  "btcusd": 43.0, "btceur": 293.0, "ltcusd": 430.0,
+                                  "xrpusd": 12.0, "dogusd": 1.0},
+    },
 }
+
+#: Brokers whose day ends in a broker-side break around 17:00 New York (no
+#: quotes or no orders), so a session ending at the rollover is flattened on
+#: the clock just before it (`FLATTEN_LEAD_SECONDS`).
+PROP_FIRMS = ("fundednext", "the5ers")
 
 #: Which broker this process prices. Read from the environment first so a
 #: spawned worker inherits its parent's choice.
@@ -811,9 +869,20 @@ FUNDEDNEXT_ALIAS = {"ustec": "NDX100", "nq": "NDX100", "es": "SPX500",
                     #: `vix` is already a block name in `periods`.
                     "vixcfd": "VIX"}
 
+#: The5ers' names where they differ from `symbol.upper()`. Probed 2026-11-07
+#: from `symbols_get` on FivePercentOnline-Real (64 symbols); the same map as
+#: `tools/exness_import_1m.THE5ERS`. No NTH25 / SWI20 / US2000 / VIX.
+THE5ERS_ALIAS = {"ustec": "NAS100", "nq": "NAS100", "us500": "SP500",
+                 "es": "SP500", "de40": "DAX40", "fr40": "F40EUR",
+                 "stoxx50": "ESXEUR", "aus200": "ASXAUD", "hk50": "HSIHKD",
+                 "jp225": "JPN225", "ukoil": "XBRUSD", "usoil": "XTIUSD",
+                 "btc": "BTCUSD", "dogeusd": "DOGUSD"}
+
 #: Trading days a year, for annualising realised volatility. Crypto is the only
 #: family that quotes through the weekend.
-CALENDAR = {"btc": 365.0, "ethusd": 365.0, "ethbtc": 365.0}
+CALENDAR = {"btc": 365.0, "ethusd": 365.0, "ethbtc": 365.0,
+            "ltcusd": 365.0, "solusd": 365.0, "xrpusd": 365.0, "dogeusd": 365.0,
+            "btceur": 365.0, "etheur": 365.0}
 
 #: Hours added to the timestamp before the day is cut. The Asian cash sessions
 #: straddle midnight New York, and without the shift one session lands in two
@@ -856,6 +925,10 @@ SESSION = {
     "us500": (9 * 60 + 30, 16 * 60),
     "btc": (9 * 60 + 30, 16 * 60), "ethusd": (9 * 60 + 30, 16 * 60),
     "ethbtc": (9 * 60 + 30, 16 * 60),
+    #: The5ers-only crypto: the same US-hours `rth` as btc / ethusd.
+    "ltcusd": (9 * 60 + 30, 16 * 60), "solusd": (9 * 60 + 30, 16 * 60),
+    "xrpusd": (9 * 60 + 30, 16 * 60), "dogeusd": (9 * 60 + 30, 16 * 60),
+    "btceur": (9 * 60 + 30, 16 * 60), "etheur": (9 * 60 + 30, 16 * 60),
     #: FundedNext-only symbols (2026-10-16): metals like silver, US cash hours,
     #: European cash hours.
     "xauusd": (8 * 60, 16 * 60),
@@ -935,6 +1008,12 @@ for _s in ("de40", "fr40", "stoxx50", "uk100", "aus200", "hk50", "jp225",
     CLASS[_s] = "index"
 for _s in ("btc", "ethusd", "ethbtc"):
     CLASS[_s] = "crypto"
+#: The5ers-only crypto (2026-11-07): Binance spot vendor tables
+#: (`tools/binance_backfill_1m.py`: LTCUSDT, SOLUSDT, XRPUSDT, DOGEUSDT, BTCEUR,
+#: ETHEUR), filled on `the5ers_*_1m`.
+THE5ERS_CRYPTO = ("ltcusd", "solusd", "xrpusd", "dogeusd", "btceur", "etheur")
+for _s in THE5ERS_CRYPTO:
+    CLASS[_s] = "crypto"
 #: US stock CFDs. Dukascopy 1m bars, split-adjusted -- NVDA reads $120 in 2024
 #: when it traded $1,200 -- so no rule here may use a dollar threshold. CVX, GS,
 #: MU and PLTR have tables but are NOT quoted on this Exness account, so they
@@ -1007,6 +1086,8 @@ def _mt5():
 def broker_symbol(symbol):
     if BROKER == "fundednext":
         return FUNDEDNEXT_ALIAS.get(symbol, symbol.upper())
+    if BROKER == "the5ers":
+        return THE5ERS_ALIAS.get(symbol, symbol.upper())
     return BROKER_ALIAS.get(symbol, symbol.upper())
 
 
@@ -1047,14 +1128,28 @@ def read_specs(symbols=UNIVERSE, path=SPEC_PATH):
         bid, ask = (tick.bid, tick.ask) if tick else (0.0, 0.0)
         mid = (bid + ask) / 2.0 if bid and ask else 0.0
         age = now - tick.time if tick and tick.time else None
+        multiplier = (info.trade_tick_value / info.trade_tick_size
+                      if info.trade_tick_size else 0.0)
+        # A PROFIT-CURRENCY == ACCOUNT-CURRENCY symbol moves `contract_size`
+        # dollars per unit of price per lot, by definition. The5ers' LTCUSD /
+        # XRPUSD / DOGUSD reported tick_value 1e-08 on tick_size 1e-05 with
+        # the market shut (2026-11-07) -- 1000x short -- which would have
+        # sized and booked them 1000x wrong. The contract wins, and the
+        # disagreement is recorded rather than silently replaced.
+        suspect = None
+        if (BROKER == "the5ers" and info.currency_profit == account.currency
+                and info.trade_contract_size
+                and abs(multiplier / info.trade_contract_size - 1.0) > 0.01):
+            suspect = multiplier
+            multiplier = info.trade_contract_size
         out[symbol] = {
             "broker": name,
             "digits": info.digits,
             "point": info.point,
             "tick_size": info.trade_tick_size,
             "tick_value": info.trade_tick_value,
-            "multiplier": (info.trade_tick_value / info.trade_tick_size
-                           if info.trade_tick_size else 0.0),
+            "multiplier": multiplier,
+            "multiplier_reported": suspect,
             "contract_size": info.trade_contract_size,
             "volume_min": info.volume_min,
             "volume_step": info.volume_step,
@@ -2482,10 +2577,19 @@ def financing_price(symbol, side):
     prints the mode so a symbol that starts quoting in percent is visible.
     """
     spec = INSTRUMENTS[symbol]
-    if spec.get("swap_mode") != 1:
-        return 0.0
-    points = spec["swap_long"] if side == 1 else spec["swap_short"]
-    return abs(min(0.0, points or 0.0)) * spec["point"]
+    mode = spec.get("swap_mode")
+    rate = spec.get("swap_long") if side == 1 else spec.get("swap_short")
+    if mode == 1:                     # SYMBOL_SWAP_MODE_POINTS
+        return abs(min(0.0, rate or 0.0)) * spec["point"]
+    if mode == 4:
+        # SYMBOL_SWAP_MODE_CURRENCY_DEPOSIT: the rate is ACCOUNT currency (USD)
+        # per lot per night -- The5ers' crypto (BTCUSD -68.8, ETHUSD -4.1,
+        # read 2026-11-07). Dividing by `multiplier` (USD per unit of price per
+        # lot) turns it into a price distance like every other cost leg.
+        # UNVERIFIED against a held position's deal history.
+        multiplier = spec.get("multiplier") or 0.0
+        return abs(min(0.0, rate or 0.0)) / multiplier if multiplier else 0.0
+    return 0.0
 
 
 def financing_nights(entry_ts, exit_ts):
@@ -3174,10 +3278,61 @@ def context(symbol, phase, bar=None, only=None, full_bars=None):
         for key in [k for k in ctx if k not in BAR_WAVE_KEEPS]:
             del ctx[key]
         gc.collect()
+    if TRIM_WARMUP:
+        _trim_warmup(bars, ctx, lo, p)
     return bars, compact(ctx)
 
 
-#: What `backtest`, `quantity` and the bar-count signals read from a context.
+#: `CFD_TRIM_WARMUP=1`: after the context is built on the FULL history (so every
+#: value kept is bit-identical), each per-bar float series forgets the values
+#: older than it can ever be read: 2x its own lookback + 2 sessions before the
+#: first scored bar (`is_start`); a series with no lookback of its own keeps the
+#: longest one in `periods` (252 sessions). Those slots become `None` -- the
+#: missing sentinel every guard already handles -- and the floats are freed.
+#: About 3/4 of a 15m context was warm-up floats from 2011-2014 (2026-10-31).
+TRIM_WARMUP = os.environ.get("CFD_TRIM_WARMUP") == "1"
+
+
+def _trim_warmup(bars, ctx, lo, p):
+    first = bisect.bisect_left([b[TS] for b in bars], lo)
+    slack = 2 * p["session"]
+    longest = []
+
+    def walk(v):
+        if isinstance(v, dict):
+            for x in v.values():
+                walk(x)
+        elif isinstance(v, (list, tuple)):
+            for x in v:
+                walk(x)
+        elif isinstance(v, int) and not isinstance(v, bool):
+            longest.append(v)
+    walk({k: v for k, v in p.items() if k not in ("session",)})
+    default_need = max(longest) + slack
+    size = len(bars)
+
+    def cut(series, need):
+        end = first - need
+        if not isinstance(series, list) or len(series) != size or end <= 0:
+            return
+        head = series[:end]
+        if not all(type(x) is float or x is None for x in head):
+            return                  # ints, bools, timestamps: never touched
+        series[:end] = [None] * end
+
+    def visit(value, need):
+        if isinstance(value, list):
+            cut(value, need)
+        elif isinstance(value, dict):
+            for key, inner in value.items():
+                own = (2 * key + slack if isinstance(key, int)
+                       and not isinstance(key, bool) and key > 0 else need)
+                visit(inner, max(own, slack) if own != need else need)
+    for key, value in ctx.items():
+        if key in ("cfg", "periods"):
+            continue
+        visit(value, default_need)
+
 BAR_WAVE_KEEPS = frozenset((
     "atr", "calm", "cfg", "daily", "day", "minute", "ema", "overnight",
     "periods", "risk", "session_index", "session_last", "symbol", "ts",
@@ -8180,6 +8335,29 @@ def momentum_stack_signal(index, bars, ctx, params, _state):
     """
     if _late(ctx, bars[index], params):
         return None
+    # THE SCORE IGNORES `params` (only the threshold and direction below read
+    # them), so it is computed once per bar per worker and reused by every
+    # trial: at 15m the 20-unit window is ~3,800 closes, and recomputing it on
+    # every bar of all 576 trials was 62% of a whole cfd select (2026-10-31).
+    cache = ctx.get("_momentum_stack_score")
+    if cache is None or cache[0] is not bars:
+        cache = ctx["_momentum_stack_score"] = (bars, {})
+    memo = cache[1]
+    if index in memo:
+        score = memo[index]
+    else:
+        score = memo[index] = _momentum_stack_score(index, bars, ctx)
+    if score is None:
+        return None
+    threshold = params["threshold"]
+    side = 1 if score >= threshold else -1 if score <= -threshold else None
+    if side is None:
+        return None
+    return -side if params["direction"] == "fade" else side
+
+
+def _momentum_stack_score(index, bars, ctx):
+    """`momentum_stack`'s summed z-score at `index`, or None (no reading)."""
     close = bars[index][C]
     if close <= 0:
         return None
@@ -8214,11 +8392,7 @@ def momentum_stack_signal(index, bars, ctx, params, _state):
         if variance <= 1e-12:
             return None
         score += move / math.sqrt(variance)
-    threshold = params["threshold"]
-    side = 1 if score >= threshold else -1 if score <= -threshold else None
-    if side is None:
-        return None
-    return -side if params["direction"] == "fade" else side
+    return score
 
 
 def adaptive_pullback_signal(index, bars, ctx, params, _state):
@@ -10094,11 +10268,23 @@ def quantity(equity, price, stop_distance, realized, ctx):
     if realized and realized > 0:
         risk *= min(1.0, ctx["vol_target"] / realized)
     raw = risk / (stop_distance * money_per_point)
-    margin_lot = price * spec["contract_size"] * spec["fx_to_usd"] * MARGIN_FRACTION
+    margin_lot = (price * spec["contract_size"] * spec["fx_to_usd"]
+                  * margin_fraction(spec.get("asset_class", "other"), spec.get("symbol")))
     ceiling = min(spec["volume_max"], equity / margin_lot) if margin_lot > 0 else 0.0
     step = spec["volume_step"]
     lots = math.floor(min(raw, ceiling) / step + 1e-10) * step
     return round(lots, 8) if lots + 1e-10 >= spec["volume_min"] else 0.0
+
+
+def margin_fraction(asset_class, symbol=None):
+    """Margin per unit of notional: the self-imposed `MARGIN_FRACTION` (a 4x
+    ceiling) or the broker's own (`PROFILE['leverage']`, by symbol first, then
+    class), whichever is larger. Every broker modelled so far is looser than 4x
+    on every class, so this is `MARGIN_FRACTION` today; the broker term guards
+    a tighter one."""
+    table = PROFILE.get("leverage") or {}
+    leverage = table.get(symbol) or table.get(asset_class)
+    return max(MARGIN_FRACTION, 1.0 / leverage) if leverage else MARGIN_FRACTION
 
 
 #: Bars between a signal being READ and the entry it produces being fillable.
@@ -10160,9 +10346,17 @@ FLATTEN_LEAD_SECONDS = 120
 #: 16:56:00.
 FLATTEN_LEAD_BY_SYMBOL = {"us500": 240}
 FLATTEN_LEAD_FX_SECONDS = 360
+#: THE5ERS: FX quotes to 16:54 (last M1 bar 23:54 server), so 16:54:00 like
+#: FundedNext; metals, indices and oil stop quoting at 16:49 (last bar 23:49
+#: server), so 16:49:00 -- 660 s before 17:00. Read off its M1 2026-10-19..11-06.
+THE5ERS_FLATTEN_LEAD_SECONDS = 660
+THE5ERS_FLATTEN_LEAD_FX_SECONDS = 360
 
 
 def flatten_lead_seconds(symbol):
+    if BROKER == "the5ers":
+        return (THE5ERS_FLATTEN_LEAD_FX_SECONDS if _is_fx_pair(symbol)
+                else THE5ERS_FLATTEN_LEAD_SECONDS)
     if symbol in FLATTEN_LEAD_BY_SYMBOL:
         return FLATTEN_LEAD_BY_SYMBOL[symbol]
     return FLATTEN_LEAD_FX_SECONDS if _is_fx_pair(symbol) else FLATTEN_LEAD_SECONDS
@@ -10188,8 +10382,14 @@ FUNDEDNEXT_CLOSED = {
 FUNDEDNEXT_CLOSED_FX = (16 * 60 + 55, 17 * 60 + 15)
 
 
+#: Crypto names, study and broker, that a six-letter test would call FX.
+CRYPTO_NAMES = frozenset(("btcusd", "ethusd", "ltcusd", "solusd", "xrpusd", "dogusd",
+                          "dogeusd", "btceur", "etheur", "ethbtc"))
+
+
 def _is_fx_pair(symbol):
-    return len(symbol) == 6 and symbol.isalpha() and symbol not in ("xauusd", "xagusd")
+    return (len(symbol) == 6 and symbol.isalpha() and symbol not in ("xauusd", "xagusd")
+            and symbol not in CRYPTO_NAMES and CLASS.get(symbol) != "crypto")
 
 
 def fundednext_closed(broker_symbol):
@@ -10199,6 +10399,36 @@ def fundednext_closed(broker_symbol):
     if broker_symbol in FUNDEDNEXT_CLOSED:
         return FUNDEDNEXT_CLOSED[broker_symbol]
     return FUNDEDNEXT_CLOSED_FX if _is_fx_pair(broker_symbol) else None
+
+
+#: THE5ERS' DAILY BREAK, NY minutes `[start, end)`, read 2026-11-07 off its
+#: own M1 (2026-10-19..11-06, every weekday alike): FX has no quote
+#: 16:55-17:05, metals / indices / oil none 16:50-18:05. These are QUOTE gaps;
+#: whether it refuses orders in quoted minutes either side (as FundedNext
+#: does) is unmeasured -- the first live `[Market closed]` would say.
+THE5ERS_CLOSED_FX = (16 * 60 + 55, 17 * 60 + 5)
+THE5ERS_CLOSED_OTHER = (16 * 60 + 50, 18 * 60 + 5)
+#: Crypto quotes 7 days: weekdays 16:55-17:05 NY, Sunday 16:50-17:05, Saturday
+#: 16:50-18:00 (M1 2026-10-24..11-07). One window covers the daily part; the
+#: Saturday tail has no quotes at all, so no fill can land in it anyway.
+THE5ERS_CLOSED_CRYPTO = (16 * 60 + 50, 17 * 60 + 5)
+
+
+def the5ers_closed(broker_symbol):
+    """`(start, end)` NY minutes The5ers takes no order on `broker_symbol`."""
+    name = broker_symbol.lower()
+    if name in CRYPTO_NAMES:
+        return THE5ERS_CLOSED_CRYPTO
+    return THE5ERS_CLOSED_FX if _is_fx_pair(name) else THE5ERS_CLOSED_OTHER
+
+
+def broker_closed(table):
+    """The no-order NY minutes for a broker minute table, by its prefix, or None."""
+    for prefix, closed in (("fundednext_", fundednext_closed),
+                           ("the5ers_", the5ers_closed)):
+        if table.startswith(prefix):
+            return closed(table[len(prefix):-len("_1m")])
+    return None
 
 #: Everything between the runtime deciding and MT5 executing, in seconds.
 #:
@@ -10757,7 +10987,7 @@ THREE HOLDING REGIMES. A `session` family is flattened at the close, as every
     # lands in the break. Only on the installed maps: a caller passing its own
     # `exit_prices` keeps its own exit path.
     by_flatten = (FLATTEN_PRICE.get(symbol)
-                  if exit_prices is None and BROKER == "fundednext" else None)
+                  if exit_prices is None and BROKER in PROP_FIRMS else None)
     flatten_at = None if not by_flatten else by_flatten.get
     bar_span = BAR_MINUTES
     # WHAT AN `sl`/`tp` ON THE ORDER WOULD BUY, and nothing else.
@@ -11217,7 +11447,7 @@ THREE HOLDING REGIMES. A `session` family is flattened at the close, as every
 #:
 #: Recorded in the seal, and `why` reads it back from there, so a coin-flip
 #: null is always chosen by the rule its real winner was.
-SELECT_RANKS = ("tstat", "growth")
+SELECT_RANKS = ("tstat", "growth", "plateau")
 SELECT_RANK = os.environ.get("EXNESS_SELECT_RANK", "tstat")
 if SELECT_RANK not in SELECT_RANKS:
     raise SystemExit(f"EXNESS_SELECT_RANK={SELECT_RANK!r}; known: "
@@ -11357,6 +11587,17 @@ def choose(symbol, family, results, bar=None, rank=None):
     if rank == "tstat":
         def key(item):
             return item[2].get("edge_vs_drift_t_stat") or 0.0, item[0]
+    elif rank == "plateau":
+        # The middle of a good plateau, not its luckiest spike: the MEDIAN
+        # edge-over-drift t-stat of the cell and every valid neighbour (a
+        # neighbour that failed to trade counts as 0), `quality` breaking ties.
+        def key(item):
+            params = item[1]
+            values = [item[2].get("edge_vs_drift_t_stat") or 0.0]
+            for p in neighbours(params, spec):
+                s = results.get(es.frozen(p))
+                values.append((s or {}).get("edge_vs_drift_t_stat") or 0.0)
+            return statistics.median(values), item[0]
     else:
         def key(item):
             return item[0]
@@ -11399,7 +11640,7 @@ def worker_specs(symbol):
 #: 4 GB, because the store's own page cache runs to hundreds of megabytes and the box
 #: has to stay usable -- the point of the guard is that a research job never
 #: again takes the machine down ([[check-before-running-heavy-jobs]]).
-MEMORY_RESERVE = float(os.environ.get("EXNESS_MEMORY_RESERVE_GB", "4")) * 1e9
+MEMORY_RESERVE = float(os.environ.get("EXNESS_MEMORY_RESERVE_GB", "2.5")) * 1e9
 
 
 def process_rss():
@@ -11481,6 +11722,88 @@ def available_memory():
         return None
 
 
+#: `CFD_CTX_SHARE=1` (default): the context `fit_workers` builds in the parent
+#: anyway is pickled to a temp file and every pool worker loads it, instead of
+#: each of ten workers spending ~65 s rebuilding the identical object (about a
+#: quarter of a 15m cfd job's CPU, 2026-10-31). A pickle round trip is exact.
+CTX_SHARE = os.environ.get("CFD_CTX_SHARE", "1") == "1"
+_SHARED_CTX = {"path": None}
+import atexit  # noqa: E402
+atexit.register(lambda: _drop_shared_context())
+
+
+def _share_context(held):
+    """Write `held` (bars, ctx) for the next pool; drops any earlier file."""
+    _drop_shared_context()
+    if not CTX_SHARE:
+        return
+    import pickle      # noqa: PLC0415
+    import tempfile    # noqa: PLC0415
+    fd, path = tempfile.mkstemp(prefix="cfd_ctx_", suffix=".pkl")
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            pickle.dump(held, handle, protocol=pickle.HIGHEST_PROTOCOL)
+    except Exception as exc:   # noqa: BLE001  (unpicklable -> workers rebuild)
+        print(f"context share off: {exc!r}", flush=True)
+        os.remove(path)
+        return
+    _SHARED_CTX["path"] = path
+
+
+def _dump_worker_context(path):
+    """Pool task: pickle this worker's freshly built (bars, ctx) to `path`."""
+    if "error" in _WORKER:
+        return False
+    import pickle      # noqa: PLC0415
+    with open(path, "wb") as handle:
+        pickle.dump((_WORKER["bars"], _WORKER["ctx"]), handle,
+                    protocol=pickle.HIGHEST_PROTOCOL)
+    return True
+
+
+def _fit_shared(symbol, phase, bar, only, workers):
+    """`fit_workers` with a shared context: one throwaway worker builds the
+    context exactly as every worker would and writes it to a temp file (so the
+    parent never holds a fragmented copy for the whole stage), then a second
+    one loads it and reports its own working set, which sizes the pool.
+    None -> fall back to the parent-built path."""
+    import tempfile    # noqa: PLC0415
+    _drop_shared_context()
+    fd, path = tempfile.mkstemp(prefix="cfd_ctx_", suffix=".pkl")
+    os.close(fd)
+    args = (symbol, phase, worker_specs(symbol), bar, only, None)
+    try:
+        with multiprocessing.Pool(1, _init_worker, (*args, None)) as builder:
+            ok = builder.apply(_dump_worker_context, (path,))
+        if not ok:
+            raise RuntimeError("context build failed in the builder worker")
+        _SHARED_CTX["path"] = path
+        with multiprocessing.Pool(1, _init_worker, (*args, path)) as probe:
+            measured = probe.apply(process_rss)
+    except Exception as exc:   # noqa: BLE001
+        print(f"context share off: {exc!r}", flush=True)
+        _drop_shared_context()
+        if os.path.exists(path):
+            os.remove(path)
+        return None
+    free = available_memory()
+    if not measured or free is None:
+        return workers, None
+    footprint = int(measured * 1.15)   # headroom for growth while scoring
+    room = max(1, int((free - MEMORY_RESERVE) / footprint))
+    return min(workers, room), footprint
+
+
+def _shared_context_path():
+    return _SHARED_CTX["path"]
+
+
+def _drop_shared_context():
+    path, _SHARED_CTX["path"] = _SHARED_CTX["path"], None
+    if path and os.path.exists(path):
+        os.remove(path)
+
+
 def fit_workers(symbol, phase, bar, only, workers):
     """`workers`, reduced until the pool's contexts fit in memory.
 
@@ -11501,16 +11824,32 @@ def fit_workers(symbol, phase, bar, only, workers):
     free = available_memory()
     if free is None or process_rss() is None:
         return workers, None
+    if CTX_SHARE:
+        shared = _fit_shared(symbol, phase, bar, only, workers)
+        if shared is not None:
+            return shared
     # The context has to be ALIVE when the working set is read. Building it and
     # measuring after the call returns reports 65 MB for a context that really
     # costs 317, because CPython has already handed the arenas back -- and a cap
     # computed from that is no cap at all.
     held = context(symbol, phase, bar, only)
     footprint = process_rss()
+    _share_context(held)
     del held
     gc.collect()
     if not footprint:
         return workers, None
+    # WITH A SHARED CONTEXT a worker only unpickles the (trimmed) context, so
+    # the parent's working set -- the full build, fragmented -- overstates it
+    # 2-3x. One real worker is started and asked for its own working set.
+    path = _shared_context_path()
+    if path:
+        with multiprocessing.Pool(1, _init_worker, (symbol, phase, worker_specs(symbol),
+                                                    bar, only, None, path)) as probe:
+            measured = probe.apply(process_rss)
+        if measured:
+            footprint = int(measured * 1.15)   # headroom for growth while scoring
+        free = available_memory() or free
     # A spawned worker pays the whole working set, not a delta: it starts a
     # fresh interpreter, re-imports this module, and then builds its own copy.
     # The parent is holding one context of its own while this runs, so its
@@ -11554,7 +11893,7 @@ def prewarm(symbol, phase, bar):
         all_bars(reference, phase, bar)
 
 
-def _init_worker(symbol, phase, specs, bar, only=None, window=None):
+def _init_worker(symbol, phase, specs, bar, only=None, window=None, ctx_file=None):
     """A spawned worker re-imports this module, so the resolved instruments AND
     the bar size have to be handed over explicitly. Without the bar the child
     would rebuild its context at the 30m default and quietly score a different
@@ -11585,18 +11924,76 @@ def _init_worker(symbol, phase, specs, bar, only=None, window=None):
     # Re-installed here off the cache the parent's `prewarm` wrote.
     install_fills(symbol, bar, quiet=True)
     _WORKER["symbol"] = symbol
-    _WORKER["bars"], _WORKER["ctx"] = context(symbol, phase, bar, only)
+    # A raising pool initializer is respawned forever (a window with no bars
+    # looped 6,541 workers for an hour): park the error and fail the first job.
+    try:
+        if ctx_file and os.path.exists(ctx_file):
+            import pickle      # noqa: PLC0415
+            with open(ctx_file, "rb") as handle:
+                _WORKER["bars"], _WORKER["ctx"] = pickle.load(handle)
+        else:
+            _WORKER["bars"], _WORKER["ctx"] = context(symbol, phase, bar, only)
+    except Exception as exc:   # noqa: BLE001
+        _WORKER["error"] = f"{symbol} {bar}m context failed: {exc!r}"
+
+
+#: `CFD_TRIAL_STREAMS=1`: every trial `select` scores also carries its weekly
+#: return stream, and `select` writes them all to `<result>_trials.npz` -- the
+#: trials x weeks matrix the overfit statistics need (CSCV / PBO, the deflated
+#: Sharpe's trial variance; `new_cfd_families export`). Off: nothing changes.
+TRIAL_STREAMS = os.environ.get("CFD_TRIAL_STREAMS") == "1"
+WEEK = 7 * 86_400
+#: Week buckets are counted from this Monday (UTC), so every file's columns line up.
+WEEK_ORIGIN = int(datetime(2018, 1, 1, tzinfo=timezone.utc).timestamp())
+
+
+def weekly_returns(trades, initial):
+    """`{week index: sum of pnl / equity before the trade}` by exit week --
+    compounding-neutral, so any sub-window of it reads the same whatever came
+    before."""
+    equity, out = initial, {}
+    for t in sorted(trades, key=lambda t: t["exit_ts"]):
+        week = (t["exit_ts"] - WEEK_ORIGIN) // WEEK
+        out[week] = out.get(week, 0.0) + (t["pnl"] / equity if equity > 0 else 0.0)
+        equity += t["pnl"]
+    return out
+
+
+def write_trial_streams(path, results):
+    """`results` {family: {frozen params: stat}} -> one compressed npz:
+    `<family>__keys` (params as JSON strings), `<family>__weeks` (week indexes),
+    `<family>__r` (trials x weeks float32)."""
+    arrays = {}
+    for family, cells in results.items():
+        keys = sorted(cells, key=repr)
+        weeks = sorted({w for k in keys for w in (cells[k].get("weekly") or {})})
+        col = {w: i for i, w in enumerate(weeks)}
+        matrix = numpy.zeros((len(keys), len(weeks)), dtype=numpy.float32)
+        for i, k in enumerate(keys):
+            for w, r in (cells[k].get("weekly") or {}).items():
+                matrix[i, col[w]] = r
+        arrays[f"{family}__keys"] = numpy.array(
+            [json.dumps(dict(k) if not isinstance(k, dict) else k, sort_keys=True,
+                        default=_json_default) for k in keys])
+        arrays[f"{family}__weeks"] = numpy.array(weeks, dtype=numpy.int32)
+        arrays[f"{family}__r"] = matrix
+    numpy.savez_compressed(path, **arrays)
 
 
 def _evaluate(job):
     family, params, spread_bp, null_seed = job
+    if "error" in _WORKER:
+        raise RuntimeError(_WORKER["error"])
     # `(lo, hi)` when the caller asked for a window other than the selection
     # one -- `persistence_screen` scores the whole grid on the HOLDOUT, which
     # is the same cells over the other side of `IS_END`.
     window = _WORKER.get("window") or (None, IS_END)
     stat = backtest(family, _WORKER["bars"], _WORKER["ctx"], params,
                     lo=window[0], hi=window[1],
-                    spread_bp=spread_bp, null_seed=null_seed)
+                    spread_bp=spread_bp, null_seed=null_seed,
+                    include_trades=TRIAL_STREAMS)
+    if TRIAL_STREAMS:
+        stat["weekly"] = weekly_returns(stat.pop("trade_log"), INITIAL_BALANCE)
     # The family travels back with the result because every family's cells are
     # now dispatched in ONE pass; `frozen(params)` alone is not unique across
     # families, and `donchian` and `swing_donchian` really do produce identical
@@ -11699,12 +12096,21 @@ def select(symbol, workers, spread_bp=None, bar=None, only=None):
           flush=True)
     with multiprocessing.Pool(
             workers, _init_worker,
-            (symbol, "select", worker_specs(symbol), bar, only)) as pool:
+            (symbol, "select", worker_specs(symbol), bar, only, None,
+             _shared_context_path())) as pool:
         results = _dispatch(pool, jobs, workers)
+    _drop_shared_context()
+    if TRIAL_STREAMS:
+        streams = output_path(symbol, bar, only)[:-len(".json")] + "_trials.npz"
+        write_trial_streams(streams, results)
+        print(f"trial streams -> {streams}", flush=True)
     family_rows = {}
     refusals = {}
     for family in specs:
         winner = choose(symbol, family, results.get(family, {}), bar)
+        if winner is not None:
+            winner["in_sample"] = {k: v for k, v in winner["in_sample"].items()
+                                   if k != "weekly"}
         family_rows[family] = winner
         if winner is None:
             # WHY, not just that. See `gate_report`: a refused family is not a
@@ -11942,7 +12348,8 @@ def why(symbol, workers, spread_bp=None, requested=None, bar=None):
     workers, _footprint = fit_workers(symbol, "select", bar, requested, workers)
     with multiprocessing.Pool(
             workers, _init_worker,
-            (symbol, "select", worker_specs(symbol), bar, requested)) as pool:
+            (symbol, "select", worker_specs(symbol), bar, requested, None,
+             _shared_context_path())) as pool:
         # One queue per seed rather than one per family per seed: the same 81
         # dispatches collapse to 3, and a coin-flip grid is exactly as parallel
         # as the real one.

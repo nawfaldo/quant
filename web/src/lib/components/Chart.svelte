@@ -15,8 +15,10 @@
 		bars,
 		live = [],
 		minutes = 1,
-		positions = []
-	}: { bars: Bar[]; live?: Bar[]; minutes?: number; positions?: OpenPosition[] } = $props();
+		positions = [],
+		fit = false,
+		transparent = false
+	}: { bars: Bar[]; live?: Bar[]; minutes?: number; positions?: OpenPosition[]; fit?: boolean; transparent?: boolean } = $props();
 
 	let container: HTMLDivElement;
 	let series = $state<ISeriesApi<'Candlestick'>>();
@@ -44,7 +46,7 @@
 	$effect(() => {
 		const chart = createChart(container, {
 			autoSize: true,
-			layout: { background: { color: '#121212' }, textColor: '#a3a3a3', attributionLogo: false },
+			layout: { background: { color: transparent ? 'transparent' : '#121212' }, textColor: '#a3a3a3', attributionLogo: false },
 			grid: { vertLines: { color: '#1f1f1f' }, horzLines: { color: '#1f1f1f' } },
 			timeScale: { timeVisible: true, borderVisible: false },
 			rightPriceScale: { borderVisible: false },
@@ -75,6 +77,8 @@
 		s.applyOptions({ priceFormat: { type: 'price', precision, minMove: 10 ** -precision } });
 		s.setData(bars.map((b) => ({ ...b, time: b.time as UTCTimestamp })));
 		last = bars.at(-1) && { ...bars.at(-1)! };
+		// Few candles (the equity chart): spread them across the width instead of bunching at the left.
+		if (fit) chart.timeScale().fitContent();
 		lines = new PositionLines();
 		s.attachPrimitive(lines);
 		drawnKey = '';

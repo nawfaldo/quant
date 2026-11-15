@@ -1,5 +1,13 @@
 """The FundedNext combined book, judged ONLY on one $6,000 two-step challenge.
 
+SINCE 2026-10-31 THE MAIN PATH IS THE WALK-FORWARD BOOK at the bottom of this
+file (`selftest`, `wf-logs`, `walkforward`, `wf-final`; read its header): pool
+from `new_cfd_families export`, every 2026 number out of sample for params,
+membership and sizing alike, shrunk edges, equal risk, fixed buckets, a 1/N
+benchmark and a pre-registered go/no-go. Everything described below is the
+LEGACY oct-21 canon pipeline, kept because the live book's tools import it.
+
+
 READ THIS FIRST IF YOU ARE AN AGENT RUNNING THIS MODULE: terminal output does
 NOT reach the user -- paste the tables into the reply.
 
@@ -295,11 +303,12 @@ def pool_cells():
 # logs
 # --------------------------------------------------------------------------- #
 
-def _days(log):
-    """Per exit day: day, sum of points/entry, P&L, winning P&L, losing P&L, trades."""
+def _days(log, shift=0):
+    """Per exit day: day, sum of points/entry, P&L, winning P&L, losing P&L, trades.
+    `shift` (seconds) moves a non-RTH log's NY+7 stamps to real New York first."""
     by = {}
     for t in log:
-        day = t["exit_ts"] // base.DAY
+        day = (t["exit_ts"] - shift) // base.DAY
         row = by.setdefault(day, [day, 0.0, 0.0, 0.0, 0.0, 0])
         row[1] += t["points"] / t["entry"]
         row[2] += t["pnl"]
@@ -385,7 +394,8 @@ def _log_group(job):
         summary[key] = {"symbol": symbol, "family": key.split(":", 1)[1],
                         "alias": alias, "file": name, "k": _lev(cell),
                         "saw_2026": "out_of_sample" in cell,
-                        "group": os.path.basename(path), "days": _days(log)}
+                        "group": os.path.basename(path),
+                        "days": _days(log, int(ctx["cfg"].get("shift_hours") or 0) * 3_600)}
     # The book marks every position on its symbol's 30m bars: in-session for
     # an RTH cell, every bar of the day for any other window (`tt_book`).
     ef.BAR_MINUTES = 30
@@ -577,9 +587,29 @@ def _series(m):
     return m["symbol"] if m["alias"] == m["symbol"] else f"{m['symbol']}~off"
 
 
+def _unshift_bars(bars, shift, first, hi):
+    """Bars in [first, hi) on real New York time (stamp minus `shift` seconds)."""
+    out = []
+    for b in bars:
+        ts = b[ef.TS] - shift
+        if first <= ts < hi:
+            if shift:
+                b = list(b)
+                b[ef.TS] = ts
+                b = tuple(b)
+            out.append(b)
+    return out
+
+
 def load_state(members, lo, hi):
     """The members' trades closed before `hi`, and marking bars from
-    `WARMUP_DAYS` before `lo` to `hi`; a replay of it opens nothing before `lo`."""
+    `WARMUP_DAYS` before `lo` to `hi`; a replay of it opens nothing before `lo`.
+
+    FIXED 2026-11-15: every stamp is moved to REAL New York wall clock first
+    (`cfg["shift_hours"]`: 7 for every non-RTH window, 6 for the shifted Asian
+    cash sessions, 0 for an RTH cell), as `the5ers_combined_strategies` does.
+    Before, RTH sleeves (NY) and every other window (NY + 7) shared one timeline
+    7 h apart, so overlap, the server day and the daily-loss check were wrong."""
     by_group = {}
     for m in members:
         by_group.setdefault(m["group"], []).append(m)
@@ -590,20 +620,22 @@ def load_state(members, lo, hi):
             got = pickle.load(handle)
         for m in ms:
             series = _series(m)
-            logs[_key(m)] = [dict(t, symbol=series) for t in got["logs"][_key(m)]
-                             if t["exit_ts"] < hi]
             spec = got["ctx"][m["alias"]]["cfg"]
+            shift = int(spec.get("shift_hours") or 0) * 3_600
+            logs[_key(m)] = [dict(t, symbol=series, entry_ts=t["entry_ts"] - shift,
+                                  exit_ts=t["exit_ts"] - shift)
+                             for t in got["logs"][_key(m)] if t["exit_ts"] - shift < hi]
             floor = sorted(spec["volume_min"] * t["distance"] * spec["multiplier"]
                            for t in logs[_key(m)] if t["distance"] > 0)
             minlot[_key(m)] = floor[len(floor) // 2] if floor else 0.0
             if series not in bars_by:
-                bars_by[series] = [b for b in got["bars"][m["alias"]]
-                                   if first <= b[ef.TS] < hi]
+                bars_by[series] = _unshift_bars(got["bars"][m["alias"]], shift, first, hi)
                 ctx_by[series] = got["ctx"][m["alias"]]
     return {"members": [dict(m, alias=_series(m), minlot_usd=round(minlot[_key(m)], 2))
                         for m in members], "logs": logs,
             "bars_by": bars_by, "ctx_by": ctx_by,
             "scale": {_key(m): m["k"] for m in members}, "start": lo, "end": hi,
+            "clock": "ny",          # stamps on real New York time (2026-11-15 fix)
             # loss limits judged at each bar's worst price (`ch.worst_marks`)
             "intrabar": True}
 
@@ -1132,18 +1164,1083 @@ def replay(state, risk_scale, initial=ACCOUNT, lo=None, hi=None):
                        hi=state["end"] if hi is None else hi)
 
 
+# =========================================================================== #
+# THE WALK-FORWARD BOOK (2026-10-31) -- the module's main path
+# =========================================================================== #
+#
+# Everything above this line is the LEGACY oct-21 canon (seal f61f9b946b90):
+# kept only because the live book's tools (`fundednext_challenge`,
+# `_fundednext_parity`, `fundednext_report`, `_fn_mcgrid`) import it. New books
+# are built below.
+#
+# WHAT CHANGED AND WHY. The canon's "2026 test" read 2026 three times (pool
+# filter, ranking, final re-pick); after it was sealed its first 14 trading days
+# came in at the 17th percentile. Its risk sat in a few sleeves (one sleeve 22%,
+# gold 33%, sleeve risk 30x apart), 38% of its trades were pinned at the minimum
+# lot, and its profit came from the top 5% of trades. Here:
+#
+#   pool     `new_cfd_families export` -> results/fundednext_wf/: every cell's
+#            2025 trades come from params chosen on 2024 (fold A), its 2026
+#            trades from params chosen on 2024-2025 (fold B). Each segment's log
+#            is generated under ITS OWN `CFD_SPLIT` (`context` calibrates
+#            `vol_target` on in-sample bars), plus an execution-stressed copy
+#            (entry one bar late, +0.05R a trade).
+#   edge     hierarchical empirical Bayes: every cell's per-trade Sharpe is
+#            shrunk toward its family's, the family's toward everyone's, with
+#            the prior fit on ALL 2025 fold-A picks, losers included -- the
+#            winner's-curse correction for picking from thousands. Noise uses
+#            Mertens' skew / kurtosis term, so a few big winners do not read as
+#            certainty. The book is ranked on, and the dial is chosen on, the
+#            SHRUNK edge (each sleeve's trades are cut to it, `_dud(log, keep)`).
+#   gates    few, because every gate on noisy data is one more selection: enough
+#            trades, fold-A coin flip p <= 0.20, fold-A search PBO <= 0.50, the
+#            stressed log still net positive.
+#   book     greedy by shrunk Sharpe under fixed buckets (<= 2 per symbol, <= 2
+#            per family, asset-class shares) and pairwise correlation gates;
+#            EQUAL RISK per sleeve (k = sigma_ref / sigma_i) times a
+#            diversification multiplier from a CONSERVATIVE (p90 rolling)
+#            correlation; a sleeve whose minimum lot overshoots 1.25x is out.
+#   size     N in {10, 15, 20} x every dial, by the challenge Monte Carlo on the
+#            training days with shrunk edges and half the symbols at no edge:
+#            highest pass with daily fails <= 2% and max-loss fails <= 3%,
+#            ties to the lower dial then the larger N.
+#   test     `walkforward`: refit every quarter of 2026 on data before it, trade
+#            the next quarter frozen, join the quarters -- against 1/N on the
+#            same dates, plus a CPCV spread. `wf-final` refuses a rule the
+#            walk-forward has not seen, and trades the selected book only if it
+#            beats 1/N and clears the no-edge pass rate by 15 points; 1/N
+#            otherwise; nothing if neither does.
+#
+#     py -m sandbox.research.fundednext_combined_strategies selftest
+#     py -m sandbox.research.fundednext_combined_strategies wf-logs [--workers N]
+#     py -m sandbox.research.fundednext_combined_strategies walkforward [--workers N]
+#     py -m sandbox.research.fundednext_combined_strategies wf-final [--workers N]
+
+import itertools  # noqa: E402
+import math  # noqa: E402
+import random  # noqa: E402
+
+WF_POOL_DIR = os.environ.get("FN_WF_POOL_DIR") or os.path.join(RESULTS, "fundednext_wf")
+WF_GROUP_DIR = os.path.join(_CACHE, "fundednext_wf_groups")
+WF_SUMMARY = os.path.join(WF_GROUP_DIR, "summary.pkl")
+WF_LOG = os.path.join(_OUT, "fundednext_wf_walkforward.json")
+WF_FINAL = os.path.join(_OUT, "fundednext_wf_final.json")
+WF_VARS = PROTOCOL_VARS + ("CFD_SPLIT", "FN_STRESS")
+DATA_END = os.environ.get("FN_DATA_END", "2026-10-31")
+WF_START = "2025-01-01"
+REFITS = ("2026-01-01", "2026-04-01", "2026-07-01", "2026-10-01")
+RANDOM_SEEDS = 20
+
+#: THE RULE. Fixed before any walk-forward; hashed into every log line.
+RULE = {
+    "min_trades": 40, "max_coinflip_p": 0.20, "max_pbo": 0.50,
+    "stress_cost_r": 0.05, "stress_lag_bars": 1,
+    "max_corr": 0.30, "max_down_rho": 0.40, "max_loss_lift": 1.40,
+    "per_symbol": 2, "per_family": 2,
+    "asset_share": {"metals": 0.15, "us_index": 0.25, "other_index": 0.15,
+                    "jpy": 0.25, "fx": 0.40},
+    # SharpeEdge: fixed a-priori risk buckets per strategy STYLE, from the
+    # params / family, never from results (`style_of`)
+    "style_share": {"trend": 0.40, "mean_reversion": 0.40, "other": 0.20},
+    "sizes": (10, 15, 20), "risks": RISKS, "n_eff_min": 10, "n_ref": 10,
+    "ewma_halflife_days": 63, "corr_window_days": 63, "corr_quantile": 0.90,
+    "dm_cap": 2.5, "k_bounds": (0.1, LEV_CAP), "overshoot_max": 1.25,
+    "mc_paths": 5000, "mc_dud_share": 0.5, "mc_draws": DRAWS,
+    # max-loss fails are ~ 100 - pass (a path ends in one or the other), so only
+    # the daily-limit fail is a separate guard (2026-11-01: a 3% max-loss cap
+    # was unreachable on shrunk edges and left every quarter flat)
+    "max_daily_fail": 2.0, "max_max_fail": None, "pass_tolerance": 1.0,
+    "beat_1n_p": 0.20, "pass_over_no_edge": 15.0,
+    "eb": "per-trade Sharpe, cell -> family -> global, Mertens noise",
+}
+
+
+#: Pre-registered book variants (results/fundednext_wf_variants_prereg.md).
+#: "base" is the rule as walked forward first; the rest change one thing each.
+VARIANTS = ("base", "fit", "erc", "guard", "wide", "fast")
+VARIANT = os.environ.get("FN_WF_VARIANT", "base")
+assert VARIANT in VARIANTS, f"FN_WF_VARIANT must be one of {VARIANTS}"
+if VARIANT == "wide":
+    RULE["sizes"] = (20, 30, 40)
+if VARIANT == "fast":
+    RULE["risks"] = (*RULE["risks"], 0.3, 0.5)
+#: `fast`: the dial maximises P(pass both phases within this many trading days)
+FAST_DAYS = 20
+if VARIANT == "guard":
+    os.environ["FN_MC_GUARD"] = "1"     # read by fundednext_challenge._phase, workers inherit
+
+
+def _refill_rounds():
+    return 8 if VARIANT == "base" else 50
+
+
+def rule_hash(variant=None):
+    variant = VARIANT if variant is None else variant
+    spec = dict(RULE, sizes=(20, 30, 40) if variant == "wide" else (10, 15, 20),
+                risks=(*RISKS, 0.3, 0.5) if variant == "fast" else RISKS)
+    if variant != "base":
+        spec["variant"] = variant
+    if variant == "fast":
+        spec["fast_days"] = FAST_DAYS
+    return hashlib.sha256(json.dumps(spec, sort_keys=True, default=str)
+                          .encode()).hexdigest()[:12]
+
+
+def _day(text):
+    return _stamp(text) // base.DAY
+
+
+ASSET = {"xauusd": "metals", "xagusd": "metals", "xptusd": "metals",
+         "us500": "us_index", "ustec": "us_index", "us30": "us_index",
+         "us2000": "us_index"}
+OTHER_INDEX = {"uk100", "de40", "fr40", "stoxx50", "nth25", "swi20", "hk50", "aus200"}
+
+
+def asset_class(symbol):
+    if symbol in ASSET:
+        return ASSET[symbol]
+    if symbol in OTHER_INDEX:
+        return "other_index"
+    return "jpy" if symbol.endswith("jpy") else "fx"
+
+
+#: Families with no direction param, by what their rules do (read off the code
+#: and the creators' descriptions, not their results).
+TREND_FAMILIES = {
+    "atp_alligator_ema200", "av_ema_systems", "av_morning_momentum", "break_retest",
+    "fx_breakout_delta", "gated_donchian", "gated_orb", "gated_swing", "jt_hull_suite",
+    "mql_big_move_cont", "nt_donchian_close", "qtt_alma_macd", "qtt_ema_macd",
+    "qtt_rsi_ema_retest", "qtt_triple_ema", "qtt_williams_rsi_macd", "td_halftrend",
+    "tr_darvas", "tr_zero_cross", "yf_alphatrend", "cf_runner_red_flip"}
+REVERSION_FAMILIES = {"gated_fade", "nmk_value_area_80", "trap", "lux_htf_manipulation"}
+_TREND_WORDS = {"breakout", "follow", "continuation", "positive", "momentum", "trend"}
+_REVERT_WORDS = {"fade", "reversal", "negative", "revert", "contrarian"}
+_STYLE = {}
+
+
+def style_of(file):
+    """trend / mean_reversion / other of a pool cell, from its live (fold-B)
+    params' direction or its family -- fixed before any result is read."""
+    if file not in _STYLE:
+        if not os.path.exists(os.path.join(WF_POOL_DIR, file)):
+            return "other"
+        with open(os.path.join(WF_POOL_DIR, file), encoding="utf-8") as handle:
+            cell = json.load(handle)
+        params = cell.get("params") or {}
+        words = {str(params.get(k)) for k in ("direction", "mode")}
+        if words & _REVERT_WORDS or cell["family"] in REVERSION_FAMILIES:
+            _STYLE[file] = "mean_reversion"
+        elif words & _TREND_WORDS or cell["family"] in TREND_FAMILIES:
+            _STYLE[file] = "trend"
+        else:
+            _STYLE[file] = "other"
+    return _STYLE[file]
+
+
+# --------------------------------------------------------------------------- #
+# wf-logs: fold-honest, segmented, plus the execution-stressed copy
+# --------------------------------------------------------------------------- #
+
+def wf_pool_cells():
+    """`[(name, cell)]` of the walk-forward pool (es / nq / jp225 never)."""
+    out = []
+    for name in sorted(os.listdir(WF_POOL_DIR)):
+        if not name.endswith(".json") or name.startswith("_"):
+            continue
+        with open(os.path.join(WF_POOL_DIR, name), encoding="utf-8") as handle:
+            cell = json.load(handle)
+        if "symbol" not in cell or cell["symbol"] in EXCLUDE_SYMBOLS:
+            continue
+        # `eligible` refuses these at every refit (fixed, 2025-only facts), so
+        # logging them changes nothing but the run time
+        p, pbo_a = cell["fold_A"].get("coinflip_p"), cell.get("pbo_A")
+        if p is None or p > RULE["max_coinflip_p"] or (pbo_a is not None and pbo_a > RULE["max_pbo"]):
+            continue
+        cell["bar_minutes"] = {"5m": 5, "15m": 15, "30m": 30, "1h": 60}[cell["timeframe"]]
+        cell["ncf_window"] = cell["protocol"]["execution"]["window"]
+        out.append((name, cell))
+    return out
+
+
+def _segments(cell):
+    """`[(index, segment)]` that carry params (a fold without a pick trades nothing)."""
+    return [(i, s) for i, s in enumerate(cell["wf_params"]) if s.get("params")]
+
+
+def _wf_protocol(name, cell, segment, stress):
+    env = dict(_protocol(name, cell))
+    env.update(CFD_SPLIT=segment["split"], FN_STRESS="1" if stress else "0")
+    return tuple(sorted(env.items()))
+
+
+def _wf_here():
+    return tuple(sorted((k, os.environ[k]) for k in WF_VARS if k in os.environ))
+
+
+def _wf_group_path(symbol, bar, protocol):
+    protocol = tuple((k, v) for k, v in protocol if k in WF_VARS)
+    window = dict(protocol).get("EXNESS_WINDOW") or "rth"
+    alias = symbol if window == "rth" else f"{symbol}~{window}"
+    tag = hashlib.sha1(repr(protocol).encode()).hexdigest()[:8]
+    return os.path.join(WF_GROUP_DIR, f"{alias}_{bar}m_{tag}.pkl")
+
+
+def _wf_one_group(symbol, bar):
+    """Child: every (cell, segment) of this interpreter's protocol on one
+    (symbol, bar): each segment's params over its own [from, to)."""
+    here = _wf_here()
+    stress = os.environ.get("FN_STRESS") == "1"
+    units = [(name, cell, i, seg) for name, cell in wf_pool_cells()
+             if (cell["symbol"], cell["bar_minutes"]) == (symbol, bar)
+             for i, seg in _segments(cell)
+             if _wf_protocol(name, cell, seg, stress) == here]
+    path = _wf_group_path(symbol, bar, here)
+    if _is_current(path, [f"{n}|{i}" for n, _, i, _ in units]):
+        return                      # the other host already wrote it (`wf_mac.py`)
+    alias = _alias(symbol)
+    ef.BAR_MINUTES = bar
+    try:
+        ef.resolve(symbol, allow_stale=True)
+        ef.prewarm(symbol, "validate", bar)
+        if os.environ.get("FN_TT") == "1":
+            bars, ctx = ef.context(symbol, "validate", bar)
+        else:
+            bars, ctx = ef.context(symbol, "validate", bar,
+                                   {cell["family"] for _, cell, _, _ in units})
+    except (Exception, SystemExit) as error:  # noqa: BLE001
+        print(f"  skipped -- {symbol} {bar}m: {error}", flush=True)
+        return
+    logs = {}
+    for name, cell, i, seg in units:
+        key = f"{symbol}:{cell['family']}@{_tf_of(name, cell)}"
+        lo = _stamp(seg["from"])
+        hi = _stamp(seg["to"]) if seg["to"] else _stamp(DATA_END)
+        try:
+            result = ef.backtest(cell["family"], bars, ctx, ef.rehydrate(seg["params"]),
+                                 lo=lo, hi=hi, initial=ACCOUNT, include_trades=True,
+                                 decision_lag=RULE["stress_lag_bars"] if stress else None)
+        except (Exception, SystemExit) as error:  # noqa: BLE001
+            print(f"  skipped -- {name} seg {i}: {type(error).__name__}: {error}", flush=True)
+            continue
+        logs[f"{key}|{i}"] = [dict(t, symbol=alias, sleeve=key) for t in result["trade_log"]
+                              if lo <= t["entry_ts"] < hi]
+    ef.BAR_MINUTES = 30
+    marks = [b for b in ef.all_bars(symbol, "validate", 30)
+             if b[ef.TS] < _stamp(DATA_END)
+             and (alias != symbol or ef.in_session(symbol, b[ef.TS]))]
+    with open(path + ".tmp", "wb") as handle:
+        pickle.dump({"logs": logs, "bars": {alias: marks},
+                     "ctx": {alias: {"cfg": ctx["cfg"], "symbol": symbol}}},
+                    handle, protocol=5)
+    os.replace(path + ".tmp", path)
+    _write_cells(path, sorted(f"{n}|{i}" for n, _, i, _ in units))
+
+
+def _arrays(log, shift=0):
+    """(trades [exit_day, return, pnl], days [day, pnl]) of a log, on real New
+    York days (`shift` seconds off a non-RTH log's NY+7 stamps)."""
+    tr = np.array(sorted(((t["exit_ts"] - shift) // base.DAY, t["points"] / t["entry"], t["pnl"])
+                         for t in log), dtype=float).reshape(-1, 3)
+    by = {}
+    for day, _, pnl in tr:
+        by[day] = by.get(day, 0.0) + pnl
+    return tr, np.array(sorted(by.items()), dtype=float).reshape(-1, 2)
+
+
+def _alias_of(cell):
+    window = cell.get("ncf_window") or "rth"
+    return cell["symbol"] if window == "rth" else f"{cell['symbol']}~{window}"
+
+
+def wf_logs(workers):
+    """Every pool cell's segments (normal and stressed) -> group files ->
+    `WF_SUMMARY`: per cell its trades / daily P&L, stressed daily P&L, minimum-
+    lot risk and the export's fold-A facts."""
+    os.makedirs(WF_GROUP_DIR, exist_ok=True)
+    pool = wf_pool_cells()
+    groups = {}
+    for name, cell in pool:
+        for i, seg in _segments(cell):
+            for stress in (False, True):
+                key = (_wf_protocol(name, cell, seg, stress), cell["symbol"], cell["bar_minutes"])
+                groups.setdefault(key, []).append(f"{name}|{i}")
+    keys = sorted(groups, key=lambda k: (k[2], -len(groups[k]), k))
+    todo = [k for k in keys if not _is_current(_wf_group_path(k[1], k[2], k[0]), groups[k])]
+    print(f"{len(pool)} cells, {len(keys)} groups, {len(todo)} to run on {workers} workers",
+          flush=True)
+
+    def run(key):
+        protocol, symbol, bar = key
+        env = {k: v for k, v in os.environ.items() if k not in WF_VARS}
+        env.update(dict(protocol))
+        env.update(PYTHONIOENCODING="utf-8", EXNESS_HOLD_SKIP="1", CFD_OOS_END=DATA_END,
+                   FN_WF_POOL_DIR=WF_POOL_DIR)
+        done = subprocess.run([sys.executable, "-m",
+                               "sandbox.research.fundednext_combined_strategies",
+                               "_wfgroup", "--symbol", symbol, "--bar", str(bar)],
+                              env=env, cwd=twohost.ROOT)
+        path = _wf_group_path(symbol, bar, protocol)
+        return os.path.basename(path), ("done" if os.path.exists(path)
+                                        else f"failed (exit {done.returncode})")
+
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    with ThreadPoolExecutor(max(1, workers)) as threads:
+        futures = [threads.submit(run, k) for k in todo]
+        for i, future in enumerate(as_completed(futures), 1):
+            name, status = future.result()
+            print(f"  {i}/{len(todo)} {name}: {status}", flush=True)
+
+    cells = {}
+    for name, cell in pool:
+        key = f"{cell['symbol']}:{cell['family']}@{_tf_of(name, cell)}"
+        parts, sources, cfg = {False: [], True: []}, [], None
+        for i, seg in _segments(cell):
+            for stress in (False, True):
+                path = _wf_group_path(cell["symbol"], cell["bar_minutes"],
+                                      _wf_protocol(name, cell, seg, stress))
+                if not os.path.exists(path):
+                    continue
+                with open(path, "rb") as handle:
+                    got = pickle.load(handle)
+                log = got["logs"].get(f"{key}|{i}")
+                if log is None:
+                    continue
+                parts[stress] += log
+                if not stress:
+                    sources.append((os.path.basename(path), f"{key}|{i}"))
+                cfg = cfg or next(iter(got["ctx"].values()))["cfg"]
+        if not parts[False] or cfg is None:
+            continue
+        shift = int(cfg.get("shift_hours") or 0) * 3_600
+        tr, days = _arrays(parts[False], shift)
+        _, sdays = _arrays(_costed(parts[True], RULE["stress_cost_r"]), shift)
+        floor = sorted(cfg["volume_min"] * t["distance"] * cfg["multiplier"]
+                       for t in parts[False] if t["distance"] > 0)
+        cells[key] = {"key": key, "symbol": cell["symbol"],
+                      "family": key.split(":", 1)[1], "base_family": cell["family"],
+                      "alias": _alias_of(cell), "file": name,
+                      "coinflip_p": cell["fold_A"].get("coinflip_p"),
+                      "pbo_A": cell.get("pbo_A"),
+                      "sources": sources, "tr": tr, "d": days, "sd": sdays,
+                      "minlot_usd": floor[len(floor) // 2] if floor else 0.0}
+    with open(WF_SUMMARY, "wb") as handle:
+        pickle.dump({"cells": cells, "rule": rule_hash(), "end": DATA_END}, handle, protocol=5)
+    print(f"wrote {WF_SUMMARY}: {len(cells)} cells")
+
+
+# --------------------------------------------------------------------------- #
+# the edge: hierarchical empirical Bayes on per-trade Sharpe
+# --------------------------------------------------------------------------- #
+
+def _span(arr, lo, hi):
+    return arr[(arr[:, 0] >= lo) & (arr[:, 0] < hi)] if len(arr) else arr
+
+
+def observed(tr):
+    """(per-trade Sharpe, its noise variance) of a trades array. Mertens: the
+    variance grows with negative skew and fat tails, so a stream carried by a
+    few big winners is not read as precise."""
+    r = tr[:, 1] if len(tr) else np.array([])
+    n = len(r)
+    if n < 3 or r.std() == 0:
+        return 0.0, 1.0
+    s = float(r.mean() / r.std())
+    z = (r - r.mean()) / r.std()
+    skew, kurt = float((z ** 3).mean()), float((z ** 4).mean())
+    return s, max(0.25, 1 - skew * s + (kurt - 1) / 4 * s * s) / n
+
+
+def eb_fit(points):
+    """`points` [(family, s, noise var)] -> the prior: global mean, between-
+    family variance, within-family variance, shrunk family means."""
+    if not points:
+        return {"mu": 0.0, "tb": 0.0, "tw": 1e-6, "fam": {}}
+    s = np.array([p[1] for p in points])
+    v = np.array([p[2] for p in points])
+    mu = float(s.mean())
+    total = max(1e-6, float(s.var() - v.mean()))
+    by = {}
+    for fam, si, vi in points:
+        by.setdefault(fam, []).append((si, vi))
+    means = {f: (float(np.mean([x for x, _ in xs])),
+                 (total + float(np.mean([y for _, y in xs]))) / len(xs))
+             for f, xs in by.items()}
+    spread = float(np.var([m for m, _ in means.values()])) if len(means) > 1 else 0.0
+    tb = max(0.0, spread - float(np.mean([e for _, e in means.values()])))
+    tw = max(1e-6, total - tb)
+    fam = {f: mu + (tb / (tb + e) if tb + e > 0 else 0.0) * (m - mu)
+           for f, (m, e) in means.items()}
+    return {"mu": mu, "tb": tb, "tw": tw, "fam": fam}
+
+
+def posterior(prior, family, s, var):
+    centre = prior["fam"].get(family, prior["mu"])
+    return centre + prior["tw"] / (prior["tw"] + var) * (s - centre)
+
+
+def load_prior():
+    """Every fold-A pick's 2025 result (the export's `_prior.json`): per-trade
+    Sharpe = t / sqrt(n), noise 1/n. Known on 2026-01-01, so valid for every refit."""
+    with open(os.path.join(WF_POOL_DIR, "_prior.json"), encoding="utf-8") as handle:
+        rows = json.load(handle)["cells"]
+    return [(r["family"], r["t"] / math.sqrt(r["trades"]), 1.0 / r["trades"])
+            for r in rows if r.get("t") is not None and (r.get("trades") or 0) >= 10]
+
+
+# --------------------------------------------------------------------------- #
+# the rule at one refit date
+# --------------------------------------------------------------------------- #
+
+def eligible(cells, lo, hi, prior):
+    """Rows that clear the hard gates on days [lo, hi), with shrunk edges,
+    best shrunk Sharpe first."""
+    rows = []
+    for c in cells.values():
+        tr = _span(c["tr"], lo, hi)
+        if len(tr) < RULE["min_trades"]:
+            continue
+        if c["coinflip_p"] is None or c["coinflip_p"] > RULE["max_coinflip_p"]:
+            continue
+        if c["pbo_A"] is not None and c["pbo_A"] > RULE["max_pbo"]:
+            continue
+        sd = _span(c["sd"], lo, hi)
+        if not len(sd) or sd[:, 1].sum() <= 0:
+            continue
+        s, var = observed(tr)
+        post = posterior(prior, c["base_family"], s, var)
+        years = max(0.25, (hi - lo) / 365.25)
+        rows.append({**{k: c[k] for k in ("key", "symbol", "family", "base_family",
+                                          "alias", "file", "minlot_usd")},
+                     "style": c.get("style") or style_of(c["file"]),
+                     "s_obs": round(s, 4), "s_post": round(post, 4),
+                     "keep": float(min(1.0, max(0.0, post / s))) if s > 0 else 0.0,
+                     "sharpe_post": post * math.sqrt(len(tr) / years),
+                     "trades": len(tr)})
+    rows.sort(key=lambda r: -r["sharpe_post"])
+    return [r for r in rows if r["s_post"] > 0]
+
+
+def _daily(cells, key, lo, hi):
+    """{day: pnl} of one cell on [lo, hi)."""
+    return {int(a): float(b) for a, b in _span(cells[key]["d"], lo, hi)}
+
+
+def _corr(a, b):
+    days = sorted(set(a) | set(b))
+    if len(days) < 10:
+        return 0.0
+    x = np.array([a.get(d, 0.0) for d in days])
+    y = np.array([b.get(d, 0.0) for d in days])
+    if x.std() == 0 or y.std() == 0:
+        return 0.0
+    return float(np.corrcoef(x, y)[0, 1])
+
+
+def greedy(rows, n, streams, exclude=()):
+    """Best shrunk Sharpe first, under the buckets and the pairwise gates."""
+    chosen, per_sym, per_fam, per_cls, per_style = [], {}, {}, {}, {}
+    cls_cap = {c: max(1, int(share * n)) for c, share in RULE["asset_share"].items()}
+    style_cap = {s: max(1, int(share * n)) for s, share in RULE["style_share"].items()}
+    for r in rows:
+        if len(chosen) >= n:
+            break
+        if r["key"] in exclude:
+            continue
+        cls = asset_class(r["symbol"])
+        style = r.get("style") or "other"
+        if (per_sym.get(r["symbol"], 0) >= RULE["per_symbol"]
+                or per_fam.get(r["base_family"], 0) >= RULE["per_family"]
+                or per_cls.get(cls, 0) >= cls_cap[cls]
+                or per_style.get(style, 0) >= style_cap[style]):
+            continue
+        mine = streams[r["key"]]
+        if any(_corr(mine, streams[m["key"]]) > RULE["max_corr"]
+               or base.down_rho(mine, streams[m["key"]]) > RULE["max_down_rho"]
+               or base.loss_lift(mine, streams[m["key"]]) > RULE["max_loss_lift"]
+               for m in chosen):
+            continue
+        chosen.append(r)
+        per_sym[r["symbol"]] = per_sym.get(r["symbol"], 0) + 1
+        per_fam[r["base_family"]] = per_fam.get(r["base_family"], 0) + 1
+        per_cls[cls] = per_cls.get(cls, 0) + 1
+        per_style[style] = per_style.get(style, 0) + 1
+    return chosen
+
+
+def _grid(streams, keys, lo, hi):
+    days = np.arange(lo, hi)
+    days = days[(days + 3) % 7 < 5]          # Mon-Fri (epoch day 0 was a Thursday)
+    return days, np.array([[streams[k].get(int(d), 0.0) for k in keys] for d in days]
+                          ).reshape(len(days), len(keys))
+
+
+def _ewma_sd(x, halflife):
+    if not len(x):
+        return 0.0
+    w = 0.5 ** (np.arange(len(x))[::-1] / halflife)
+    m = (w * x).sum() / w.sum()
+    return float(np.sqrt((w * (x - m) ** 2).sum() / w.sum()))
+
+
+def sizing(members, streams, lo, hi, sigma_ref, n_eff_min=None):
+    """Equal risk: k_i = sigma_ref / sigma_i (EWMA daily P&L), times the
+    diversification multiplier from the p90 rolling average correlation
+    (floor 0, cap `dm_cap`), over N_eff = max(N, `n_eff_min`); within `k_bounds`."""
+    keys = [m["key"] for m in members]
+    if not keys:
+        return {}, 1.0, 0.0
+    _, grid = _grid(streams, keys, lo, hi)
+    n = len(keys)
+    rhos, win = [], RULE["corr_window_days"]
+    for start in range(0, max(1, len(grid) - win + 1), max(1, win // 3)):
+        block = grid[start:start + win]
+        live = block[:, block.std(axis=0) > 0]
+        if live.shape[1] >= 2:
+            c = np.corrcoef(live.T)
+            rhos.append(float(c[np.triu_indices(len(c), 1)].mean()))
+    rho = max(0.0, float(np.quantile(rhos, RULE["corr_quantile"]))) if rhos else 0.0
+    n_eff = max(n, RULE["n_eff_min"] if n_eff_min is None else n_eff_min)
+    dm = min(RULE["dm_cap"], 1 / math.sqrt(1 / n + (1 - 1 / n) * rho))
+    lo_k, hi_k = RULE["k_bounds"]
+    k = {}
+    for j, key in enumerate(keys):
+        sd = _ewma_sd(grid[:, j], RULE["ewma_halflife_days"]) or sigma_ref
+        k[key] = float(min(hi_k, max(lo_k, sigma_ref / sd * dm * RULE["n_ref"] / n_eff)))
+    return k, dm, rho
+
+
+def erc_k(members, streams, lo, hi, k_base):
+    """Variant `erc`: equal-risk-contribution weights from the training-window
+    covariance (correlation shrunk 50% toward its average, floor 0), scaled so
+    the book's training-window volatility equals the baseline sizing's."""
+    keys = [m["key"] for m in members]
+    if len(keys) < 2:
+        return k_base
+    _, grid = _grid(streams, keys, lo, hi)
+    sd = grid.std(axis=0)
+    if (sd == 0).any():
+        return k_base
+    corr = np.corrcoef(grid.T)
+    avg = max(0.0, float(corr[np.triu_indices(len(keys), 1)].mean()))
+    corr = 0.5 * corr + 0.5 * (np.full_like(corr, avg) + (1 - avg) * np.eye(len(keys)))
+    cov = corr * np.outer(sd, sd)
+    w = 1 / sd
+    for _ in range(500):
+        rc = w * (cov @ w)
+        w = w * np.sqrt(rc.mean() / rc)
+    kb = np.array([k_base[key] for key in keys])
+    target = math.sqrt(float(kb @ cov @ kb))
+    w = w * target / math.sqrt(float(w @ cov @ w))
+    lo_k, hi_k = RULE["k_bounds"]
+    return {key: float(min(hi_k, max(lo_k, x))) for key, x in zip(keys, w)}
+
+
+def _fits_k(row, k, risk):
+    return row["minlot_usd"] <= RULE["overshoot_max"] * ACCOUNT * ef.RISK_FRACTION * k * risk
+
+
+def build_book(rows, n, risk, streams, lo, hi, sigma_ref):
+    """Greedy members that all fit the minimum lot at `risk`, misfits refilled
+    (membership, never a skipped trade)."""
+    out = set()
+    for _ in range(_refill_rounds()):
+        members = greedy(rows, n, streams, out)
+        k, dm, rho = sizing(members, streams, lo, hi, sigma_ref)
+        if VARIANT == "erc":
+            k = erc_k(members, streams, lo, hi, k)
+        misfit = {m["key"] for m in members if not _fits_k(m, k[m["key"]], risk)}
+        if not misfit:
+            return members, k, dm, rho
+        out |= misfit
+    return [], {}, 1.0, 0.0
+
+
+def _sigma_ref(rows, streams, lo, hi):
+    sds = []
+    for r in rows:
+        _, g = _grid(streams, [r["key"]], lo, hi)
+        sd = _ewma_sd(g[:, 0], RULE["ewma_halflife_days"])
+        if sd > 0:
+            sds.append(sd)
+    return float(np.median(sds)) if sds else 1.0
+
+
+# --------------------------------------------------------------------------- #
+# replays on the real logs
+# --------------------------------------------------------------------------- #
+
+def wf_state(cells, members, k, lo, hi, keep=None):
+    """A `ch.daily_series` state: members' trades entered on/after day `lo` and
+    closed before day `hi`, marking bars from `WARMUP_DAYS` before `lo`. `keep`
+    {key: share} cuts each sleeve's edge (`_dud`)."""
+    first = (lo - WARMUP_DAYS) * base.DAY
+    logs, bars_by, ctx_by, ms, cache = {}, {}, {}, [], {}
+    for m in members:
+        c = cells[m["key"]]
+        series = c["symbol"] if c["alias"] == c["symbol"] else f"{c['symbol']}~off"
+        trades = []
+        for group, logkey in c["sources"]:
+            if group not in cache:
+                with open(os.path.join(WF_GROUP_DIR, group), "rb") as handle:
+                    cache[group] = pickle.load(handle)
+            got = cache[group]
+            alias = next(iter(got["bars"]))
+            # real New York clock (see `load_state`)
+            shift = int(got["ctx"][alias]["cfg"].get("shift_hours") or 0) * 3_600
+            trades += [dict(t, symbol=series, entry_ts=t["entry_ts"] - shift,
+                            exit_ts=t["exit_ts"] - shift) for t in got["logs"][logkey]
+                       if lo * base.DAY <= t["entry_ts"] - shift
+                       and t["exit_ts"] - shift < hi * base.DAY]
+            if series not in bars_by:
+                bars_by[series] = _unshift_bars(got["bars"][alias], shift, first, hi * base.DAY)
+                ctx_by[series] = got["ctx"][alias]
+        if keep is not None:
+            trades = _dud(trades, keep.get(m["key"], 1.0))
+        logs[m["key"]] = trades
+        ms.append({"symbol": c["symbol"], "family": c["family"], "alias": series,
+                   "minlot_usd": c["minlot_usd"]})
+    return {"members": ms, "logs": logs, "bars_by": bars_by, "ctx_by": ctx_by,
+            "scale": dict(k), "start": lo * base.DAY, "end": hi * base.DAY, "clock": "ny",
+            "intrabar": True}
+
+
+def _days_of(state, risk):
+    from sandbox.research import exness_combined_montecarlo as mc
+    from sandbox.research import fundednext_challenge as ch
+    mc._MARKING.clear()
+    return ch.daily_series(state, risk, fixed=True)
+
+
+_WF = {}
+
+
+def _wf_cells():
+    if "cells" not in _WF:
+        with open(WF_SUMMARY, "rb") as handle:
+            _WF["cells"] = pickle.load(handle)["cells"]
+    return _WF["cells"]
+
+
+def _dial_job(job):
+    """One (N, risk) training-window challenge Monte Carlo with shrunk edges
+    and half the symbols at no edge."""
+    from sandbox.research import fundednext_challenge as ch
+    n, risk, members, k, keep, lo, hi, paths = job
+    if not members:
+        return {"n": n, "risk": risk, "pass": -1.0}
+    state = wf_state(_wf_cells(), members, k, lo, hi, keep)
+    rows, _, _ = stressed_paths(state, risk, paths, RULE["mc_dud_share"], 0.0, RULE["mc_draws"])
+    return {"n": n, "risk": risk, "members": len(members), **ch.mc_stats(rows)}
+
+
+def rule_at(t, cells, prior, workers, lo=None):
+    """THE RULE at refit day `t`, reading days [`lo` or WF_START, t) only."""
+    lo = _day(WF_START) if lo is None else lo
+    rows = eligible(cells, lo, t, prior)
+    streams = {r["key"]: _daily(cells, r["key"], lo, t) for r in rows}
+    assert all(max(s, default=lo) < t for s in streams.values()), \
+        "leak: a stream reaches the refit day"
+    sigma_ref = _sigma_ref(rows, streams, lo, t)
+    books = {}
+    for n in RULE["sizes"]:
+        for risk in RULE["risks"]:
+            members, k, dm, rho = build_book(rows, n, risk, streams, lo, t, sigma_ref)
+            books[(n, risk)] = {"members": members, "k": k, "dm": dm, "rho": rho}
+    jobs = [(n, risk, b["members"], b["k"], {m["key"]: m["keep"] for m in b["members"]},
+             lo, t, RULE["mc_paths"]) for (n, risk), b in books.items()]
+    graded = [c for c in _run_local(_dial_job, jobs, None, workers) if c["pass"] >= 0]
+    if VARIANT == "fast":     # daily fails already count as failures here
+        ok = graded
+        score = lambda c: c["within"][FAST_DAYS]  # noqa: E731
+    else:
+        ok = [c for c in graded if c["daily"] <= RULE["max_daily_fail"]
+              and (RULE["max_max_fail"] is None or c["max"] <= RULE["max_max_fail"])]
+        score = lambda c: c["pass"]  # noqa: E731
+    if not ok:
+        return {"t": t, "rows": rows, "book": None, "grid": graded, "sigma_ref": sigma_ref}
+    top = max(score(c) for c in ok)
+    best = min((c for c in ok if score(c) >= top - RULE["pass_tolerance"]),
+               key=lambda c: (c["risk"], -c["n"]))
+    book = books[(best["n"], best["risk"])]
+    return {"t": t, "rows": rows, "grid": graded, "sigma_ref": sigma_ref,
+            "book": {"n": best["n"], "risk": best["risk"], "members": book["members"],
+                     "k": book["k"], "dm": book["dm"], "rho": book["rho"], "mc": best}}
+
+
+def one_over_n(rows, cells, lo, t, risk, sigma_ref):
+    """The benchmark: every eligible sleeve that fits the minimum lot at `risk`,
+    equal risk -- no ranking, no buckets, no correlation gate."""
+    streams = {r["key"]: _daily(cells, r["key"], lo, t) for r in rows}
+    members, k = rows, {}
+    for _ in range(8):
+        k, _, _ = sizing(members, streams, lo, t, sigma_ref, n_eff_min=1)
+        fit = [m for m in members if _fits_k(m, k[m["key"]], risk)]
+        if len(fit) == len(members):
+            break
+        members = fit
+    return members, k
+
+
+# --------------------------------------------------------------------------- #
+# walkforward / wf-final
+# --------------------------------------------------------------------------- #
+
+def _sharpe_days(days):
+    r = np.array([d[0] for d in days])
+    return float(r.mean() / r.std() * math.sqrt(252)) if len(r) > 2 and r.std() > 0 else 0.0
+
+
+def _boot_diff(a, b, reps=2000, block=10, seed=7):
+    """Share of block-bootstrap draws in which `a`'s Sharpe is not above `b`'s."""
+    rng = np.random.default_rng(seed)
+    ra, rb = np.array([d[0] for d in a]), np.array([d[0] for d in b])
+    if len(ra) < 3 or len(rb) < 3:
+        return 1.0
+
+    def draw(r):
+        if len(r) <= block:
+            return r
+        starts = rng.integers(0, len(r) - block, size=len(r) // block + 1)
+        return np.concatenate([r[s:s + block] for s in starts])[:len(r)]
+
+    def sr(r):
+        return r.mean() / r.std() if r.std() > 0 else 0.0
+    worse = sum(sr(draw(ra)) <= sr(draw(rb)) for _ in range(reps))
+    return round(worse / reps, 3)
+
+
+def _quarters():
+    ends = [*REFITS[1:], DATA_END]
+    return [(_day(a), _day(b)) for a, b in zip(REFITS, ends)]
+
+
+def _variant_days(cells, plan, keep_all=None, dud=None):
+    """Joined real-quarter days of the per-quarter books in `plan`
+    [(lo, hi, members, k, risk)]; `keep_all` cuts every edge, `dud` is a set of
+    symbols with none."""
+    out = []
+    for lo, hi, members, k, risk in plan:
+        if not members:
+            continue
+        keep = None
+        if keep_all is not None or dud:
+            keep = {m["key"]: (0.0 if dud and m["symbol"] in dud else
+                               (keep_all if keep_all is not None else 1.0)) for m in members}
+        out += _days_of(wf_state(cells, members, k, lo, hi, keep), risk)
+    return out
+
+
+def _mc(days, paths=REPORT_PATHS, seed=2026):
+    from sandbox.research import fundednext_challenge as ch
+    if len(days) <= ch.MC_BLOCK_DAYS:
+        raise SystemExit("walk-forward: no quarter traded -- nothing to simulate")
+    return ch.mc_stats(ch.mc_paths(days, paths, seed))
+
+
+def _wf_history():
+    if not os.path.exists(WF_LOG):
+        return []
+    with open(WF_LOG, encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def walkforward(workers):
+    from sandbox.research import fundednext_challenge as ch
+    with open(WF_SUMMARY, "rb") as handle:
+        cells = pickle.load(handle)["cells"]
+    _WF["cells"] = cells
+    prior = eb_fit(load_prior())
+    plan, bench, refits, previous, randoms = [], [], [], None, {}
+    for (lo, hi), t_text in zip(_quarters(), REFITS):
+        got = rule_at(lo, cells, prior, workers)
+        book = got["book"]
+        if book is None:
+            print(f"{t_text}: no (N, dial) meets the fail limits -- the quarter sits flat")
+            plan.append((lo, hi, [], {}, 0.0))
+            refits.append({"t": t_text, "book": None})
+            continue
+        members = book["members"]
+        keys = {m["key"] for m in members}
+        kept = len(keys & previous) if previous is not None else None
+        previous = keys
+        plan.append((lo, hi, members, book["k"], book["risk"]))
+        b_members, b_k = one_over_n(got["rows"], cells, _day(WF_START), lo, book["risk"],
+                                    got["sigma_ref"])
+        bench.append((lo, hi, b_members, b_k, book["risk"]))
+        # the same rule with membership in a random order: does the ranking add anything?
+        streams = {r["key"]: _daily(cells, r["key"], _day(WF_START), lo) for r in got["rows"]}
+        for seed in range(RANDOM_SEEDS):
+            shuffled = list(got["rows"])
+            random.Random(seed * 100_003 + lo).shuffle(shuffled)
+            r_members, r_k, _, _ = build_book(shuffled, book["n"], book["risk"], streams,
+                                              _day(WF_START), lo, got["sigma_ref"])
+            randoms.setdefault(seed, []).append((lo, hi, r_members, r_k, book["risk"]))
+        refits.append({"t": t_text, "n": book["n"], "risk": book["risk"],
+                       "members": sorted(keys), "kept_from_last": kept,
+                       "dm": round(book["dm"], 2), "rho_p90": round(book["rho"], 3),
+                       "eligible": len(got["rows"]), "one_over_n": len(b_members),
+                       "train_mc": book["mc"]})
+        print(f"{t_text}: N {book['n']} risk {book['risk']}  eligible {len(got['rows'])}  "
+              f"kept {kept if kept is not None else '-'}  1/N {len(b_members)}", flush=True)
+    rows = {"WF book (real 2026)": _variant_days(cells, plan)}
+    for keep in (0.75, 0.5, 0.25):
+        rows[f"WF edge kept {keep:.0%}"] = _variant_days(cells, plan, keep_all=keep)
+    rows["WF no edge (0%)"] = _variant_days(cells, plan, keep_all=0.0)
+    out = {label: _mc(days) for label, days in rows.items()}
+    symbols = sorted({m["symbol"] for _, _, ms, _, _ in plan for m in ms})
+    draws = RULE["mc_draws"]
+    dud_in = {s: set(random.Random(s).sample(range(draws), round(0.5 * draws)))
+              for s in symbols}
+    stressed = []
+    for d in range(draws):
+        days = _variant_days(cells, plan, dud={s for s in symbols if d in dud_in[s]})
+        stressed += ch.mc_paths(days, REPORT_PATHS // draws, 7000 + d)
+    out["WF sym alive 50%"] = ch.mc_stats(stressed)
+    bench_days = _variant_days(cells, bench)
+    out["1/N (real 2026)"] = _mc(bench_days)
+    out["1/N edge kept 50%"] = _mc(_variant_days(cells, bench, keep_all=0.5))
+    r_pass = sorted(_mc(_variant_days(cells, plan_r), paths=REPORT_PATHS // 2)["pass"]
+                    for plan_r in randoms.values())
+    random_row = {"seeds": len(r_pass), "pass_p10": r_pass[len(r_pass) // 10],
+                  "pass_p50": r_pass[len(r_pass) // 2], "pass_p90": r_pass[9 * len(r_pass) // 10],
+                  "book_beats": round(sum(out["WF book (real 2026)"]["pass"] > x for x in r_pass)
+                                      / len(r_pass), 2)}
+    p_worse = _boot_diff(rows["WF book (real 2026)"], bench_days)
+    sharpe = {"book": round(_sharpe_days(rows["WF book (real 2026)"]), 2),
+              "1/N": round(_sharpe_days(bench_days), 2)}
+    cp = cpcv(cells)
+
+    history = _wf_history()
+    seen = {h["rule"] for h in history}
+    prereg = {rule_hash(v) for v in VARIANTS}
+    clean = seen <= prereg
+    print(f"\nWALK-FORWARD 2026  variant {VARIANT}  rule {rule_hash()}  " + (
+        f"CLEAN (pre-registered; {len(seen | {rule_hash()})} of {len(VARIANTS)} variants walked)"
+        if clean else
+        f"NOT CLEAN: {len(seen - prereg)} unregistered rule(s) were walked forward first"))
+    print("every quarter: members, sizes and dial chosen on days before it; 2026 trades "
+          "on fold-B params (chosen on 2024-2025), 2025 on fold-A (chosen on 2024)")
+    print(f"\nchallenge Monte Carlo on the joined 2026 quarters, {REPORT_PATHS:,} paths, "
+          f"{ch.MC_BLOCK_DAYS}-day blocks")
+    print(MC_HEAD)
+    for label, c in out.items():
+        print(_mc_line(c, label))
+    print(MC_NOTE)
+    print(f"random membership ({random_row['seeds']} seeds, same caps / N / dial / sizing): "
+          f"pass p10/50/90 {random_row['pass_p10']}/{random_row['pass_p50']}/"
+          f"{random_row['pass_p90']}%; the book beats {random_row['book_beats']:.0%} of them")
+    print(f"\nSharpe 2026 (daily, annualised): book {sharpe['book']}  1/N {sharpe['1/N']}"
+          f"  -- the book is NOT better than 1/N in {p_worse:.0%} of block-bootstrap draws")
+    print(f"CPCV ({cp['splits']} splits of 2025-2026, N=15, summed daily P&L, no dial): "
+          f"book Sharpe p10/50/90 {cp['book_p10']}/{cp['book_p50']}/{cp['book_p90']}, "
+          f"1/N {cp['bench_p10']}/{cp['bench_p50']}/{cp['bench_p90']}; "
+          f"book below 1/N in {cp['book_loses']} of splits")
+    for r in refits:
+        print(f"  refit {r['t']}: " + (
+            f"N {r['n']} risk {r['risk']} DM {r['dm']} rho_p90 {r['rho_p90']} "
+            f"eligible {r['eligible']} kept-from-last {r['kept_from_last']}"
+            if r.get("n") else "flat"))
+    history.append({"rule": rule_hash(), "variant": VARIANT, "rule_spec": RULE, "clean": clean,
+                    "random_membership": random_row,
+                    "book_days": [list(map(float, d[:2])) for d in rows["WF book (real 2026)"]],
+                    "run_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                    "montecarlo": out, "sharpe": sharpe, "p_book_not_better": p_worse,
+                    "no_edge_pass": out["WF no edge (0%)"]["pass"], "cpcv": cp,
+                    "refits": refits})
+    with open(WF_LOG, "w", encoding="utf-8") as handle:
+        json.dump(history, handle, indent=2, default=str)
+        handle.write("\n")
+
+
+def cpcv(cells, blocks=8, test=2, embargo=5, n=15):
+    """The rule's selection on summed daily P&L (no dial, no minimum lot) over
+    every `test`-of-`blocks` split of WF_START..DATA_END, `embargo` days dropped
+    either side of each test block; the shrinkage prior refit on each training set."""
+    lo, hi = _day(WF_START), _day(DATA_END)
+    edges = np.linspace(lo, hi, blocks + 1).astype(int)
+    book_s, bench_s, tried = [], [], 0
+    for chosen in itertools.combinations(range(blocks), test):
+        tried += 1
+        tests = [(edges[i], edges[i + 1]) for i in chosen]
+
+        def near(days):
+            mask = np.zeros(len(days), dtype=bool)
+            for a, b in tests:
+                mask |= (days >= a - embargo) & (days < b + embargo)
+            return mask
+        train = {}
+        for key, c in cells.items():
+            train[key] = {**c, **{f: (c[f][~near(c[f][:, 0])] if len(c[f]) else c[f])
+                                  for f in ("tr", "d", "sd")}}
+        pts = [(c["base_family"], *observed(c["tr"])) for c in train.values()
+               if len(c["tr"]) >= 10]
+        rows = eligible(train, lo, hi, eb_fit(pts))
+        if not rows:
+            continue
+        streams = {r["key"]: _daily(train, r["key"], lo, hi) for r in rows}
+        sref = _sigma_ref(rows, streams, lo, hi)
+        members = greedy(rows, n, streams)
+        k, _, _ = sizing(members, streams, lo, hi, sref)
+        kb, _, _ = sizing(rows, streams, lo, hi, sref, n_eff_min=1)
+        days = np.array([d for a, b in tests for d in range(a, b) if (d + 3) % 7 < 5])
+
+        def test_sharpe(keys, weights):
+            pnl = np.zeros(len(days))
+            index = {int(d): i for i, d in enumerate(days)}
+            for key in keys:
+                for day, v in cells[key]["d"]:
+                    i = index.get(int(day))
+                    if i is not None:
+                        pnl[i] += weights[key] * v
+            return float(pnl.mean() / pnl.std() * math.sqrt(252)) if pnl.std() > 0 else 0.0
+        book_s.append(test_sharpe([m["key"] for m in members], k))
+        bench_s.append(test_sharpe([r["key"] for r in rows], kb))
+    if not book_s:
+        return {"splits": f"0/{tried}", "book_p10": None, "book_p50": None, "book_p90": None,
+                "bench_p10": None, "bench_p50": None, "bench_p90": None, "book_loses": None}
+
+    def q(v, p):
+        return round(float(np.quantile(v, p)), 2)
+    return {"splits": f"{len(book_s)}/{tried} with any eligible sleeve",
+            "book_p10": q(book_s, .1), "book_p50": q(book_s, .5), "book_p90": q(book_s, .9),
+            "bench_p10": q(bench_s, .1), "bench_p50": q(bench_s, .5),
+            "bench_p90": q(bench_s, .9),
+            "book_loses": round(sum(a < b for a, b in zip(book_s, bench_s)) / len(book_s), 3)}
+
+
+def wf_final(workers):
+    """The rule at the data end, under the pre-registered decision."""
+    history = _wf_history()
+    if not history or history[-1]["rule"] != rule_hash():
+        raise SystemExit(f"no walk-forward of rule {rule_hash()}; run `walkforward` first")
+    last = history[-1]
+    with open(WF_SUMMARY, "rb") as handle:
+        cells = pickle.load(handle)["cells"]
+    _WF["cells"] = cells
+    t = _day(DATA_END)
+    got = rule_at(t, cells, eb_fit(load_prior()), workers)
+    wf_pass = last["montecarlo"]["WF book (real 2026)"]["pass"]
+    bench_pass = last["montecarlo"]["1/N (real 2026)"]["pass"]
+    floor = last["no_edge_pass"] + RULE["pass_over_no_edge"]
+    beats = last["p_book_not_better"] <= RULE["beat_1n_p"]
+    print(f"decision (pre-registered): book beats 1/N {'YES' if beats else 'NO'} "
+          f"(p {last['p_book_not_better']}); walk-forward pass {wf_pass:.1f}% vs floor "
+          f"{floor:.1f}% (no edge {last['no_edge_pass']:.1f}% + {RULE['pass_over_no_edge']:g})")
+    if got["book"] is None:
+        print("no (N, dial) meets the fail limits at the data end -- nothing written")
+        return
+    risk = got["book"]["risk"]
+    if beats and wf_pass >= floor:
+        kind, members, k = "selected", got["book"]["members"], got["book"]["k"]
+    elif not beats and bench_pass >= floor:
+        kind = "1/N"
+        members, k = one_over_n(got["rows"], cells, _day(WF_START), t, risk, got["sigma_ref"])
+    else:
+        print("neither the book nor 1/N clears the floor -- nothing written")
+        return
+    out = [{"symbol": m["symbol"], "family": m["family"], "alias": m["alias"],
+            "file": m["file"], "k": round(k[m["key"]], 4), "minlot_usd": m["minlot_usd"],
+            "s_post": m["s_post"], "keep": round(m["keep"], 3), "trades": m["trades"]}
+           for m in members]
+    with open(WF_FINAL, "w", encoding="utf-8") as handle:
+        json.dump({"kind": kind, "rule": rule_hash(), "risk": risk, "members": out,
+                   "chosen_on": [WF_START, DATA_END], "walkforward": last},
+                  handle, indent=2, default=str)
+        handle.write("\n")
+    print(f"wrote {WF_FINAL}: {kind} book, {len(out)} sleeves at risk {risk}")
+    print("expect the walk-forward table, not an in-sample one")
+
+
+# --------------------------------------------------------------------------- #
+# selftest: the rule on synthetic noise must find nothing
+# --------------------------------------------------------------------------- #
+
+def selftest():
+    """Pure-noise cells must read as no edge; planted-edge cells must be found.
+    Exercises the shrinkage, gates, greedy, sizing and CPCV (no logs, no dial)."""
+    from sandbox.research.new_cfd_families import pbo, deflated_sharpe
+    rng = np.random.default_rng(11)
+    lo, hi, cut = _day(WF_START), _day(DATA_END), _day(REFITS[0])
+    symbols = ("eurusd", "gbpjpy", "xauusd", "us500", "uk100", "audusd", "usdjpy", "ustec",
+               "nzdusd", "usdcad", "gbpusd", "eurjpy")
+
+    def make(n_cells, edge, tag, fams=20):
+        out = {}
+        for i in range(n_cells):
+            days = np.sort(rng.choice(np.arange(lo, hi), size=int(rng.integers(150, 300)),
+                                      replace=False)).astype(float)
+            r = rng.standard_t(4, size=len(days)) * 0.004 + edge
+            tr = np.column_stack([days, r, r * 22.5 / 0.004])
+            sym = symbols[i % len(symbols)]
+            key = f"{sym}:{tag}{i}@30m"
+            out[key] = {"key": key, "symbol": sym, "family": f"{tag}{i}@30m",
+                        "base_family": f"fam{i % fams}", "alias": sym, "file": key,
+                        "style": ("trend", "mean_reversion", "other")[i % 3],
+                        "coinflip_p": 0.1, "pbo_A": 0.3, "tr": tr, "d": tr[:, [0, 2]],
+                        "sd": tr[:, [0, 2]], "minlot_usd": 0.0}
+        return out
+
+    def run(cells, n=15):
+        pts = [(c["base_family"], *observed(_span(c["tr"], lo, cut))) for c in cells.values()]
+        rows = eligible(cells, lo, cut, eb_fit(pts))
+        streams = {r["key"]: _daily(cells, r["key"], lo, cut) for r in rows}
+        return rows, greedy(rows, n, streams)
+
+    noise = make(400, 0.0, "n")
+    rows, chosen = run(noise)
+    raw = np.mean(sorted(observed(_span(c["tr"], lo, cut))[0] for c in noise.values())[-15:])
+    shrunk = np.mean([m["s_post"] for m in chosen]) if chosen else 0.0
+    after = (np.mean([observed(_span(noise[m["key"]]["tr"], cut, hi))[0] for m in chosen])
+             if chosen else 0.0)
+    print(f"noise: 400 cells -> eligible {len(rows)}, chosen {len(chosen)}; best-15 raw "
+          f"per-trade Sharpe {raw:+.3f} -> shrunk {shrunk:+.3f}; after the refit "
+          f"{after:+.3f} (truth 0)")
+    cp = cpcv(noise)
+    print(f"noise CPCV: {cp['splits']} splits, book Sharpe p10/50/90 {cp['book_p10']}/"
+          f"{cp['book_p50']}/{cp['book_p90']} (truth 0); below 1/N in {cp['book_loses']}")
+    m = rng.standard_normal((300, 104)).astype(np.float32)
+    p_noise = pbo(m)
+    m[:5] += 0.4
+    p_edge = pbo(m)
+    dsr = deflated_sharpe(m[0], m.mean(1) / m.std(1))
+    print(f"PBO: noise {p_noise} (expect ~0.5), with 5 planted edges {p_edge} (expect "
+          f"low); DSR of a planted trial {dsr}")
+    mixed = {**make(380, 0.0, "n"), **make(20, 0.0025, "p")}
+    rows, chosen = run(mixed)
+    found = sum(":p" in m["key"] for m in chosen)
+    print(f"planted: 20 real-edge cells among 400 -> chosen {len(chosen)}, planted {found}")
+    ok = (shrunk < raw / 2 and abs(after) < 0.05
+          and p_noise is not None and 0.3 <= p_noise <= 0.7
+          and p_edge is not None and p_edge < 0.2 and found >= 8)
+    print("SELFTEST", "PASSED" if ok else "FAILED")
+    return ok
+
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", choices=("logs", "_group", "build", "test", "final", "_shared"))
+    parser.add_argument("command", choices=(
+        "selftest", "wf-logs", "_wfgroup", "walkforward", "wf-final",
+        # LEGACY: the oct-21 canon's pipeline (the live book's tools import it)
+        "logs", "_group", "build", "test", "final", "_shared"))
     parser.add_argument("--spec", help="_shared: the pushed job list (the Mac's side of `_shared`)")
     parser.add_argument("--workers", type=int, default=default_workers())
-    parser.add_argument("--symbol", help="_group: the child's symbol")
-    parser.add_argument("--bar", type=int, help="_group: the child's bar minutes")
+    parser.add_argument("--symbol", help="_group / _wfgroup: the child's symbol")
+    parser.add_argument("--bar", type=int, help="_group / _wfgroup: the child's bar minutes")
     parser.add_argument("--fresh", action="store_true", help="logs: drop resumable groups")
     parser.add_argument("--paths", type=int, default=10_000,
-                        help="Monte Carlo paths per dial (sealed with the rule)")
+                        help="legacy build: Monte Carlo paths per dial (sealed with the rule)")
     args = parser.parse_args()
-    if args.command == "logs":
+    if args.command == "selftest":
+        raise SystemExit(0 if selftest() else 1)
+    if args.command == "wf-logs":
+        wf_logs(args.workers)
+    elif args.command == "_wfgroup":
+        _wf_one_group(args.symbol, args.bar)
+    elif args.command == "walkforward":
+        walkforward(args.workers)
+    elif args.command == "wf-final":
+        wf_final(args.workers)
+    elif args.command == "logs":
         pool_logs(args.workers, _stamp(LOG_START), ef.OOS_END, args.fresh)
     elif args.command == "_group":
         _one_group(args.symbol, args.bar)

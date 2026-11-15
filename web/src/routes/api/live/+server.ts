@@ -1,5 +1,5 @@
 import { json } from '@sveltejs/kit';
-import { activeAccounts } from '#lib/server/accounts.ts';
+import { accountTicks, activeAccounts } from '#lib/server/accounts.ts';
 import { liveTail, symbolTable } from '#lib/server/bars.ts';
 import { openPositions } from '#lib/server/positions.ts';
 import { internetMbps, measureWhileOpen } from '#lib/server/speed.ts';
@@ -9,7 +9,7 @@ import type { RequestHandler } from './$types';
 // POLLED, NOT STREAMED. This used to be a server-sent event stream, but
 // Cloudflare quick tunnels (trycloudflare.com) do not pass server-sent events:
 // through the tunnel not one byte arrived in 40 seconds, so the dashboard never
-// updated from outside. The page now asks about once a second.
+// updated from outside. The page now asks several times a second.
 
 // A symbol stays watched (the live candle script keeps publishing it), and the
 // speed test keeps running, until no poll has asked for it for this long.
@@ -39,8 +39,10 @@ shared.__liveSweep = setInterval(() => {
 }, 1000);
 shared.__liveSweep.unref();
 
-// /api/live?symbols=USTEC,EURUSD: accounts, positions, and the previous and
-// forming candle per symbol on screen (one per chart in the layout).
+// /api/live?symbols=USTEC,EURUSD[&full=1]: positions, the previous and forming
+// candle per symbol on screen, and per account its balance and equity. With
+// full=1 (every few seconds) the whole accounts instead: strategies, stats and
+// equity candles, ~15 KB that barely change, so the fast polls stay small.
 export const GET: RequestHandler = async ({ url }) => {
 	const symbols = [
 		...new Set(
@@ -53,9 +55,10 @@ export const GET: RequestHandler = async ({ url }) => {
 	symbols.forEach((s) => hold(s, () => watch(s)));
 	hold('', measureWhileOpen);
 	const tails = await Promise.all(symbols.map((s) => liveTail(symbolTable(s)!)));
+	const full = url.searchParams.get('full') === '1';
 	return json(
 		{
-			accounts: activeAccounts(),
+			...(full ? { accounts: activeAccounts() } : { ticks: accountTicks() }),
 			positions: openPositions(),
 			candles: Object.fromEntries(symbols.map((s, i) => [s, tails[i]])),
 			mbps: internetMbps()

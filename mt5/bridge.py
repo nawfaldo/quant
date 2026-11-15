@@ -431,9 +431,11 @@ def send_deal(
 
 
 def uses_hand() -> bool:
-    """FundedNext orders are placed by driving the terminal window, not order_send."""
+    """Prop-firm orders are placed by driving the terminal window, not order_send:
+    FundedNext, and The5ers (FivePercentOnline) since 2026-11-08."""
     info = mt5.account_info()
-    return info is not None and "fundednext" in str(info.server).casefold()
+    server = str(info.server).casefold() if info is not None else ""
+    return "fundednext" in server or "fivepercent" in server
 
 
 #: How long a hand order the window reported as failed is still looked for at

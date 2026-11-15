@@ -44,7 +44,7 @@ use crate::strategies::cfd::Book;
 /// Everything between the runtime deciding and MT5 executing, in seconds.
 /// `fill_models.exness.BRIDGE_QUEUE_SECONDS`: 0.25s store poll, 0.13s bridge
 /// poll, ~0.6s of HTTP and `order_send`.
-const BRIDGE_QUEUE_SECONDS: f64 = 1.0;
+pub(crate) const BRIDGE_QUEUE_SECONDS: f64 = 1.0;
 
 /// The candle every family sleeve trades, and so the exit's first term.
 /// `bar_seconds` in the Python reads it off the context bars; every sleeve this
@@ -61,7 +61,7 @@ const FRESH_SECONDS: i64 = 60;
 /// deciding table is Dukascopy for FX and the index/oil CFDs, Binance for the
 /// crypto, and Exness's own feed for aluminium; an unlisted market is on the
 /// Dukascopy path, as it is in the Python.
-fn feed_lag_seconds(market: &str) -> f64 {
+pub(crate) fn feed_lag_seconds(market: &str) -> f64 {
     match market {
         "ethusd" | "btc" => 2.0,
         "xalusd" => 5.0,
@@ -154,6 +154,10 @@ fn fundednext_source(market: &str) -> Option<(&'static str, f64)> {
 fn broker_source(market: &str, book: Book) -> Option<(String, f64)> {
     match book {
         Book::Exness => Some((broker_table(market)?, point_size(market)?)),
+        Book::The5ers => {
+            let (broker, point) = crate::strategies::the5ers::nov_08_2026::contracts::broker_source(market)?;
+            Some((format!("the5ers_{broker}_1m"), point))
+        }
         Book::FundedNext => {
             let (broker, point) = fundednext_source(market)?;
             Some((format!("fundednext_{broker}_1m"), point))
@@ -178,16 +182,44 @@ pub fn fundednext_closed(broker: &str) -> Option<(i64, i64)> {
     }
 }
 
+/// `cfd_families.CRYPTO_NAMES`.
+const CRYPTO_NAMES: [&str; 10] = [
+    "btcusd", "ethusd", "ltcusd", "solusd", "xrpusd", "dogusd", "dogeusd", "btceur", "etheur", "ethbtc",
+];
+
+/// `cfd_families._is_fx_pair`: six letters, not gold/silver, not crypto.
+pub fn is_fx_pair(symbol: &str) -> bool {
+    symbol.len() == 6
+        && symbol.bytes().all(|b| b.is_ascii_alphabetic())
+        && symbol != "xauusd"
+        && symbol != "xagusd"
+        && !CRYPTO_NAMES.contains(&symbol)
+}
+
+/// `cfd_families.the5ers_closed`: the New York minutes The5ers takes no order
+/// on `broker` (lower case) -- FX 16:55-17:05, crypto 16:50-17:05, everything
+/// else 16:50-18:05 (measured 2026-11-07).
+pub fn the5ers_closed(broker: &str) -> (i64, i64) {
+    if CRYPTO_NAMES.contains(&broker) {
+        (16 * 60 + 50, 17 * 60 + 5)
+    } else if is_fx_pair(broker) {
+        (16 * 60 + 55, 17 * 60 + 5)
+    } else {
+        (16 * 60 + 50, 18 * 60 + 5)
+    }
+}
+
 /// Whether a broker minute table takes orders at `ny_seconds` (New York wall
-/// clock): false only inside a FundedNext table's `fundednext_closed` window.
+/// clock): false only inside a prop firm table's no-order window.
 pub fn broker_trades_at(table: &str, ny_seconds: i64) -> bool {
-    let Some(broker) = table
-        .strip_prefix("fundednext_")
-        .and_then(|rest| rest.strip_suffix("_1m"))
-    else {
-        return true;
+    let closed = if let Some(broker) = table.strip_prefix("the5ers_").and_then(|rest| rest.strip_suffix("_1m")) {
+        Some(the5ers_closed(broker))
+    } else if let Some(broker) = table.strip_prefix("fundednext_").and_then(|rest| rest.strip_suffix("_1m")) {
+        fundednext_closed(broker)
+    } else {
+        None
     };
-    let Some((start, end)) = fundednext_closed(broker) else {
+    let Some((start, end)) = closed else {
         return true;
     };
     let minute = ny_seconds.div_euclid(60).rem_euclid(1_440);
@@ -246,6 +278,26 @@ pub struct MarketFills {
     /// A shifted market's candles run `shift_hours` ahead of New York and its
     /// broker table does not (`fill_models.exness.clock_offset`).
     offset: i64,
+    /// The5ers only: the related red-folder stamps (NY wall clock) inside whose
+    /// +-2 min window no order executes (`the5ers_combined_strategies._news_guard`).
+    news: Vec<i64>,
+}
+
+/// `BROKERS['the5ers']["m1_spread_lift_points"]`: points added to the M1
+/// spread column (the minute's MINIMUM) to reach the tick median.
+fn the5ers_spread_lift(broker: &str) -> f64 {
+    match broker {
+        "cadjpy" | "dax40" | "eurjpy" | "eurnzd" | "gbpjpy" | "nas100" | "xaueur" | "xauusd"
+        | "xbrusd" | "xtiusd" | "dogusd" => 1.0,
+        "xagusd" => 2.0,
+        "xpdusd" => 60.0,
+        "xptusd" => 23.0,
+        "btcusd" => 43.0,
+        "btceur" => 293.0,
+        "ltcusd" => 430.0,
+        "xrpusd" => 12.0,
+        _ => 0.0,
+    }
 }
 
 impl MarketFills {
@@ -272,10 +324,17 @@ impl MarketFills {
         let mut stamps = Vec::with_capacity(rows.len());
         let mut opens = Vec::with_capacity(rows.len());
         let mut spread_bp = Vec::with_capacity(rows.len());
+        // The5ers' raw majors quote bid == ask: a zero spread is a real quote
+        // there (`zero_spread_quotes`), and the M1 column is lifted to the tick
+        // median.
+        let the5ers = table.strip_prefix("the5ers_").and_then(|rest| rest.strip_suffix("_1m"));
+        let lift = the5ers.map(the5ers_spread_lift).unwrap_or(0.0);
         for (ts, open, close, spread) in rows {
-            if !(open > 0.0 && close > 0.0 && spread > 0.0) {
+            let spread_ok = if the5ers.is_some() { spread >= 0.0 } else { spread > 0.0 };
+            if !(open > 0.0 && close > 0.0 && spread_ok) {
                 continue;
             }
+            let spread = spread + lift;
             // Quoted but taking no order (`broker_trades_at`): no fill here.
             if !broker_trades_at(table, ts) {
                 continue;
@@ -301,6 +360,7 @@ impl MarketFills {
             exit_delay: whole_seconds(BAR_SECONDS + lag + BRIDGE_QUEUE_SECONDS),
             lag: lag + BRIDGE_QUEUE_SECONDS,
             offset: shift_hours * 3_600,
+            news: if the5ers.is_some() { crate::backtest::news::related_events(market) } else { Vec::new() },
         }
     }
 
@@ -370,29 +430,57 @@ impl MarketFills {
             .map(|index| self.spread_bp[index])
     }
 
-    /// `price_by_bar_1m` at the entry delay.
+    /// `price_by_bar_1m` at the entry delay. At The5ers an entry executing in
+    /// a related news window is no fill (`_news_guard` removes its key).
     pub fn entry(&self, ts: i64, open: f64) -> Option<f64> {
+        if self.news_blocks(ts, self.lag) {
+            return None;
+        }
         self.moved(ts, open, self.entry_delay)
+    }
+
+    /// Whether an order for the candle `ts` (sleeve clock) executing `delay`
+    /// seconds into it lands in a related news window.
+    fn news_blocks(&self, ts: i64, delay: f64) -> bool {
+        !self.news.is_empty() && crate::backtest::news::defer((ts - self.offset) as f64 + delay, &self.news).0
+    }
+
+    /// A market exit at `delay` after the candle `ts`; at The5ers one landing in
+    /// a news window is deferred to the window's end and priced there, as the
+    /// fill model prices a delay (`_news_guard`).
+    fn exit_at(&self, ts: i64, open: f64, delay: f64) -> Option<f64> {
+        if !self.news.is_empty() {
+            let at = (ts - self.offset) as f64 + delay;
+            let (hit, later) = crate::backtest::news::defer(at, &self.news);
+            if hit {
+                let price = self.moved(ts, open, whole_seconds(delay))?;
+                let a = self.minute_at(at.floor() as i64)?;
+                let b = self.minute_at(later.floor() as i64)?;
+                let (pa, pb) = (self.opens[a], self.opens[b]);
+                return (pa > 0.0 && pb > 0.0).then(|| price * pb / pa);
+            }
+        }
+        self.moved(ts, open, whole_seconds(delay))
     }
 
     /// `price_by_bar_1m` at the exit delay, keyed on the candle the exit fired
     /// on and applied whatever the reason -- stop, target, session or clock.
     pub fn exit(&self, ts: i64, open: f64) -> Option<f64> {
-        self.moved(ts, open, self.exit_delay)
+        self.exit_at(ts, open, self.exit_delay as f64)
     }
 
     /// `exit`, for a sleeve whose candle is `bar_seconds` long:
     /// `exit_delay_seconds` is one WHOLE bar of the sleeve's own size plus the
     /// lag and the queue.
     pub fn exit_after(&self, ts: i64, open: f64, bar_seconds: i64) -> Option<f64> {
-        self.moved(ts, open, whole_seconds(bar_seconds as f64 + self.lag))
+        self.exit_at(ts, open, bar_seconds as f64 + self.lag)
     }
 
-    /// A FundedNext rollover flatten sent on the CLOCK `lead` seconds before its
+    /// A prop firm rollover flatten sent on the CLOCK `lead` seconds before its
     /// candle ends (`cfd_families.FLATTEN_LEAD_SECONDS`): `price_by_bar_1m` at
     /// `max(0, bar - lead) + queue` -- no feed lag, it waits on no bar.
     pub fn flatten_after(&self, ts: i64, open: f64, bar_seconds: i64, lead: i64) -> Option<f64> {
-        self.moved(ts, open, whole_seconds((bar_seconds - lead).max(0) as f64 + BRIDGE_QUEUE_SECONDS))
+        self.exit_at(ts, open, (bar_seconds - lead).max(0) as f64 + BRIDGE_QUEUE_SECONDS)
     }
 
     fn moved(&self, ts: i64, open: f64, delay: i64) -> Option<f64> {
@@ -412,6 +500,9 @@ impl MarketFills {
 /// asks this for the 30-minute buckets its sizing throttle reads.
 impl crate::strategies::cfd::BrokerQuotes for MarketFills {
     fn fill_minute(&self, minute: i64) -> Option<bool> {
+        if !self.news.is_empty() && crate::backtest::news::defer(minute as f64 + self.lag, &self.news).0 {
+            return Some(false);
+        }
         Some(self.minute_at(minute).is_some() && self.minute_at(minute + self.entry_delay).is_some())
     }
 

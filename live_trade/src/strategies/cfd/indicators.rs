@@ -2894,3 +2894,91 @@ impl Amihud {
         }
     }
 }
+
+/// `exness_indicators.adx_dmi`: Wilder's `(+DI, -DI, ADX)`, inclusive of this
+/// bar. +/-DI from the bar after the first `period` (Wilder sums, then the
+/// recursive smoothing); ADX the mean of the first `period` DX readings, then
+/// Wilder's recursion.
+pub(crate) struct AdxDmi {
+    period: usize,
+    index: usize,
+    previous: Option<(f64, f64, f64)>,
+    tr_sum: f64,
+    up_sum: f64,
+    down_sum: f64,
+    dx: Vec<f64>,
+    smoothed: Option<f64>,
+    pub(crate) plus: Option<f64>,
+    pub(crate) minus: Option<f64>,
+    pub(crate) adx: Option<f64>,
+}
+
+impl AdxDmi {
+    pub(crate) fn new(period: usize) -> Self {
+        Self {
+            period,
+            index: 0,
+            previous: None,
+            tr_sum: 0.0,
+            up_sum: 0.0,
+            down_sum: 0.0,
+            dx: Vec::new(),
+            smoothed: None,
+            plus: None,
+            minus: None,
+            adx: None,
+        }
+    }
+
+    pub(crate) fn push(&mut self, high: f64, low: f64, close: f64) {
+        let index = self.index;
+        self.index += 1;
+        let Some((ph, pl, pc)) = self.previous.replace((high, low, close)) else {
+            return;
+        };
+        // Python leaves every reading None at an index it did not write.
+        self.plus = None;
+        self.minus = None;
+        self.adx = None;
+        let period = self.period;
+        let (up, down) = (high - ph, pl - low);
+        let up_move = if up > down && up > 0.0 { up } else { 0.0 };
+        let down_move = if down > up && down > 0.0 { down } else { 0.0 };
+        let truth = (high - low).max((high - pc).abs()).max((low - pc).abs());
+        if index <= period {
+            self.tr_sum += truth;
+            self.up_sum += up_move;
+            self.down_sum += down_move;
+            if index < period {
+                return;
+            }
+        } else {
+            self.tr_sum += truth - self.tr_sum / period as f64;
+            self.up_sum += up_move - self.up_sum / period as f64;
+            self.down_sum += down_move - self.down_sum / period as f64;
+        }
+        if self.tr_sum <= 0.0 {
+            return;
+        }
+        let pdi = 100.0 * self.up_sum / self.tr_sum;
+        let mdi = 100.0 * self.down_sum / self.tr_sum;
+        self.plus = Some(pdi);
+        self.minus = Some(mdi);
+        let total = pdi + mdi;
+        self.dx.push(if total > 0.0 { 100.0 * (pdi - mdi).abs() / total } else { 0.0 });
+        let count = self.dx.len();
+        if count == period {
+            let mean = self.dx.iter().sum::<f64>() / period as f64;
+            self.smoothed = Some(mean);
+            self.adx = Some(mean);
+        } else if count > period {
+            let next = (self.smoothed.unwrap_or(0.0) * (period as f64 - 1.0) + self.dx[count - 1]) / period as f64;
+            self.smoothed = Some(next);
+            self.adx = Some(next);
+            // only the last reading is ever needed again
+            if count > 2 * period {
+                self.dx.drain(..count - period - 1);
+            }
+        }
+    }
+}

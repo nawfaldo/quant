@@ -225,7 +225,7 @@ fn replay_stream_with(
     let mut engine = FamilyEngine::new(fixture.sleeve, 0.01);
     engine.unfillable = fixture.unfillable.clone();
     // A fixture is Python's own run: FundedNext cells replay it on canon rules.
-    engine.canon_replay = fixture.sleeve.book() == Book::FundedNext;
+    engine.canon_replay = fixture.sleeve.book().is_prop();
     if early {
         engine.enable_early_fills();
     }

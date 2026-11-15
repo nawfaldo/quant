@@ -1,153 +1,315 @@
 <script lang="ts">
-	import ChartPane from '#lib/components/ChartPane.svelte';
-	import LayoutIcon from '#lib/components/LayoutIcon.svelte';
-	import LiquidGlass from '#lib/components/LiquidGlass.svelte';
-	import AccountView from '#lib/components/AccountView.svelte';
-	import cornerIcon from '#lib/icons/corner.png';
-	import cornerHoverIcon from '#lib/icons/corner-hover.png';
-	import ActiveAccounts from '#lib/components/ActiveAccounts.svelte';
-	import OpenPositions from '#lib/components/OpenPositions.svelte';
-	import type { Account } from '#lib/server/accounts.ts';
-	import type { Bar } from '#lib/server/bars.ts';
-	import type { Position } from '#lib/server/positions.ts';
-	import { untrack } from 'svelte';
-	import { page } from '$app/state';
-	import { scale } from 'svelte/transition';
+	import { login } from '#lib/slide.ts';
+	import { preloadCode } from '$app/navigation';
+	import { onMount } from 'svelte';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
+	let showIp = $state(false);
 
-	// Starts with the server-rendered values, then follows the live stream.
-	type Live = { accounts: Account[]; positions: Position[]; candles: Record<string, Bar[]>; mbps: number | null };
-	let live = $state<Live | null>(null);
-	const accounts = $derived(live?.accounts ?? data.accounts);
-	const positions = $derived(live?.positions ?? data.positions);
+	// Blank white page with a hidden login: type the name, Enter, type the password, Enter.
+	// Nothing is shown. Delete starts over, Backspace removes a letter; a wrong pair also starts over.
+	let buf = '';
+	let name: string | null = null;
+	let busy = false;
 
-	// Chart layouts: charts per row, top to bottom. 1 to 6 charts.
-	const LAYOUTS = [[1], [2], [3], [2, 2], [3, 2], [3, 3]];
-	let layout = $state(untrack(() => data.layout));
-	let layoutOpen = $state(false);
-	let layoutPicker: HTMLElement;
-	let chartsEl = $state<HTMLElement>(); // all charts, which the layout picker's glass refracts
+	const reset = () => {
+		buf = '';
+		name = null;
+	};
 
-	// One symbol per chart slot; slots beyond the layout keep their symbol for
-	// when the layout grows again.
-	let symbols = $state(untrack(() => data.slots.map((s) => s.symbol)));
+	const submit = async () => {
+		const text = buf;
+		buf = '';
+		if (!text || busy) return;
+		if (name === null) {
+			name = text;
+			return;
+		}
+		const n = name;
+		name = null;
+		busy = true;
+		try {
+			const res = await fetch('/api/login', {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ name: n, pass: text })
+			});
+			if ((await res.json()).ok) await login();
+		} catch {
+			// offline: nothing to show
+		} finally {
+			busy = false;
+		}
+	};
 
-	// Choices are saved to web.db so a refresh restores them.
-	const save = (body: object) =>
-		fetch('/api/chart-layout', {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify(body)
-		});
-	const shownCount = $derived(LAYOUTS[layout].reduce((n, c) => n + c, 0));
+	const onkey = (e: KeyboardEvent) => {
+		if (e.ctrlKey || e.metaKey || e.altKey) return;
+		if (e.key === 'Enter') submit();
+		else if (e.key === 'Delete') reset();
+		else if (e.key === 'Backspace') buf = buf.slice(0, -1);
+		else if (e.key.length === 1) buf += e.key;
+		else return;
+		e.preventDefault();
+	};
 
-	// Poll for every symbol on screen about once a second; restarts when that set
-	// changes. Polled because the Cloudflare tunnel does not pass server-sent events.
-	const POLL_MS = 1000;
-	const streamKey = $derived([...new Set(symbols.slice(0, shownCount))].sort().join(','));
-	$effect(() => {
-		const key = streamKey;
-		let stopped = false;
-		let timer: ReturnType<typeof setTimeout>;
-		const poll = async () => {
-			try {
-				const res = await fetch(`/api/live?symbols=${key}`, { cache: 'no-store' });
-				if (res.ok && !stopped) live = await res.json();
-			} catch {
-				// offline or the server restarting: try again next tick
-			}
-			if (!stopped) timer = setTimeout(poll, POLL_MS);
-		};
-		poll();
-		return () => {
-			stopped = true;
-			clearTimeout(timer);
-		};
+	// /chart is ~120 modules (three.js, charts); fetch its code early so the login only waits for data.
+	onMount(() => {
+		const t = setTimeout(() => preloadCode('/chart').catch(() => {}), 500);
+		return () => clearTimeout(t);
 	});
 </script>
 
-<svelte:window
-	onpointerdown={(e) => layoutOpen && !layoutPicker.contains(e.target as Node) && (layoutOpen = false)}
-	onkeydown={(e) => e.key === 'Escape' && (layoutOpen = false)}
-/>
+<svelte:window onkeydown={onkey} />
 
-<main class="flex h-screen flex-col">
-	<!-- The charts, laid out in rows, touching each other. -->
-	<section bind:this={chartsEl} class="flex min-h-0 flex-[2] flex-col">
-		{#each LAYOUTS[layout] as count, r (r)}
-			<div class="flex min-h-0 flex-1">
-				{#each Array(count) as _, c (c)}
-					{@const slot = LAYOUTS[layout].slice(0, r).reduce((n, k) => n + k, 0) + c}
-					<div class="min-w-0 flex-1">
-						<ChartPane
-							bind:symbol={symbols[slot]}
-							corner={slot !== 0}
-							initialMinutes={data.slots[slot].minutes}
-							initialBars={slot === 0 ? data.bars : undefined}
-							onchange={(symbol, minutes) => save({ slot, symbol, minutes })}
-							live={live?.candles[symbols[slot]] ?? []}
-							{positions}
-						/>
-					</div>
-				{/each}
+<div class="cf">
+	<header class="wrap hd">
+		<h1>Error 522 <small>Ray ID: {data.ray} &bull; {data.time}</small></h1>
+		<h2>Connection timed out</h2>
+	</header>
+
+	<section class="band">
+		<div class="wrap trio">
+			<div class="node">
+				<span class="ico">
+					<svg viewBox="0 0 100 80" aria-hidden="true"><rect x="4" y="6" width="92" height="68" rx="6" fill="#999" /><rect x="10" y="20" width="80" height="48" fill="#fff" /><circle cx="13" cy="13" r="2.5" fill="#fff" /><circle cx="21" cy="13" r="2.5" fill="#fff" /><circle cx="29" cy="13" r="2.5" fill="#fff" /></svg>
+					<i class="ok"></i>
+				</span>
+				<span class="who">You</span>
+				<span class="what">Browser</span>
+				<span class="st ok">Working</span>
 			</div>
-		{/each}
-	</section>
-	<section class="relative flex min-h-0 flex-[1] bg-[#181818]">
-		<!-- Display only for now: none of these buttons does anything yet. -->
-		<!-- Proportions from the design: text, arrow and grid are about 10, 11 and
-		     16px tall, 22px apart (16px gap + the arrow image's 6px margin). -->
-		<div class="absolute top-3 right-3 z-10 flex items-center gap-4">
-			<!-- Internet download speed, from a speed test every 5 minutes. -->
-			<span class="text-sm leading-none font-light text-white" title="Internet download speed">
-				{live?.mbps != null ? `${live.mbps.toFixed(live.mbps < 10 ? 1 : 0)} Mbps` : '— Mbps'}
-			</span>
-			<!-- Chart layout: the button shows the current one; the picker opens above it. -->
-			<div bind:this={layoutPicker} class="relative flex">
-				<button
-					type="button"
-					aria-label="Chart layout"
-					aria-expanded={layoutOpen}
-					onclick={() => (layoutOpen = !layoutOpen)}
-					class="flex cursor-pointer"
-				>
-					<LayoutIcon rows={LAYOUTS[layout]} />
-				</button>
-				{#if layoutOpen}
-					<!-- Opens from bigger and solidifies to size; closing dissolves back out to bigger. -->
-					<div transition:scale={{ start: 1.15, duration: 70 }} class="absolute right-0 bottom-full z-30 mb-3 origin-bottom-right">
-						<LiquidGlass source={chartsEl} hoverable={false} class="grid w-max grid-cols-3 gap-1 rounded-[18px] p-2">
-							{#each LAYOUTS as rows, i (i)}
-								<button
-									type="button"
-									aria-label="{rows.reduce((n, k) => n + k, 0)} charts"
-									onclick={() => ((layout = i), (layoutOpen = false), save({ layout: i }))}
-									class="flex h-9 w-9 cursor-pointer items-center justify-center rounded-lg hover:bg-white/10 {i === layout ? 'bg-white/15' : ''}"
-								>
-									<LayoutIcon {rows} />
-								</button>
-							{/each}
-						</LiquidGlass>
-					</div>
-				{/if}
+			<div class="node">
+				<span class="ico">
+					<svg viewBox="0 0 120 80" aria-hidden="true"><path d="M30 72a22 22 0 0 1-2-44 30 30 0 0 1 57-6 24 24 0 0 1 7 50z" fill="#999" /></svg>
+					<i class="ok"></i>
+				</span>
+				<span class="who">Jakarta</span>
+				<span class="what">Cloudflare</span>
+				<span class="st ok">Working</span>
+			</div>
+			<div class="node">
+				<span class="ico">
+					<svg viewBox="0 0 100 80" aria-hidden="true"><path d="M16 10h68l12 34v26a4 4 0 0 1-4 4H8a4 4 0 0 1-4-4V44z" fill="#999" /><rect x="10" y="50" width="80" height="16" rx="2" fill="#777" /><circle cx="78" cy="58" r="3" fill="#ccc" /><circle cx="68" cy="58" r="3" fill="#ccc" /></svg>
+					<i class="err"></i>
+				</span>
+				<span class="who">ariyanto.cloud</span>
+				<span class="what">Host</span>
+				<span class="st err">Error</span>
 			</div>
 		</div>
-		<!-- Both images are anchored to the corner, so the larger hover one grows out of it. -->
-		<button type="button" aria-label="Resize" class="group absolute right-2 bottom-0 z-10 flex cursor-pointer items-end justify-end">
-			<img src={cornerIcon} alt="" class="block h-8 w-8 group-hover:hidden" />
-			<img src={cornerHoverIcon} alt="" class="hidden h-[35px] w-[35px] group-hover:block" />
-		</button>
-		<div class="w-1/5 min-w-64">
-			<ActiveAccounts {accounts} {positions} />
+		<div class="wrap pointer"><span></span></div>
+	</section>
+
+	<section class="wrap info">
+		<div>
+			<h2>What happened?</h2>
+			<p>The initial connection between Cloudflare's network and the origin web server timed out. As a result, the web page can not be displayed.</p>
 		</div>
-		<div class="w-1/2 min-w-0">
-			<OpenPositions {positions} />
+		<div>
+			<h2>What can I do?</h2>
+			<h5>If you're a visitor of this website:</h5>
+			<p>Please try again in a few minutes.</p>
+			<h5>If you're the owner of this website:</h5>
+			<p>Contact your hosting provider letting them know your web server is not completing requests. An Error 522 means that the request was able to connect to your web server, but that the request didn't finish. The most likely cause is that something on your server is hogging resources. <a href="/">Additional troubleshooting information here.</a></p>
 		</div>
 	</section>
-	{#if page.state.account}
-		<!-- Shallow-routed: the chart page stays mounted underneath, so nothing reloads. -->
-		<AccountView {accounts} close={() => history.back()} />
-	{/if}
-</main>
+
+	<footer class="wrap ft">
+		<span>Cloudflare Ray ID: <b>{data.ray}</b></span>
+		<span class="dot">&bull;</span>
+		<span>Your IP: {#if showIp}{data.ip}{:else}<button type="button" onclick={() => (showIp = true)}>Click to reveal</button>{/if}</span>
+		<span class="dot">&bull;</span>
+		<span>Performance &amp; security by <a href="/">Cloudflare</a></span>
+	</footer>
+</div>
+
+<style>
+	.cf {
+		min-height: 100vh;
+		background: #fff;
+		color: #404040;
+		font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+		-webkit-font-smoothing: antialiased;
+	}
+	.wrap {
+		max-width: 960px;
+		margin: 0 auto;
+		padding: 0 20px;
+		box-sizing: border-box;
+	}
+	.hd {
+		padding-top: 32px;
+		padding-bottom: 24px;
+	}
+	h1 {
+		margin: 0;
+		font-size: 60px;
+		font-weight: 300;
+		line-height: 1.1;
+	}
+	h1 small {
+		font-size: 15px;
+		font-weight: 400;
+		font-family: Consolas, 'Courier New', monospace;
+		color: #404040;
+		vertical-align: middle;
+	}
+	.hd h2 {
+		margin: 4px 0 0;
+		font-size: 30px;
+		font-weight: 300;
+		color: #999;
+	}
+	.band {
+		position: relative;
+		background: linear-gradient(#dedede, #ebebeb 3%, #ebebeb 97%, #dedede);
+		padding: 40px 0 0;
+	}
+	.trio {
+		display: grid;
+		grid-template-columns: repeat(3, 1fr);
+		text-align: center;
+	}
+	.node {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+	}
+	.ico {
+		position: relative;
+		width: 120px;
+		height: 80px;
+		margin-bottom: 20px;
+	}
+	.ico svg {
+		width: 100%;
+		height: 100%;
+	}
+	.ico i {
+		position: absolute;
+		left: 50%;
+		bottom: -10px;
+		width: 44px;
+		height: 44px;
+		margin-left: -22px;
+		border-radius: 50%;
+		border: 4px solid #ebebeb;
+		box-sizing: border-box;
+	}
+	.ico i.ok {
+		background: #9bca3e url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M6 12.5l4 4 8-9' fill='none' stroke='%23fff' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 26px no-repeat;
+	}
+	.ico i.err {
+		background: #bd2426 url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M7 7l10 10M17 7L7 17' stroke='%23fff' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E") center / 22px no-repeat;
+	}
+	.who {
+		font-size: 15px;
+		color: #404040;
+	}
+	.what {
+		font-size: 24px;
+		font-weight: 300;
+		color: #999;
+		line-height: 1.3;
+	}
+	.st {
+		font-size: 24px;
+		font-weight: 300;
+		line-height: 1.3;
+	}
+	.st.ok {
+		color: #9bca3e;
+	}
+	.st.err {
+		color: #bd2426;
+	}
+	.pointer {
+		display: grid;
+		grid-template-columns: repeat(3, 1fr);
+		height: 30px;
+		margin-top: 20px;
+	}
+	.pointer span {
+		grid-column: 3;
+		justify-self: center;
+		align-self: end;
+		width: 0;
+		height: 0;
+		border: 15px solid transparent;
+		border-bottom-color: #fff;
+		border-top: 0;
+	}
+	.info {
+		display: grid;
+		grid-template-columns: 1fr 1fr;
+		gap: 40px;
+		padding-top: 30px;
+		padding-bottom: 40px;
+		border-bottom: 1px solid #dedede;
+	}
+	.info h2 {
+		margin: 0 0 12px;
+		font-size: 30px;
+		font-weight: 300;
+	}
+	.info h5 {
+		margin: 12px 0 4px;
+		font-size: 15px;
+		font-weight: 600;
+	}
+	.info p {
+		margin: 0;
+		font-size: 15px;
+		line-height: 1.5;
+	}
+	.info a,
+	.ft a {
+		color: #2f7bbf;
+		text-decoration: none;
+	}
+	.info a:hover,
+	.ft a:hover {
+		color: #f68b1f;
+	}
+	.ft {
+		display: flex;
+		flex-wrap: wrap;
+		justify-content: center;
+		gap: 6px;
+		padding-top: 16px;
+		padding-bottom: 24px;
+		font-size: 13px;
+		color: #404040;
+	}
+	.ft b {
+		font-weight: 600;
+	}
+	.ft button {
+		border: 0;
+		padding: 0;
+		background: none;
+		font: inherit;
+		color: #2f7bbf;
+		cursor: pointer;
+	}
+	.dot {
+		color: #999;
+	}
+	@media (max-width: 720px) {
+		h1 {
+			font-size: 40px;
+		}
+		h1 small {
+			display: block;
+			margin-top: 6px;
+		}
+		.trio,
+		.pointer {
+			gap: 10px;
+		}
+		.info {
+			grid-template-columns: 1fr;
+		}
+	}
+</style>

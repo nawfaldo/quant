@@ -24,7 +24,9 @@ MUTEX_NAME = os.getenv("QUANT_MT5_IPC_MUTEX", r"Local\QuantMetaTrader5IPC")
 
 
 class _NamedMutex:
-    def __init__(self, name: str) -> None:
+    def __init__(self, name: str, timeout_ms: int = DEFAULT_TIMEOUT_MS) -> None:
+        self._name = name
+        self._timeout_ms = timeout_ms
         self._fallback = threading.RLock()
         self._handle: int | None = None
         if os.name != "nt":
@@ -46,11 +48,11 @@ class _NamedMutex:
         if self._handle is None:
             self._fallback.acquire()
             return
-        result = self._kernel32.WaitForSingleObject(self._handle, DEFAULT_TIMEOUT_MS)
+        result = self._kernel32.WaitForSingleObject(self._handle, self._timeout_ms)
         if result in (WAIT_OBJECT_0, WAIT_ABANDONED):
             return
         if result == WAIT_TIMEOUT:
-            raise TimeoutError("timed out waiting for shared MetaTrader5 IPC")
+            raise TimeoutError(f"timed out waiting for {self._name}")
         raise OSError(ctypes.get_last_error(), "WaitForSingleObject failed")
 
     def __exit__(self, *_: object) -> None:
@@ -62,6 +64,15 @@ class _NamedMutex:
 
 
 _SHARED_MUTEX = _NamedMutex(MUTEX_NAME)
+
+
+#: Held for a whole hand place/close: the bridge and a manual close from the
+#: web UI drive the same terminal window and must not click over each other.
+_HAND_MUTEX = _NamedMutex(r"Local\QuantMT5Hand", 120_000)
+
+
+def mt5_hand_lock() -> _NamedMutex:
+    return _HAND_MUTEX
 
 
 def mt5_ipc_lock() -> _NamedMutex:

@@ -22,6 +22,37 @@ fn live_sleeves() -> impl Iterator<Item = Sleeve> {
     oct_12_2026::BOOK
         .into_iter()
         .chain(crate::strategies::fundednext::oct_21_2026::BOOK)
+        .chain(crate::strategies::the5ers::nov_08_2026::BOOK)
+}
+
+/// The5ers' own name for a market's CFD (MT5 symbol on FivePercentOnline),
+/// what an order on that account must name: the broker table's name upper-cased.
+pub(super) fn the5ers_symbol(market: &str) -> Option<&'static str> {
+    Some(match crate::strategies::the5ers::nov_08_2026::contracts::broker_source(market)?.0 {
+        "audjpy" => "AUDJPY",
+        "audusd" => "AUDUSD",
+        "btceur" => "BTCEUR",
+        "cadjpy" => "CADJPY",
+        "chfjpy" => "CHFJPY",
+        "dax40" => "DAX40",
+        "etheur" => "ETHEUR",
+        "euraud" => "EURAUD",
+        "eurjpy" => "EURJPY",
+        "eurusd" => "EURUSD",
+        "gbpjpy" => "GBPJPY",
+        "gbpusd" => "GBPUSD",
+        "hsihkd" => "HSIHKD",
+        "nzdusd" => "NZDUSD",
+        "solusd" => "SOLUSD",
+        "uk100" => "UK100",
+        "us30" => "US30",
+        "sp500" => "SP500",
+        "usdcad" => "USDCAD",
+        "usdchf" => "USDCHF",
+        "usdjpy" => "USDJPY",
+        "nas100" => "NAS100",
+        _ => return None,
+    })
 }
 
 /// The live sleeves trading `market`.
@@ -497,6 +528,9 @@ pub fn supports(strategy: &str) -> bool {
         || crate::strategies::fundednext::oct_21_2026::BOOK
             .iter()
             .any(|sleeve| sleeve.id() == strategy)
+        || crate::strategies::the5ers::nov_08_2026::BOOK
+            .iter()
+            .any(|sleeve| sleeve.id() == strategy)
 }
 
 /// The MT5 symbol a live strategy MUST be configured with, or `None` for an id
@@ -517,6 +551,7 @@ pub fn required_symbol(strategy: &str) -> Option<&'static str> {
     match sleeve.book() {
         crate::strategies::cfd::Book::Exness => route_symbol(sleeve.market()).ok(),
         crate::strategies::cfd::Book::FundedNext => fundednext_symbol(sleeve.market()),
+        crate::strategies::cfd::Book::The5ers => the5ers_symbol(sleeve.market()),
     }
 }
 
@@ -547,12 +582,12 @@ pub(super) fn build_strategy(strategy: &str) -> Option<Box<dyn Strategy>> {
         strategy.enable_early_fills();
         // The challenge account sizes off at most its own $6,000, as the
         // challenge Monte Carlo the book was chosen on does.
-        if sleeve.book() == crate::strategies::cfd::Book::FundedNext {
-            strategy.set_sizing_cap(crate::strategies::fundednext::oct_21_2026::INITIAL_BALANCE);
+        if let Some(cap) = sleeve.book().initial_balance() {
+            strategy.set_sizing_cap(cap);
         }
         if sleeve.broker_hours()
             && let Some(table) = crate::backtest::fills::broker_minute_table(sleeve.market(), sleeve.book())
-            && let Some(quotes) = super::quotes::for_table(&table)
+            && let Some(quotes) = super::quotes::for_table(&table, crate::backtest::fills::feed_lag_seconds(sleeve.market()) + crate::backtest::fills::BRIDGE_QUEUE_SECONDS)
         {
             strategy.install_quotes(quotes);
         }
@@ -575,6 +610,18 @@ pub(super) fn side_name(side: Side) -> &'static str {
 /// instrument.
 pub(super) fn route_symbol(symbol: &str) -> Result<&str, crate::error::ApiError> {
     let symbol = symbol.trim();
+    // The5ers' spellings (FivePercentOnline MT5), passed through exactly. Ahead
+    // of the `nas` rule: NAS100 is The5ers' Nasdaq, not the Exness USTEC.
+    match symbol.to_ascii_uppercase().as_str() {
+        "NAS100" => return Ok("NAS100"),
+        "SP500" => return Ok("SP500"),
+        "DAX40" => return Ok("DAX40"),
+        "HSIHKD" => return Ok("HSIHKD"),
+        "BTCEUR" => return Ok("BTCEUR"),
+        "ETHEUR" => return Ok("ETHEUR"),
+        "SOLUSD" => return Ok("SOLUSD"),
+        _ => {}
+    }
     if symbol.eq_ignore_ascii_case("nq")
         || symbol.eq_ignore_ascii_case("ustec")
         || symbol.to_ascii_lowercase().contains("nas")

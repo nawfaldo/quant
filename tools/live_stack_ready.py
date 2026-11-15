@@ -145,6 +145,23 @@ def check_fn_stream() -> tuple[bool, str]:
     return True, f"broker minutes written through {health.get('through')} (NY s)"
 
 
+def check_t5_stream() -> tuple[bool, str]:
+    """The The5ers minute stream is running and current
+    (`tools/the5ers_stream_1m.py`, `data/the5ers_stream.json`)."""
+    path = WORKSPACE / "data" / "the5ers_stream.json"
+    try:
+        health = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False, "no data/the5ers_stream.json yet"
+    wrote_at = health.get("wrote_at")
+    if not isinstance(wrote_at, (int, float)):
+        return False, "stream file has no wrote_at"
+    age = time.time() - wrote_at
+    if age > 30:
+        return False, f"stream file is {age:.0f}s old"
+    return True, f"broker minutes written through {health.get('through')} (NY s)"
+
+
 def check_server(port: int) -> tuple[bool, str]:
     """The HTTP API answers, which needs the port, the router and SQLite."""
     url = f"http://127.0.0.1:{port}/api/accounts"
@@ -254,6 +271,7 @@ CHECKS = {
     "terminal": ("MT5 terminals", lambda args: check_terminal()),
     "feeds": ("market data feeds", lambda args: check_feeds()),
     "fn_stream": ("FundedNext minute stream", lambda args: check_fn_stream()),
+    "t5_stream": ("The5ers minute stream", lambda args: check_t5_stream()),
     "server": ("live trading server", lambda args: check_server(args.port)),
     "bridge": ("MT5 execution bridge", lambda args: check_bridge(args.db)),
     "flat": ("a flat account", lambda args: check_flat(args.db)),

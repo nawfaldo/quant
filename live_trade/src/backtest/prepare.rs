@@ -32,8 +32,42 @@ pub async fn run_combined(
         return Err(ApiError::BadRequest("need at least 2 strategies".into()));
     }
     let names: Vec<&str> = strategies.iter().map(String::as_str).collect();
-    let prepared = prepare_strategies(store, request, &names).await?;
+    let mut prepared = prepare_strategies(store, request, &names).await?;
+    // THE5ERS: the ban layer decides from each sleeve's own trades
+    // (`the5ers_combined_strategies.comply`), so the book runs twice -- once to
+    // learn them, once with only the kept ones.
+    let the5ers: Vec<crate::strategies::cfd::Sleeve> = strategies
+        .iter()
+        .filter_map(|name| crate::strategies::cfd::Sleeve::from_display(name))
+        .filter(|sleeve| sleeve.book() == crate::strategies::cfd::Book::The5ers)
+        .collect();
+    if the5ers.len() == strategies.len() {
+        let first = execute_combined(&prepared, strategies)?;
+        let attempts = ban_attempts(&first.trades);
+        let (kept, _) = crate::strategies::the5ers::nov_08_2026::ban::comply(attempts);
+        prepared.engine.ban_admit = Some(Arc::new(kept));
+    }
     execute_combined(&prepared, strategies)
+}
+
+/// The first pass's trades as `ban::comply` attempts.
+fn ban_attempts(trades: &[crate::backtest::Trade]) -> Vec<crate::strategies::the5ers::nov_08_2026::ban::Attempt> {
+    use crate::strategies::the5ers::nov_08_2026::{BOOK, ban::Attempt};
+    trades
+        .iter()
+        .filter_map(|trade| {
+            let sleeve = crate::strategies::cfd::Sleeve::from_display(trade.strategy_name())?;
+            Some(Attempt {
+                member: BOOK.iter().position(|member| *member == sleeve)?,
+                sleeve: sleeve.display().to_owned(),
+                market: sleeve.market(),
+                side: trade.side,
+                entry: trade.entry_timestamp,
+                exit: trade.exit_timestamp,
+                bar_seconds: sleeve.candle_seconds(),
+            })
+        })
+        .collect()
 }
 
 pub struct PreparedRun {
@@ -311,7 +345,7 @@ async fn prepare_strategies(
                 // The series' OWN clock: every FundedNext series is one shift
                 // (an off-hours DE40 series is +7h, HK50 +6h), and Python's
                 // `ef.backtest` stops each at `shifted_ts >= hi`.
-                crate::strategies::cfd::Book::FundedNext => {
+                crate::strategies::cfd::Book::FundedNext | crate::strategies::cfd::Book::The5ers => {
                     trim_to_shift(&mut loaded, shifts[series], &request.to_date, canonical_book);
                 }
             }
@@ -363,7 +397,7 @@ async fn prepare_strategies(
     if bars.is_empty() {
         return Err(ApiError::Data("no data in requested range".into()));
     }
-    let primes = book == crate::strategies::cfd::Book::FundedNext && !request.canon_replay && split;
+    let primes = book.is_prop() && !request.canon_replay && split;
     let mut prime_marks = HashMap::new();
     if primes {
         use crate::strategies::fundednext::oct_21_2026::{THROTTLE_FROM, throttle_marks};
@@ -452,6 +486,7 @@ async fn prepare_strategies(
         fills,
         prime_marks,
         engine: EngineConfig {
+            ban_admit: None,
             initial: balance,
             symbol,
             start_day,
@@ -492,11 +527,10 @@ async fn prepare_strategies(
                 })
                 .flatten()
                 .filter(|cap| *cap > 0.0),
-            sizing_cap: if book == crate::strategies::cfd::Book::FundedNext {
+            sizing_cap: if book.is_prop() {
                 request
                     .sizing_cap
-                    .or((!request.canon_replay)
-                        .then_some(crate::strategies::fundednext::oct_21_2026::INITIAL_BALANCE))
+                    .or((!request.canon_replay).then_some(book.initial_balance().unwrap_or(0.0)))
                     .filter(|cap| *cap > 0.0)
             } else {
                 None
