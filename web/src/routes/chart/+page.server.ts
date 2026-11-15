@@ -1,12 +1,13 @@
 import { avatarUrl } from '#lib/server/auth.ts';
 import { activeAccounts } from '#lib/server/accounts.ts';
-import { chartBars, symbolTable } from '#lib/server/bars.ts';
+import { chartBars, symbolTable, listSymbols } from '#lib/server/bars.ts';
 import { openPositions } from '#lib/server/positions.ts';
-import { chartLayout } from '#lib/server/webdb.ts';
+import { chartLayout, desktopState, desktopAccountFilters, desktopSymbolFilters, desktopPositionSorts } from '#lib/server/webdb.ts';
 import type { PageServerLoad } from './$types';
 
 export const load: PageServerLoad = async ({ locals }) => {
-	const saved = chartLayout();
+	const desktops = desktopState();
+	const saved = chartLayout(desktops.activeDesktopId);
 	// The first chart's candles come with the page; the others fetch their own.
 	const first = saved.slots[0];
 	const table = symbolTable(first.symbol) ?? 'ustec_1m';
@@ -14,8 +15,13 @@ export const load: PageServerLoad = async ({ locals }) => {
 		user: locals.user.name,
 		avatar: avatarUrl(locals.user.id),
 		accounts: activeAccounts(),
+		accountFilters: desktopAccountFilters(),
+		symbolFilters: desktopSymbolFilters(),
+		positionSorts: desktopPositionSorts(),
+		filterSymbols: listSymbols(),
 		positions: openPositions(),
 		layout: saved.layout,
+		...desktops,
 		slots: saved.slots,
 		bars: await chartBars(table, 3000, first.minutes)
 	};

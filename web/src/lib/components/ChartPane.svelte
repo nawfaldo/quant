@@ -6,6 +6,7 @@
 	import type { Bar } from '#lib/server/bars.ts';
 	import type { Position } from '#lib/server/positions.ts';
 	import { chartSymbol } from '#lib/symbols.ts';
+	import { onDestroy, onMount, untrack } from 'svelte';
 
 	let {
 		symbol = $bindable('USTEC'),
@@ -14,6 +15,7 @@
 		live = [],
 		positions = [],
 		corner = true,
+		active = true,
 		onchange
 	}: {
 		symbol?: string;
@@ -22,11 +24,16 @@
 		live?: Bar[];
 		positions?: Position[];
 			corner?: boolean; // the white corner mark at the top left
+		active?: boolean; // hidden cached desktops refresh after the slide, not during it
 		onchange?: (symbol: string, minutes: number) => void; // saves the choice
 	} = $props();
 
 	let minutes = $state(untrackedMinutes());
 	let bars = $state<Bar[]>(untrackedInitial());
+	let wasActive = untrack(() => active);
+	let request: AbortController | undefined;
+	let retry: ReturnType<typeof setTimeout> | undefined;
+	onDestroy(() => { request?.abort(); clearTimeout(retry); });
 
 	function untrackedMinutes() {
 		return initialMinutes;
@@ -38,9 +45,14 @@
 	}
 
 	async function load(nextSymbol: string, m: number, refresh = true) {
-		const res = await fetch(`/api/bars?symbol=${nextSymbol}&tf=${m}`);
+		request?.abort();
+		const controller = new AbortController();
+		request = controller;
+		try {
+		const res = await fetch(`/api/bars?symbol=${nextSymbol}&tf=${m}`, { signal: controller.signal });
 		if (!res.ok) return;
 		const next = await res.json();
+		if (controller.signal.aborted) return;
 		const newSymbol = nextSymbol !== symbol;
 		// Before the bars, so live minutes merge into the right candles.
 		symbol = nextSymbol;
@@ -50,11 +62,19 @@
 		// A symbol new to MT5's Market Watch needs a few seconds to download its
 		// recent history; reload once it has, if this chart is still showing it.
 		if (newSymbol && refresh)
-			setTimeout(() => symbol === nextSymbol && minutes === m && load(nextSymbol, m, false), 5000);
+			retry = setTimeout(() => symbol === nextSymbol && minutes === m && load(nextSymbol, m, false), 5000);
+		} catch {
+			// Keep the existing candles when offline or when a newer selection cancels this request.
+		}
 	}
 
-	// A pane created without the page's bars (a new chart in the layout) loads its own.
 	$effect(() => {
+		if (active && !wasActive) untrack(() => { void load(symbol, minutes, false); });
+		wasActive = active;
+	});
+
+	// A pane created without the page's bars (a new chart in the layout) loads its own.
+	onMount(() => {
 		if (bars.length === 0) load(symbol, minutes, false);
 	});
 </script>

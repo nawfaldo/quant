@@ -45,6 +45,22 @@ export type LiquidGlassOptions = {
 	hoverBrightness?: number;
 };
 
+// A desktop slide moves the glass and its backdrop together. Refracting the
+// same pixels on every frame wastes GPU passes and forces layout reads.
+const pausedRoots = new Set<HTMLElement>();
+function glassPaused(node: HTMLElement) {
+	for (const root of pausedRoots) if (root.contains(node)) return true;
+	return false;
+}
+
+export function pauseGlassWithin(root: HTMLElement): () => void {
+	pausedRoots.add(root);
+	return () => {
+		pausedRoots.delete(root);
+		refreshGlass();
+	};
+}
+
 const VERT = `
 attribute vec2 a;
 varying vec2 uv;
@@ -325,6 +341,7 @@ export function liquidGlass(node: HTMLElement, options: LiquidGlassOptions) {
 	let lastFrame = 0;
 	let lastKey = ''; // on-screen box at the last draw
 	const schedule = () => {
+		if (glassPaused(node)) return;
 		if (!frame) frame = requestAnimationFrame(tick);
 	};
 	const invalidate = () => {
@@ -386,6 +403,10 @@ export function liquidGlass(node: HTMLElement, options: LiquidGlassOptions) {
 
 	function tick(now: number) {
 		frame = 0;
+		if (glassPaused(node)) {
+			lastFrame = 0;
+			return;
+		}
 		const dt = lastFrame ? Math.min(now - lastFrame, 50) : 16;
 		lastFrame = now;
 		const target = opts.hoverable === false ? 0 : hoverTarget;
