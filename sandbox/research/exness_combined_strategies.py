@@ -2664,10 +2664,18 @@ def replay(members, trades_by_sleeve, bars_by_symbol, ctx_by_symbol,
     #: would silently mark against a grid that stops early. Pin the span before
     #: passing a cache, or do not pass one.
     cache = marking_cache
-    key = frozenset(t["symbol"] for t in pending if t.get("external"))
+    # FIXED 2026-11-15: the key also fingerprints the bars. Keyed by the
+    # external market set alone, a module-level cache (`fundednext_challenge`
+    # passes `exness_combined_montecarlo._MARKING` for every state) handed a
+    # second state in the same process the FIRST state's bars -- a clock-fixed
+    # canon state marked on the old-clock bars read 72.7% pass instead of 100%.
+    key = (frozenset(t["symbol"] for t in pending if t.get("external")),
+           tuple(sorted((symbol, len(bars), bars[0][ef.TS] if bars else None,
+                         bars[-1][ef.TS] if bars else None)
+                        for symbol, bars in bars_by_symbol.items())))
     if cache is not None and key in cache:
         price_at, stamps_all, vol_mult = cache[key]
-        external = set(key)
+        external = set(key[0])
     else:
         price_at = {symbol: {bar[ef.TS]: bar[ef.C] for bar in bars}
                     for symbol, bars in bars_by_symbol.items()}

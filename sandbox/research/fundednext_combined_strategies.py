@@ -303,11 +303,12 @@ def pool_cells():
 # logs
 # --------------------------------------------------------------------------- #
 
-def _days(log):
-    """Per exit day: day, sum of points/entry, P&L, winning P&L, losing P&L, trades."""
+def _days(log, shift=0):
+    """Per exit day: day, sum of points/entry, P&L, winning P&L, losing P&L, trades.
+    `shift` (seconds) moves a non-RTH log's NY+7 stamps to real New York first."""
     by = {}
     for t in log:
-        day = t["exit_ts"] // base.DAY
+        day = (t["exit_ts"] - shift) // base.DAY
         row = by.setdefault(day, [day, 0.0, 0.0, 0.0, 0.0, 0])
         row[1] += t["points"] / t["entry"]
         row[2] += t["pnl"]
@@ -393,7 +394,8 @@ def _log_group(job):
         summary[key] = {"symbol": symbol, "family": key.split(":", 1)[1],
                         "alias": alias, "file": name, "k": _lev(cell),
                         "saw_2026": "out_of_sample" in cell,
-                        "group": os.path.basename(path), "days": _days(log)}
+                        "group": os.path.basename(path),
+                        "days": _days(log, int(ctx["cfg"].get("shift_hours") or 0) * 3_600)}
     # The book marks every position on its symbol's 30m bars: in-session for
     # an RTH cell, every bar of the day for any other window (`tt_book`).
     ef.BAR_MINUTES = 30
@@ -585,9 +587,29 @@ def _series(m):
     return m["symbol"] if m["alias"] == m["symbol"] else f"{m['symbol']}~off"
 
 
+def _unshift_bars(bars, shift, first, hi):
+    """Bars in [first, hi) on real New York time (stamp minus `shift` seconds)."""
+    out = []
+    for b in bars:
+        ts = b[ef.TS] - shift
+        if first <= ts < hi:
+            if shift:
+                b = list(b)
+                b[ef.TS] = ts
+                b = tuple(b)
+            out.append(b)
+    return out
+
+
 def load_state(members, lo, hi):
     """The members' trades closed before `hi`, and marking bars from
-    `WARMUP_DAYS` before `lo` to `hi`; a replay of it opens nothing before `lo`."""
+    `WARMUP_DAYS` before `lo` to `hi`; a replay of it opens nothing before `lo`.
+
+    FIXED 2026-11-15: every stamp is moved to REAL New York wall clock first
+    (`cfg["shift_hours"]`: 7 for every non-RTH window, 6 for the shifted Asian
+    cash sessions, 0 for an RTH cell), as `the5ers_combined_strategies` does.
+    Before, RTH sleeves (NY) and every other window (NY + 7) shared one timeline
+    7 h apart, so overlap, the server day and the daily-loss check were wrong."""
     by_group = {}
     for m in members:
         by_group.setdefault(m["group"], []).append(m)
@@ -598,20 +620,22 @@ def load_state(members, lo, hi):
             got = pickle.load(handle)
         for m in ms:
             series = _series(m)
-            logs[_key(m)] = [dict(t, symbol=series) for t in got["logs"][_key(m)]
-                             if t["exit_ts"] < hi]
             spec = got["ctx"][m["alias"]]["cfg"]
+            shift = int(spec.get("shift_hours") or 0) * 3_600
+            logs[_key(m)] = [dict(t, symbol=series, entry_ts=t["entry_ts"] - shift,
+                                  exit_ts=t["exit_ts"] - shift)
+                             for t in got["logs"][_key(m)] if t["exit_ts"] - shift < hi]
             floor = sorted(spec["volume_min"] * t["distance"] * spec["multiplier"]
                            for t in logs[_key(m)] if t["distance"] > 0)
             minlot[_key(m)] = floor[len(floor) // 2] if floor else 0.0
             if series not in bars_by:
-                bars_by[series] = [b for b in got["bars"][m["alias"]]
-                                   if first <= b[ef.TS] < hi]
+                bars_by[series] = _unshift_bars(got["bars"][m["alias"]], shift, first, hi)
                 ctx_by[series] = got["ctx"][m["alias"]]
     return {"members": [dict(m, alias=_series(m), minlot_usd=round(minlot[_key(m)], 2))
                         for m in members], "logs": logs,
             "bars_by": bars_by, "ctx_by": ctx_by,
             "scale": {_key(m): m["k"] for m in members}, "start": lo, "end": hi,
+            "clock": "ny",          # stamps on real New York time (2026-11-15 fix)
             # loss limits judged at each bar's worst price (`ch.worst_marks`)
             "intrabar": True}
 
@@ -1412,9 +1436,10 @@ def _wf_one_group(symbol, bar):
     _write_cells(path, sorted(f"{n}|{i}" for n, _, i, _ in units))
 
 
-def _arrays(log):
-    """(trades [exit_day, return, pnl], days [day, pnl]) of a log."""
-    tr = np.array(sorted((t["exit_ts"] // base.DAY, t["points"] / t["entry"], t["pnl"])
+def _arrays(log, shift=0):
+    """(trades [exit_day, return, pnl], days [day, pnl]) of a log, on real New
+    York days (`shift` seconds off a non-RTH log's NY+7 stamps)."""
+    tr = np.array(sorted(((t["exit_ts"] - shift) // base.DAY, t["points"] / t["entry"], t["pnl"])
                          for t in log), dtype=float).reshape(-1, 3)
     by = {}
     for day, _, pnl in tr:
@@ -1486,8 +1511,9 @@ def wf_logs(workers):
                 cfg = cfg or next(iter(got["ctx"].values()))["cfg"]
         if not parts[False] or cfg is None:
             continue
-        tr, days = _arrays(parts[False])
-        _, sdays = _arrays(_costed(parts[True], RULE["stress_cost_r"]))
+        shift = int(cfg.get("shift_hours") or 0) * 3_600
+        tr, days = _arrays(parts[False], shift)
+        _, sdays = _arrays(_costed(parts[True], RULE["stress_cost_r"]), shift)
         floor = sorted(cfg["volume_min"] * t["distance"] * cfg["multiplier"]
                        for t in parts[False] if t["distance"] > 0)
         cells[key] = {"key": key, "symbol": cell["symbol"],
@@ -1758,12 +1784,15 @@ def wf_state(cells, members, k, lo, hi, keep=None):
                 with open(os.path.join(WF_GROUP_DIR, group), "rb") as handle:
                     cache[group] = pickle.load(handle)
             got = cache[group]
-            trades += [dict(t, symbol=series) for t in got["logs"][logkey]
-                       if lo * base.DAY <= t["entry_ts"] and t["exit_ts"] < hi * base.DAY]
+            alias = next(iter(got["bars"]))
+            # real New York clock (see `load_state`)
+            shift = int(got["ctx"][alias]["cfg"].get("shift_hours") or 0) * 3_600
+            trades += [dict(t, symbol=series, entry_ts=t["entry_ts"] - shift,
+                            exit_ts=t["exit_ts"] - shift) for t in got["logs"][logkey]
+                       if lo * base.DAY <= t["entry_ts"] - shift
+                       and t["exit_ts"] - shift < hi * base.DAY]
             if series not in bars_by:
-                alias = next(iter(got["bars"]))
-                bars_by[series] = [b for b in got["bars"][alias]
-                                   if first <= b[ef.TS] < hi * base.DAY]
+                bars_by[series] = _unshift_bars(got["bars"][alias], shift, first, hi * base.DAY)
                 ctx_by[series] = got["ctx"][alias]
         if keep is not None:
             trades = _dud(trades, keep.get(m["key"], 1.0))
@@ -1771,7 +1800,7 @@ def wf_state(cells, members, k, lo, hi, keep=None):
         ms.append({"symbol": c["symbol"], "family": c["family"], "alias": series,
                    "minlot_usd": c["minlot_usd"]})
     return {"members": ms, "logs": logs, "bars_by": bars_by, "ctx_by": ctx_by,
-            "scale": dict(k), "start": lo * base.DAY, "end": hi * base.DAY,
+            "scale": dict(k), "start": lo * base.DAY, "end": hi * base.DAY, "clock": "ny",
             "intrabar": True}
 
 

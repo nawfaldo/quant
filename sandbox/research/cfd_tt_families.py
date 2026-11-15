@@ -375,10 +375,12 @@ from sandbox.research import tt_marlon_quantlab                  # noqa: E402
 from sandbox.research import tt_kreativekodr                     # noqa: E402
 from sandbox.research import tt_jadetantrade                     # noqa: E402
 from sandbox.research import tt_macmoney82                       # noqa: E402
+from sandbox.research import tt_tradebydata                      # noqa: E402
+from sandbox.research import tt_matfinog                         # noqa: E402
 
 #: Every creator module, in the order its group is listed.
 CREATOR_MODULES = (tt_luxalgo, tt_quantpad, tt_thequantbuilder,
-                   tt_tradingdata2, tt_fluxchart, tt_quantcrawler, tt_deltatrendtrading, tt_jasonjets, tt_tst_life, tt_artybryjatma, tt_tradingrush, tt_neurotrader, tt_quantitativo, tt_setup4alpha, tt_algovibes, tt_parttimelarry, tt_tomtrades, tt_bionicnq, tt_okala8020, tt_tradingmythbusters, tt_codetrading, tt_quantifiedstrategies, tt_blissdgl, tt_quanttactic, tt_mulhamtrading, tt_moneyballaustin, tt_nomanskii, tt_tradewithpat, tt_thecrypteller, tt_chartfanatics, tt_danielholmestrades, tt_piplabtrading, tt_safucrypto, tt_yoforex3, tt_algotradepro0, tt_rsipro360, tt_tradingwithmustafa, tt_itsjjsimon, tt_novo_vox, tt_pyquantlab, tt_marlon_quantlab, tt_kreativekodr, tt_jadetantrade, tt_macmoney82)
+                   tt_tradingdata2, tt_fluxchart, tt_quantcrawler, tt_deltatrendtrading, tt_jasonjets, tt_tst_life, tt_artybryjatma, tt_tradingrush, tt_neurotrader, tt_quantitativo, tt_setup4alpha, tt_algovibes, tt_parttimelarry, tt_tomtrades, tt_bionicnq, tt_okala8020, tt_tradingmythbusters, tt_codetrading, tt_quantifiedstrategies, tt_blissdgl, tt_quanttactic, tt_mulhamtrading, tt_moneyballaustin, tt_nomanskii, tt_tradewithpat, tt_thecrypteller, tt_chartfanatics, tt_danielholmestrades, tt_piplabtrading, tt_safucrypto, tt_yoforex3, tt_algotradepro0, tt_rsipro360, tt_tradingwithmustafa, tt_itsjjsimon, tt_novo_vox, tt_pyquantlab, tt_marlon_quantlab, tt_kreativekodr, tt_jadetantrade, tt_macmoney82, tt_tradebydata, tt_matfinog)
 
 #: Axes that change the exit or the engine's own filters, never the events.
 EVENT_EXIT_KEYS = frozenset(("exit_mode", "stop_day", "trend", "vol_mode",
@@ -421,13 +423,20 @@ def _event_signal(family):
 #: Markets on New York wall clock: everything but the shifted Asian indices.
 NY_CLOCK_SYMBOLS = tuple(s for s in cf.CLASS if s not in cf.SHIFT_HOURS)
 
-for _name, (_compute, _axes, _ny, _exit) in (
+#: A SPECS entry may carry two more fields: the holding regime (default
+#: `session`; `tt_tradebydata` uses `multiday` for its clock and always-in
+#: rules) and the creator's own markets (default: every market, or the NY-clock
+#: ones). Every older entry has four fields and is registered as before.
+for _name, _spec in (
         item for module in CREATOR_MODULES for item in module.SPECS.items()):
+    _compute, _axes, _ny, _exit = _spec[:4]
+    _hold = _spec[4] if len(_spec) > 4 else "session"
+    _syms = _spec[5] if len(_spec) > 5 else (NY_CLOCK_SYMBOLS if _ny else None)
     EVENT_FAMILIES[_name] = _compute
     FAMILIES[_name] = cf.Family(
         _event_signal(_name),
         (lambda p, g, _a=_axes: {**_a(g), **_ENGINE}),
-        scope="intraday", symbols=NY_CLOCK_SYMBOLS if _ny else None)
+        scope="intraday", hold=_hold, symbols=_syms)
     if _exit is not None:
         cf.EXIT_SIGNALS[_name] = _exit
 
@@ -477,6 +486,8 @@ GROUPS = {
     "kreativekodr": tuple(tt_kreativekodr.SPECS),
     "jadetantrade": tuple(tt_jadetantrade.SPECS),
     "macmoney82": tuple(tt_macmoney82.SPECS),
+    "tradebydata": tuple(tt_tradebydata.SPECS),
+    "matfinog": tuple(tt_matfinog.SPECS),
 }
 
 for _group, _members in GROUPS.items():

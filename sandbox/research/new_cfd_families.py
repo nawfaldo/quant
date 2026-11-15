@@ -17,7 +17,8 @@ January 2027 refit.
 
 FEWER TRIES. Six non-overlapping windows (the cash session, off-hours, the day
 in four six-hour slices) instead of fourteen overlapping ones; the eighths stay
-available with `--window`. The 86 families are kept (the user's choice) --
+available with `--window`. The 86 families are kept (the user's choice; 98 since
+2026-11-13 with 12 @tradebydata survivors) --
 NOTE: they were pre-filtered on Exness survivors that saw 2025-2026, a
 family-level leak this module cannot undo.
 
@@ -126,8 +127,17 @@ FAMILIES = (
     "tr_darvas", "tr_zero_cross", "trap", "two_stage", "value_area",
     "vol_of_vol", "vol_regime", "volatility_breakout", "volume_thrust", "vwap",
     "xma_cross", "xma_ribbon", "yf_alphatrend",
+    # @tradebydata (2026-11-13). The 12 families with at least one FundedNext
+    # survivor in the simple-split run (in-sample 2024-25, out of sample
+    # 2026-01-01..11-12, 30m, 29 symbols x 6 windows): an OOS winner (return > 0,
+    # PF >= 1.05, >= 20 trades) whose `why` is PASS or PASS*. Results in
+    # results/new_cfd_families/fundednext_tbd/. Clock/multiday rules, see
+    # `tt_tradebydata`.
+    "tbd_candle_count", "tbd_fib_dynamic", "tbd_fractal3", "tbd_ibs",
+    "tbd_macdv", "tbd_multi_span", "tbd_overnight", "tbd_session_box",
+    "tbd_sma_regime", "tbd_vol_breakout", "tbd_volatile_red", "tbd_weekday",
 )
-assert len(FAMILIES) == len(set(FAMILIES)) == 86
+assert len(FAMILIES) == len(set(FAMILIES)) == 98
 
 # --------------------------------------------------------------------------- #
 # time windows -- New York clock. The day starts at the 17:00 rollover, the
@@ -254,6 +264,17 @@ if os.environ.get("T5_PROTOCOL") == "fn":
                                     folds={"S": "2024-2025"},
                                     fold_oos={"S": ("2026-01-01", None)},
                                     wave="the5ers_fn")
+
+#: FN_PROTOCOL=single (the user, 2026-11-13, for the @tradebydata group):
+#: FundedNext on the live pool's simple split -- in-sample 2024-2025, out of
+#: sample 2026 to `FN_DATA_END`, select -> validate -> `why` on the OOS
+#: winners -- instead of the two-fold walk-forward. Results go to their own
+#: wave (`NCF_WAVE`, default `fundednext_fn`) so no walk-forward file is touched.
+if os.environ.get("FN_PROTOCOL") == "single":
+    BROKER_SETUPS["fundednext"] = dict(BROKER_SETUPS["fundednext"], protocol="single",
+                                       folds={"S": "2024-2025"},
+                                       fold_oos={"S": ("2026-01-01", None)},
+                                       wave=os.environ.get("NCF_WAVE", "fundednext_fn"))
 
 BROKER = _argv_broker()
 if BROKER not in BROKER_SETUPS:
@@ -515,12 +536,30 @@ def run(args):
         raise SystemExit("--filtered5 reads results/filtered/fundednext; "
                          f"there is no {BROKER} equivalent")
     families = args.families.split(",")
+    if args.group:
+        # A creator group of `cfd_tt_families` (e.g. tradebydata), run as is:
+        # its families need not be in FAMILIES.
+        # Imported with this command line hidden: `cfd_families` reads
+        # `--window` / `--broker` from argv at import, and ours are not its.
+        saved, sys.argv = sys.argv, sys.argv[:1]
+        try:
+            from sandbox.research import cfd_tt_families   # noqa: PLC0415
+        finally:
+            sys.argv = saved
+        families = list(cfd_tt_families.GROUPS[args.group])
+        if args.families != ",".join(FAMILIES):
+            # `--group X --families a,b`: only those members of the group
+            wanted = set(args.families.split(","))
+            families = [f for f in families if f in wanted]
     unknown = sorted(set(families) - set(FAMILIES))
-    if unknown:
+    if unknown and not args.group:
         raise SystemExit(f"not a filtered family: {unknown}")
     symbols = SYMBOLS if args.symbols == "all" else tuple(args.symbols.split(","))
-    kinds = {k: v for k, v in families_by_kind(families).items()
-             if k in args.kinds.split(",") and v}
+    # A group is all `tt`; classifying it would misfire, since importing
+    # `cfd_tt_families` installs its families into `cfd_families.FAMILIES`.
+    kinds = ({"tt": families} if args.group else
+             {k: v for k, v in families_by_kind(families).items()
+              if k in args.kinds.split(",") and v})
     os.makedirs(os.path.join(STATE, "logs"), exist_ok=True)
     os.makedirs(os.path.join(STATE, "locks"), exist_ok=True)
     jobs = [(k, s, w, b) for b in map(int, args.bar_minutes.split(","))
@@ -1221,6 +1260,8 @@ def main():
     r.add_argument("--window", default=",".join(DEFAULT_WINDOWS),
                    help=f"comma-separated, of {', '.join(WINDOWS)}")
     r.add_argument("--families", default=",".join(FAMILIES))
+    r.add_argument("--group", default="",
+                   help="a cfd_tt_families group instead of --families (e.g. tradebydata)")
     r.add_argument("--symbols", default="all")
     r.add_argument("--kinds", default="cfd,tt")
     r.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 4) // 2))
