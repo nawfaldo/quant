@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { untrack } from 'svelte';
+	import { onMount, untrack } from 'svelte';
 	import { CandlestickSeries, createChart, CrosshairMode, type ISeriesApi, type UTCTimestamp } from 'lightweight-charts';
 	import type { Bar } from '#lib/server/bars.ts';
 	import { notifyGlass } from '#lib/liquidGlass.ts';
@@ -25,6 +25,7 @@
 	let last: Bar | undefined; // the newest candle on the chart
 	let liveKey = ''; // the stream resends unchanged candles with every message
 	let lines: PositionLines | undefined;
+	let fitChart: (() => void) | undefined;
 
 	// Redraw the position lines against the current candles, only when
 	// something they show changed (the live stream resends positions 4x/s).
@@ -43,7 +44,7 @@
 	// Glass over the chart redraws only when told the chart repainted.
 	const repainted = () => notifyGlass(container);
 
-	$effect(() => {
+	onMount(() => {
 		const chart = createChart(container, {
 			autoSize: true,
 			layout: { background: { color: transparent ? 'transparent' : '#121212' }, textColor: '#a3a3a3', attributionLogo: false },
@@ -68,17 +69,7 @@
 			lastValueVisible: false,
 			priceLineVisible: false
 		});
-		// Price decimals from the data: 2 for indices, 5 for most FX pairs.
-		const decimals = Math.max(
-			0,
-			...bars.slice(-200).map((b) => (String(b.close).split('.')[1] ?? '').length)
-		);
-		const precision = Math.min(decimals, 6);
-		s.applyOptions({ priceFormat: { type: 'price', precision, minMove: 10 ** -precision } });
-		s.setData(bars.map((b) => ({ ...b, time: b.time as UTCTimestamp })));
-		last = bars.at(-1) && { ...bars.at(-1)! };
-		// Few candles (the equity chart): spread them across the width instead of bunching at the left.
-		if (fit) chart.timeScale().fitContent();
+		fitChart = () => chart.timeScale().fitContent();
 		lines = new PositionLines();
 		s.attachPrimitive(lines);
 		drawnKey = '';
@@ -88,13 +79,31 @@
 		series = s;
 		repainted();
 		return () => {
+			fitChart = undefined;
 			series = undefined;
 			lines = undefined;
 			chart.remove();
 		};
 	});
 
+	// Refresh candle data in place. Rebuilding the chart on every bars change
+	// discarded canvas/GPU resources and the desktop's zoom and scroll state.
 	$effect(() => {
+		if (!series) return;
+		const decimals = Math.max(0, ...bars.slice(-200).map((b) => (String(b.close).split('.')[1] ?? '').length));
+		const precision = Math.min(decimals, 6);
+		series.applyOptions({ priceFormat: { type: 'price', precision, minMove: 10 ** -precision } });
+		series.setData(bars.map((b) => ({ ...b, time: b.time as UTCTimestamp })));
+		last = bars.at(-1) && { ...bars.at(-1)! };
+		liveKey = '';
+		drawnKey = '';
+		if (fit) fitChart?.();
+		untrack(() => drawPositions(true));
+		repainted();
+	});
+
+	$effect(() => {
+		void bars; // replay the forming candle after a background history refresh
 		if (!series) return;
 		const key = minutes + JSON.stringify(live);
 		if (key === liveKey) return;
